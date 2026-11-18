@@ -11,6 +11,8 @@
 
 </div>
 
+![Zone Bodycam In-Game Preview](docs/images/preview.png)
+
 ---
 
 ## Features
@@ -50,6 +52,7 @@
 
 ```text
 .
+├── docs/images/            # README preview screenshot
 ├── fomod/                  # FOMOD installer metadata (info.xml, ModuleConfig.xml)
 ├── gamedata/
 │   ├── configs/            # UI XML & MCM English localization (ui_st_zbc_bodycam.xml)
