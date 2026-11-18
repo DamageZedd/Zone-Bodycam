@@ -12,9 +12,9 @@ uniform uint4  bus_zbc_osd_atlas[816];   // rows 0..751: ASCII 33..126 16x32 2-b
 uniform float4 bus_zbc_rec;              // top-left recording timer. x: active (>0.5), y: dot lit (>0.5), z: whole seconds recorded, w: text_opacity
 
 // recording timer geometry in em (keep in step with REC_* in scripts\zbc_bodycam.script)
-#define ZBC_REC_DOT_D  0.62
-#define ZBC_REC_DOT_CY 0.47
-#define ZBC_REC_GAP    0.30
+#define ZBC_REC_DOT_D  1.06
+#define ZBC_REC_DOT_CY 0.56
+#define ZBC_REC_GAP    0.15
 
 uint zbc_uint4_comp(uint4 v, uint comp)
 {

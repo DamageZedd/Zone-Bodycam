@@ -753,9 +753,9 @@ local MAX_CHARS = 40
 local FONT_VW = { [0] = 1.0, [1] = 1.2, [2] = 1.4 }    -- the real overlay is 1.2vw
 local REC_CHARS = 16                                    -- "REC 999:59:59"
 -- recording timer geometry in em, shared with shaders\r3\zbc_osd.h (keep in step)
-local REC_DOT_D   = 0.62   -- dot diameter
-local REC_DOT_CY  = 0.47   -- dot centre below the line top
-local REC_GAP     = 0.30   -- space between the dot and the text
+local REC_DOT_D   = 1.06   -- dot square (the red core is 66% of it: about the capital height)
+local REC_DOT_CY  = 0.56   -- dot centre below the line top (middle of the capitals)
+local REC_GAP     = 0.15   -- space between the dot square and the text
 
 local osd_char_rows = nil
 
