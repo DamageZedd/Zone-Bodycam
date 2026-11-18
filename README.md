@@ -11,7 +11,13 @@
 
 </div>
 
-![Zone Bodycam In-Game Preview](docs/images/preview.png)
+[![Zone Bodycam gameplay](docs/images/gameplay.webp)](docs/images/gameplay.mp4)
+
+<sub>Gameplay clip. Click it for the full-quality MP4 with sound.</sub>
+
+![Zone Bodycam in-game preview](docs/images/preview.png)
+
+![Recording timer, overlay and ally markers](docs/images/rec_timer.webp)
 
 ---
 
@@ -25,6 +31,8 @@
   Frame-rate independent two-stage damped tracking for turn lag, walking gait bob & roll, breathing, crouch/lean shifts, and spring-damped impacts (steps, landings, jumps, shots, hits). Always active across HUD and UI states when enabled.
 - **In-Shader Top-Right Axon Overlay** (`gamedata/shaders/r3/zbc_osd.h`, `zbc_osd_atlas.script`):
   Displays in-game date/time (`Zone` `+0200`/`+0300` summer or `UTC +0000`, optional `ISO T`), configurable device label & serial (`AXON BODY 3`), character name, and logo (`ui\zbc_logo.dds`, swirl triangle, plain triangle, or hidden). Composited inside `postprocess` after fisheye warp and above the corner vignette—so text stays unwarped while passing through CMOS compression, grading, grain, and rolling-shutter shear.
+- **Recording Timer (top left)** (`gamedata/scripts/zbc_bodycam.script`, `zbc_osd.h`):
+  A flashing red dot and `REC HH:MM:SS` showing how long the camera has been recording in this playthrough. It uses the overlay font and mirrors the top-right margin. The time is real time, stored on the actor, so it carries through saves and level changes. It can be turned off in MCM and is on by default.
 - **Line-of-Sight Ally & Companion Markers** (`gamedata/scripts/zbc_allies.script`):
   Marks friendly/neutral stalkers and companions (never enemies) through the exact inverse lens warp (`unwarp`) using a fixed pool of 20 reusable HUD statics. Uses real-time 20 Hz `ray_pick` camera line-of-sight that blocks on solid opaque geometry (`FL_VISION_OPAQUE` / `gamemtl.xr` bit 30) while seeing through foliage (`FL_PASSABLE`), fences, water, and destructible object glass, with smooth pop-in/out (`0.40 s`), quick death fade (`0.20 s`), and bidirectional bracket-to-dot morphing (`~0.56 s`).
 - **Automatic Aspect-Ratio Scaling**:
@@ -54,7 +62,7 @@
 
 ```text
 .
-├── docs/images/            # README preview screenshot
+├── docs/images/            # README screenshots and gameplay clip
 ├── fomod/                  # FOMOD installer metadata (info.xml, ModuleConfig.xml)
 ├── gamedata/
 │   ├── configs/            # UI XML & MCM English localization (ui_st_zbc_bodycam.xml)
