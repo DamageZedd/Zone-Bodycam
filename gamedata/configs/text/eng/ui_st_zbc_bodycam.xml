@@ -72,6 +72,12 @@
   <string id="ui_mcm_zone_bodycam_overlay">
     <text>Bodycam overlay (top right)</text>
   </string>
+  <string id="ui_mcm_zone_bodycam_rec_timer">
+    <text>Recording timer (top left)</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_rec_timer_desc">
+    <text>Flashing red dot and how long the camera has been recording in this playthrough. Real time, saved with the game.</text>
+  </string>
   <string id="ui_mcm_zone_bodycam_roll">
     <text>Camera roll</text>
   </string>

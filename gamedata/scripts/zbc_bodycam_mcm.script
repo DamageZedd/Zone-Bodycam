@@ -46,6 +46,7 @@ function on_mcm_load()
 
 			{ id = "hdr_overlay",    type = "line" },
 			{ id = "overlay",        type = "check", val = 1, def = d("overlay") },
+			{ id = "rec_timer",      type = "check", val = 1, def = d("rec_timer") },
 			{ id = "device_label",   type = "input", val = 0, def = d("device_label") },
 			{ id = "show_name",      type = "check", val = 1, def = d("show_name") },
 			{ id = "logo_style",     type = "list",  val = 2, def = d("logo_style"), no_str = true,
