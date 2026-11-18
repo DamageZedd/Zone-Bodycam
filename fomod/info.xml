@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<fomod>
+	<Name>Zone Bodycam</Name>
+	<Author>Built for this GAMMA setup. Motion model after Sludge's Intrusive 3D Masks.</Author>
+	<Version>1.0</Version>
+	<Description>Chest-mounted police bodycam: fisheye lens with chromatic aberration and sensor sharpening, body motion (turn lag, gait bob and roll, breathing, spring-damped impacts), and a live top-right overlay with in-game date and time, device line, character name and logo. The lens runs in the post chain after DLSS/FSR (Slop-Ray engine); the housing and overlay are procedural HUD layers drawn after frame generation. Everything is configurable in MCM.</Description>
+	<Groups><element>Visual</element></Groups>
+</fomod>

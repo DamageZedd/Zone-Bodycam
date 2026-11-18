@@ -1,0 +1,13 @@
+#include "common.h"
+#include "hdr10.h"
+#include "zbc_logo.h"
+// Zone Bodycam - plain rounded triangle (shader "hud\zbc_tri"). Colour and opacity come from the script.
+float4 main(p_TL I) : SV_Target
+{
+	float zbc_base = (s_base.Sample(smp_base, I.Tex0).a >= -1.0) ? 1.0 : 0.0;   // keeps the bound texture; always 1
+	float  a   = zbc_logo_cover(I.Tex0, 0.0) * I.Color.a;
+	float3 col = I.Color.rgb;
+	if (HDR10_IS_ENABLED)
+		col = HDR10_ToDisplay_UI(col, HDR10_UI_NITS_SCALAR, a);
+	return float4(col, (a) * zbc_base);
+}

@@ -1,0 +1,18 @@
+#include "common.h"
+#include "hdr10.h"
+#include "zbc_marker.h"
+// Zone Bodycam - corner brackets around a friendly NPC (shader "hud\zbc_brackets")
+float4 main(p_TL I) : SV_Target
+{
+	float zbc_base = (s_base.Sample(smp_base, I.Tex0).a >= -1.0) ? 1.0 : 0.0;   // keeps the bound texture; always 1
+	float2 uv  = I.Tex0;
+	float2 px  = max(fwidth(uv), 0.00001);
+	float2 e   = min(uv, 1.0 - uv) / px;
+	const float L = 0.24;                          // bracket arm, as a fraction of each side
+	bool near_x = (uv.x < L) || (uv.x > 1.0 - L);
+	bool near_y = (uv.y < L) || (uv.y > 1.0 - L);
+	float d = 1000.0;
+	if (near_x) d = min(d, e.y);                   // top / bottom arms
+	if (near_y) d = min(d, e.x);                   // left / right arms
+	return zbc_marker_out(zbc_stroke(d, I.Color.rgb), I.Color.a) * float4(1.0, 1.0, 1.0, zbc_base);
+}

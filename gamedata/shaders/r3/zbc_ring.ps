@@ -1,0 +1,37 @@
+#include "common.h"
+#include "hdr10.h"
+#include "zbc_lens.h"
+// Zone Bodycam - lens housing, vignette and sensor grain as a HUD layer (shader "hud\zbc_ring").
+// Drawn in the UI pass when bus_zbc_extra.w < 0.5, after DLSS/FSR and after frame generation
+// captured its HUD-less image, so the housing is never interpolated or smeared.
+// Vertex colour from the script: r = grain fallback, a = layer opacity.
+
+float4 main(p_TL I) : SV_Target
+{
+	float  zbc_base = (s_base.Sample(smp_base, I.Tex0).a >= -1.0) ? 1.0 : 0.0;   // keeps the bound texture; always 1
+	float3 col      = float3(0.0, 0.0, 0.0);
+	float  a        = 0.0;
+
+	[branch] if (ZBC_ACTIVE && bus_zbc_extra.w < 0.5)
+	{
+		float2 uv   = I.Tex0;                       // the layer covers the whole screen
+		float  on   = saturate(bus_zbc_motion.x * 4.0);
+		float  edge = zbc_edge(uv) * on;
+
+		float2 px    = floor(uv * screen_res.xy);
+		float2 t_off = floor(timers.x * 30.0) * float2(37.0, 17.0);
+		float  nl    = zbc_hash(px + t_off) - 0.5;
+		float  g_amt = saturate(bus_zbc_extra.z) * ZBC_INTENSITY;
+		float  ga    = abs(nl) * g_amt * 0.14 * (1.0 - edge);
+		float3 gcol  = (nl > 0.0) ? float3(0.35, 0.35, 0.35) : float3(0.0, 0.0, 0.0);
+
+		// Porter-Duff: neutral black housing/vignette over subtle balanced CMOS grain
+		a   = saturate(edge + ga * (1.0 - edge));
+		col = (a > 0.0001) ? (gcol * (ga * (1.0 - edge)) / a) : float3(0.0, 0.0, 0.0);
+
+		if (HDR10_IS_ENABLED)
+			col = HDR10_ToDisplay_UI(col, HDR10_UI_NITS_SCALAR, a);
+	}
+
+	return float4(col, (a * I.Color.a) * zbc_base);
+}

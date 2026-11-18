@@ -1,0 +1,189 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<string_table>
+  <string id="ui_mcm_menu_zone_bodycam">
+    <text>Zone Bodycam</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_aberration">
+    <text>Chromatic aberration</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_breathing">
+    <text>Breathing</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_device_label">
+    <text>Device name</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_device_label_desc">
+    <text>Text before the serial number on the second line.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_distortion">
+    <text>Fisheye distortion</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_edge_in_image">
+    <text>Draw lens edge in the image</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_edge_in_image_desc">
+    <text>On (default): lens edge, vignette and grain are part of the image, under the game HUD and safe with frame generation. Off: drawn as a HUD layer on top of everything.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_edge_radius">
+    <text>Lens edge size</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_edge_shape">
+    <text>Lens edge shape</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_edge_shape_desc">
+    <text>0 = round, 1 = follows the screen shape.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_edge_softness">
+    <text>Lens edge softness</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_enabled">
+    <text>Enable Zone Bodycam</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_font_size">
+    <text>Overlay text size</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_grain">
+    <text>Sensor grain</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_impacts">
+    <text>Impacts (steps, landings, shots, hits)</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_intensity">
+    <text>Lens strength</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_iso_t">
+    <text>ISO "T" before the time</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_lens_enabled">
+    <text>Bodycam lens</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_lens_enabled_desc">
+    <text>Fisheye lens, housing, sharpening and grain. Applied after DLSS/FSR, so the upscaler never sees it.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_logo_opacity">
+    <text>Logo opacity</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_logo_style">
+    <text>Logo</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_motion">
+    <text>Body motion (all)</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_overlay">
+    <text>Bodycam overlay (top right)</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_roll">
+    <text>Camera roll</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_sharpen">
+    <text>Sensor sharpening</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_show_name">
+    <text>Show character name</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_text_opacity">
+    <text>Text opacity</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_timezone">
+    <text>Time zone</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_title">
+    <text>Zone Bodycam</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_turn_invert">
+    <text>Invert turn lag</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_turn_lag">
+    <text>Turn lag</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_vignette">
+    <text>Vignette</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_walk_bob">
+    <text>Walking bob</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_zoom">
+    <text>Lens zoom</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_zoom_desc">
+    <text>Crops in so the body motion never shows the image edge.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies">
+    <text>Ally markers</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_color_companion">
+    <text>Colour: companions</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_color_neutral">
+    <text>Colour: friendly / neutral</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_desc">
+    <text>Boxes on friendly and neutral stalkers so you can tell who not to shoot. Enemies are never marked.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_dot_ratio">
+    <text>Show as dot beyond (share of range)</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_los">
+    <text>Only NPCs you can see</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_opacity">
+    <text>Marker opacity</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_range">
+    <text>Marker range (metres)</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_size">
+    <text>Marker size</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_style">
+    <text>Marker style</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_edge_follow">
+    <text>Lens edge follows movement</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_edge_follow_desc">
+    <text>How much the lens edge and vignette move with the body motion, like a camera strapped to the chest. 0 = fixed.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_rig_occlusion">
+    <text>Chest rig / shoulder occlusion</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_rig_occlusion_desc">
+    <text>How strongly your plate carrier, shoulders, and rifle encroach into the edges of the frame when leaning, crouching, aiming, or looking down.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_housing_roundness">
+    <text>Housing shape (circle to squircle)</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_housing_roundness_desc">
+    <text>0 = smooth oval lens bezel, 1 = rounded-square Axon housing frame.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_edge_soft_blur">
+    <text>Peripheral lens softness</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_edge_soft_blur_desc">
+    <text>Wide-angle optical softening toward the edges of the frame while keeping the center sharp.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_highlight_blowout">
+    <text>Highlight blowout</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_highlight_blowout_desc">
+    <text>Small-sensor dynamic range clipping and bright-light roll-off on sky, lamps, and muzzle flashes.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_compression">
+    <text>Digital compression crispness</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_compression_desc">
+    <text>Subtle bodycam video encoder micro-block crispness and chroma subsampling feel.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_rolling_shutter">
+    <text>Rolling shutter shear</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_rolling_shutter_desc">
+    <text>CMOS scanline skew during fast turns, gunfire, and hits. 0 = off.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_sensor_grade">
+    <text>CMOS color grade</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_sensor_grade_desc">
+    <text>Modern Axon CMOS contrast curve, slight desaturation, and cool-neutral digital tone.</text>
+  </string>
+</string_table>

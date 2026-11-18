@@ -1,0 +1,1023 @@
+--[[
+	Zone Bodycam (zbc_bodycam.script)
+
+	A chest-mounted police bodycam look for GAMMA on the Slop-Ray engine.
+
+	- Lens: barrel distortion, zoom, chromatic aberration, sharpening and a small-sensor grade, applied
+	  in the display-resolution post chain (shaders\r3\postprocess*.ps + zbc_lens.h). Slop-Ray runs
+	  that chain after DLSS/FSR reconstruction, so the upscaler never sees the warp.
+	- Housing, vignette and grain: a procedural HUD layer (shader hud\zbc_ring), drawn after frame
+	  generation's HUD-less capture so the static edge never smears.
+	- Body motion: the camera is on the chest, not the head. Turn lag, gait bob and roll, strafe
+	  lean, breathing, and spring-damped impacts (steps, landings, jumps, shots, hits, crouching).
+	  Built on the two-stage damped chase of Sludge's Intrusive 3D Masks, made frame-rate independent.
+	- Overlay (top right): game date and time with the Zone's UTC offset, device line with a serial,
+	  character name, and the triangle logo. All procedural, no texture files.
+
+	Shader values go through Slop-Ray's Shader Bus on three private lanes (bus_zbc_motion per frame,
+	bus_zbc_lens and bus_zbc_edge for settings), so nothing is written to the console or user.ltx.
+	HUD shaders bind the base texture like the engine's hud_default: the UI expects every HUD shader to.
+	The Lua name "bodycam" belongs to the engine's Immersive Bodycam, so everything here is "zbc".
+]]
+
+local exp, sin, abs, floor, min, max, asin = math.exp, math.sin, math.abs, math.floor, math.min, math.max, math.asin
+local tanh = math.tanh
+local TWO_PI = 2 * math.pi
+
+local function clamp01(v) return min(max(v, 0), 1) end
+
+---------------------------------------------------------------------------------------------------
+-- Settings
+---------------------------------------------------------------------------------------------------
+
+defaults = {
+	enabled           = true,
+	-- lens & sensor
+	lens_enabled      = true,
+	intensity         = 1.0,
+	distortion        = 0.20,
+	aberration        = 0.28,
+	zoom              = 1.24,
+	sharpen           = 0.40,
+	edge_soft_blur    = 0.45,
+	edge_radius       = 0.68,
+	edge_softness     = 0.22,
+	edge_shape        = 0.65,   -- 0 = circle, 1 = screen aspect
+	housing_roundness = 0.55,   -- 0..1 -> superellipse exponent 2.0..5.0
+	vignette          = 0.55,
+	rig_occlusion     = 0.85,
+	grain             = 0.35,
+	edge_in_image     = true,   -- housing, vignette and grain in the image: under the game HUD, frame generation friendly
+	edge_follow       = 1.5,    -- how far the vignette/housing follows body motion (0 = fixed)
+	highlight_blowout = 0.55,
+	compression       = 0.35,
+	rolling_shutter   = 0.50,
+	sensor_grade      = 0.75,
+	-- motion
+	motion         = 1.0,
+	turn_lag       = 1.0,
+	turn_invert    = false,
+	walk_bob       = 1.0,
+	roll           = 1.0,
+	impacts        = 1.0,
+	breathing      = 1.0,
+	-- overlay
+	overlay        = true,
+	device_label   = "AXON BODY 3",
+	logo_style     = 0,      -- 0 official logo texture, 1 swirl triangle, 2 plain triangle, 3 none
+	show_name      = true,
+	timezone       = 0,      -- 0 Zone time (+0200 / +0300 summer), 1 UTC
+	iso_t          = false,
+	font_size      = 1,      -- 0 small, 1 medium (the real overlay: 1.2vw), 2 large
+	text_opacity   = 1.0,
+	logo_opacity   = 0.75,
+	-- ally markers (zbc_allies.script)
+	allies                 = true,
+	allies_los             = true,   -- only NPCs the actor can see
+	allies_range           = 30,     -- metres
+	allies_dot_ratio       = 0.5,    -- beyond this share of the range: a dot instead of a box
+	allies_style           = 0,      -- 0 corner brackets, 1 full box
+	allies_size            = 1.0,
+	allies_opacity         = 0.85,
+	allies_color_neutral   = 0,      -- see zbc_allies (7 = none)
+	allies_color_companion = 1,
+}
+
+local CLAMPS = {
+	intensity         = { 0, 1 },
+	distortion        = { 0, 0.8 },
+	aberration        = { 0, 1 },
+	zoom              = { 0.25, 1.5 },
+	sharpen           = { 0, 1 },
+	edge_soft_blur    = { 0, 1 },
+	edge_radius       = { 0.4, 1.35 },
+	edge_softness     = { 0.001, 0.5 },
+	edge_shape        = { 0, 1 },
+	housing_roundness = { 0, 1 },
+	vignette          = { 0, 1 },
+	rig_occlusion     = { 0, 1.5 },
+	grain             = { 0, 1 },
+	edge_follow       = { 0, 3 },
+	highlight_blowout = { 0, 1 },
+	compression       = { 0, 1 },
+	rolling_shutter   = { 0, 1.5 },
+	sensor_grade      = { 0, 1 },
+}
+
+local cfg = {}
+
+local function mcm_get(id)
+	if ui_mcm and ui_mcm.get then
+		local ok, v = pcall(ui_mcm.get, "zone_bodycam/" .. id)
+		if ok and v ~= nil then return v end
+	end
+	return defaults[id]
+end
+
+local function load_settings()
+	for k, def in pairs(defaults) do
+		local v = mcm_get(k)
+		if type(def) == "number" then
+			v = tonumber(v) or def
+			local b = CLAMPS[k]
+			if b then v = min(max(v, b[1]), b[2]) end
+		elseif type(def) == "boolean" then
+			v = (v == true)
+		else
+			v = (type(v) == "string" and v ~= "") and v or def
+		end
+		cfg[k] = v
+	end
+end
+
+---------------------------------------------------------------------------------------------------
+-- Shader constants
+---------------------------------------------------------------------------------------------------
+
+-- Slop-Ray Shader Bus: private float4 lanes, bound to the HLSL constants bus_<id>
+-- (see lua_help_ex shader_bus). No console writes, nothing saved to user.ltx, nothing shared.
+local BUS_OWNER = "zone_bodycam_v1"
+local LANES = {
+	motion     = "zbc_motion",
+	lens       = "zbc_lens",
+	edge       = "zbc_edge",
+	extra      = "zbc_extra",
+	vig        = "zbc_vig",
+	vig_occ    = "zbc_vig_occ",
+	sensor     = "zbc_sensor",
+	osd_info   = "zbc_osd_info",
+	osd_layout = "zbc_osd_layout",
+	osd_chars  = "zbc_osd_chars",
+	osd_atlas  = "zbc_osd_atlas",
+}
+local tokens = nil          -- nil: not tried yet, false: bus unavailable
+local bus_warned = false
+local atlas_uploaded = false
+
+local function bus_ready()
+	if tokens == nil then
+		if not (shader_bus and shader_bus.try_register and shader_bus.set) then
+			tokens = false
+		else
+			local t = {}
+			for key, id in pairs(LANES) do
+				local tok = shader_bus.try_register(id, BUS_OWNER, "Zone Bodycam " .. key)
+				if not tok then t = false break end
+				t[key] = tok
+			end
+			tokens = t
+		end
+		if tokens == false and not bus_warned then
+			bus_warned = true
+			printf("! [Zone Bodycam] Shader Bus unavailable: the lens is off, the overlay still works")
+		end
+	end
+	if tokens and not atlas_uploaded and shader_bus.set_array_uint and zbc_osd_atlas and zbc_osd_atlas.ROWS then
+		shader_bus.set_array_uint(tokens.osd_atlas, 0, zbc_osd_atlas.ROWS)
+		atlas_uploaded = true
+	end
+	return tokens ~= false
+end
+
+local function finite(v) return type(v) == "number" and v == v and v > -1e9 and v < 1e9 end
+
+local function send(lane, x, y, z, w)
+	if not bus_ready() then return end
+	if not (finite(x) and finite(y) and finite(z) and finite(w)) then return end
+	shader_bus.set(tokens[lane], x, y, z, w)
+end
+
+local function housing_power()
+	return 2.0 + 3.0 * clamp01(cfg.housing_roundness or defaults.housing_roundness)
+end
+
+local function push_settings()
+	send("lens",    cfg.distortion, cfg.aberration, cfg.zoom, cfg.edge_soft_blur)
+	send("edge",    cfg.edge_radius, max(cfg.edge_softness, 0.001), cfg.vignette, clamp01(cfg.edge_shape))
+	send("extra",   min(max(cfg.edge_follow, 0), 3), clamp01(cfg.sharpen), clamp01(cfg.grain), cfg.edge_in_image and 1.0 or 0.0)
+	send("vig_occ", 0, 0, cfg.rig_occlusion, housing_power())
+	send("sensor",  cfg.highlight_blowout, cfg.compression, 0, cfg.sensor_grade)
+end
+
+local function lens_off()
+	if not tokens then return end   -- never registers lanes just to clear them
+	send("motion",   0, 0, 0, 0)
+	send("vig",      0, 0, 0, 0)
+	send("vig_occ",  0, 0, cfg.rig_occlusion or defaults.rig_occlusion, housing_power())
+	send("sensor",   cfg.highlight_blowout or defaults.highlight_blowout, cfg.compression or defaults.compression, 0, cfg.sensor_grade or defaults.sensor_grade)
+	send("osd_info", 0, cfg.logo_style or defaults.logo_style or 0, 0, 0)
+end
+
+---------------------------------------------------------------------------------------------------
+-- Motion model (camera offset: x right, y down, in screen heights; roll in radians)
+---------------------------------------------------------------------------------------------------
+
+local S = {}
+
+local function ease(rate, dt) return 1 - exp(-rate * dt) end
+local function soft(v, limit) if limit <= 0 then return 0 end return limit * tanh(v / limit) end
+local function clampv(v, l) if v > l then return l elseif v < -l then return -l end return v end
+local function rnd() return math.random() * 2 - 1 end
+
+local function move_state(name)
+	if not IsMoveState then return false end
+	local ok, res = pcall(IsMoveState, name)
+	return ok and (res == true)
+end
+
+local function actor_stamina(actor)
+	local ok, p = pcall(function() return actor.power end)
+	if ok and type(p) == "number" then return clamp01(p) end
+	return 1.0
+end
+
+local function is_ads()
+	if not axr_main then return false end
+	local w = axr_main.weapon_is_zoomed
+	if type(w) == "function" then
+		local ok, res = pcall(w)
+		return ok and (res == true)
+	end
+	return w == true
+end
+
+local function cam_pitch(dir)
+	if dir and dir.getP then
+		local ok, p = pcall(function() return dir:getP() end)
+		if ok and type(p) == "number" then return p end
+	end
+	return asin(clampv(dir.y, 1))
+end
+
+local function motion_reset()
+	S = {
+		ready = false,
+		t = nil,
+		dir = nil, right = nil, top = nil,
+		pos = nil, cam_h = nil,
+		-- world turn lag (two-stage chase, aim-safe)
+		lag1x = 0, lag1y = 0, lagx = 0, lagy = 0,
+		-- decoupled vignette turn lag (two-stage chase)
+		vlag1x = 0, vlag1y = 0, vlagx = 0, vlagy = 0,
+		-- world gait (two-stage chase)
+		side = 1, st1x = 0, st1y = 0, st1r = 0, stx = 0, sty = 0, str = 0,
+		-- decoupled vignette gait
+		vst1x = 0, vst1y = 0, vst1r = 0, vstx = 0, vsty = 0, vstr = 0,
+		-- strafe lean / vertical inertia
+		accx = 0, accy = 0, accr = 0,
+		vaccx = 0, vaccy = 0, vaccr = 0,
+		-- world impact springs (aim-safe)
+		px = 0, vx = 0, py = 0, vy = 0, pr = 0, vr = 0,
+		-- chest-mount vignette/rig impact springs
+		vpx = 0, vvx = 0, vpy = 0, vvy = 0, vpr = 0, vvr = 0,
+		-- breathing / exertion / posture / transients
+		breath = 0, exert = 0,
+		lean = 0, crouch = 0, look_down = 0, ads = 0, sprint_b = 0,
+		tighten_pulse = 0, yaw_vel_s = 0, shutter_shock = 0,
+		-- blends
+		vis = 0,
+		crouch_armed = false,
+		out_x = 0, out_y = 0, out_r = 0, out_i = 0,
+		out_vx = 0, out_vy = 0, out_vt = 0, out_vr = 0,
+		out_ox = 0, out_oy = 0, out_rs = 0,
+	}
+end
+motion_reset()
+
+-- under-damped springs: world (~2.6 Hz, tight) and chest-mount (~2.16 Hz, heavier mass), sub-stepped
+local SPRING_K,   SPRING_C   = 267.0, 12.4
+local V_SPRING_K, V_SPRING_C = 185.0,  9.2
+
+local function step_spring(pk, vk, k, c, h)
+	local nv = S[vk] + (-k * S[pk] - c * S[vk]) * h
+	S[vk] = nv
+	S[pk] = S[pk] + nv * h
+end
+
+local function springs(dt)
+	local steps = max(1, math.ceil(dt / (1 / 120)))
+	local h = dt / steps
+	for _ = 1, steps do
+		step_spring("px",  "vx",  SPRING_K,   SPRING_C,   h)
+		step_spring("py",  "vy",  SPRING_K,   SPRING_C,   h)
+		step_spring("pr",  "vr",  SPRING_K,   SPRING_C,   h)
+		step_spring("vpx", "vvx", V_SPRING_K, V_SPRING_C, h)
+		step_spring("vpy", "vvy", V_SPRING_K, V_SPRING_C, h)
+		step_spring("vpr", "vvr", V_SPRING_K, V_SPRING_C, h)
+	end
+end
+
+local function kick(x, y, r)
+	local k = cfg.impacts * cfg.motion
+	S.vx = S.vx + x * k
+	S.vy = S.vy + y * k
+	S.vr = S.vr + r * k
+end
+
+local function vkick(x, y, r, tight, shutter)
+	local k = cfg.impacts * cfg.motion
+	S.vvx = S.vvx + x * k
+	S.vvy = S.vvy + y * k
+	S.vvr = S.vvr + r * k
+	if tight and tight ~= 0 then
+		S.tighten_pulse = clamp01(S.tighten_pulse + tight * cfg.impacts)
+	end
+	if shutter and shutter ~= 0 then
+		S.shutter_shock = S.shutter_shock + shutter * cfg.impacts
+	end
+end
+
+local function gait_factor()
+	if move_state("mcSprint") then return 1.7 end
+	if move_state("mcCrouch") then return 0.45 end
+	if move_state("mcAccel") then return 0.6 end   -- slow walk
+	return 1.0
+end
+
+function actor_on_footstep()
+	if not (cfg.enabled and cfg.lens_enabled and S.ready) then return end
+	S.side = -S.side
+	local g = gait_factor() * cfg.walk_bob * cfg.motion
+	S.st1x = S.st1x + S.side * 0.0026 * g
+	S.st1y = S.st1y + 0.0042 * g
+	S.st1r = S.st1r + S.side * 0.010 * g * cfg.roll
+	kick(0, 0.055 * g, 0)
+
+	local sprinting = move_state("mcSprint")
+	local vg = g * (sprinting and 0.85 or 1.0)
+	S.vst1x = S.vst1x + S.side * 0.008 * vg
+	S.vst1y = S.vst1y + 0.0055 * vg
+	S.vst1r = S.vst1r + S.side * 0.024 * vg * cfg.roll
+	vkick(S.side * 0.020 * vg, 0.065 * vg, S.side * 0.045 * vg * cfg.roll, 0, 0)
+end
+
+function actor_on_jump()
+	if not (cfg.enabled and cfg.lens_enabled and S.ready) then return end
+	kick(0, 0.10, rnd() * 0.10 * cfg.roll)
+	vkick(rnd() * 0.06, 0.42, rnd() * 0.35 * cfg.roll, 0.16, 0)
+end
+
+function actor_on_land(fall_speed)
+	if not (cfg.enabled and cfg.lens_enabled and S.ready) then return end
+	local f = min(tonumber(fall_speed) or 0, 12)
+	if f < 1.5 then return end
+	kick(rnd() * 0.04, 0.035 * f, rnd() * 0.05 * f * cfg.roll)
+	vkick(rnd() * 0.14, 0.14 * f, rnd() * 0.18 * f * cfg.roll, min(0.08 * f, 0.55), 0)
+end
+
+function actor_on_weapon_fired(obj)
+	if not (cfg.enabled and cfg.lens_enabled and S.ready) then return end
+	if obj and db.actor and obj:id() ~= db.actor:id() then return end
+	kick(rnd() * 0.03, -0.05, rnd() * 0.08 * cfg.roll)
+	vkick(0.09 + rnd() * 0.06, -0.18, (0.14 + rnd() * 0.16) * cfg.roll, 0.22, rnd() * 0.018)
+end
+
+function actor_on_before_hit(shit)
+	if not (cfg.enabled and cfg.lens_enabled and S.ready) then return end
+	local ok, p = pcall(function() return shit.power end)
+	local k = min(max(ok and tonumber(p) or 0.3, 0.15), 1.5)
+	kick(rnd() * 0.12 * k, 0.08 * k, rnd() * 0.18 * k * cfg.roll)
+	vkick(rnd() * 0.40 * k, 0.32 * k, rnd() * 0.55 * k * cfg.roll, min(0.45 * k, 0.85), rnd() * 0.030 * k)
+end
+
+local function copy(v) return vector():set(v) end
+
+-- returns world (ox, oy, roll, inten), vignette (vig_ox, vig_oy, vig_tighten, vig_roll),
+-- chest-rig occlusion (occ_x, occ_y), and rolling_shutter
+local function motion_update()
+	local dev = device()
+	local actor = db.actor
+	if not (dev and actor) then return 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 end
+	local now = time_global() / 1000
+
+	local dir, right, top, cam = dev.cam_dir, dev.cam_right, dev.cam_top, dev.cam_pos
+	local pos = actor:position()
+
+	if not S.ready or not S.t then
+		S.t, S.dir, S.right, S.top, S.pos = now, copy(dir), copy(right), copy(top), copy(pos)
+		S.cam_h = cam.y - pos.y
+		S.ready = true
+		return S.out_x, S.out_y, S.out_r, S.out_i, S.out_vx, S.out_vy, S.out_vt, S.out_vr, S.out_ox, S.out_oy, 0
+	end
+
+	local dt = now - S.t
+	S.t = now
+	if dt <= 0.0001 or dt > 0.25 then           -- paused, loading hitch or teleport: re-seed
+		S.dir, S.right, S.top, S.pos = copy(dir), copy(right), copy(top), copy(pos)
+		S.cam_h = cam.y - pos.y
+		return S.out_x, S.out_y, S.out_r, S.out_i, S.out_vx, S.out_vy, S.out_vt, S.out_vr, S.out_ox, S.out_oy, S.out_rs
+	end
+
+	local M = cfg.motion
+
+	-- 1. Turn lag: how far the view turned this frame, measured on the previous screen axes,
+	--    so the sign is right whatever the engine's yaw convention.
+	local ddx, ddy, ddz = dir.x - S.dir.x, dir.y - S.dir.y, dir.z - S.dir.z
+	local d_right = ddx * S.right.x + ddy * S.right.y + ddz * S.right.z
+	local d_up    = ddx * S.top.x   + ddy * S.top.y   + ddz * S.top.z
+	S.dir, S.right, S.top = copy(dir), copy(right), copy(top)
+	local lim = 8.0 * dt                        -- ignore animation spikes above 8 rad/s
+	d_right, d_up = clampv(d_right, lim), clampv(d_up, lim)
+	local inv = cfg.turn_invert and -1 or 1
+
+	S.lag1x = S.lag1x - inv * d_right
+	S.lag1y = S.lag1y + inv * d_up
+	local dec = 1 - ease(10.0, dt)
+	S.lag1x, S.lag1y = S.lag1x * dec, S.lag1y * dec
+	local on = ease(6.0, dt)
+	S.lagx = S.lagx + (S.lag1x - S.lagx) * on
+	S.lagy = S.lagy + (S.lag1y - S.lagy) * on
+
+	S.vlag1x = S.vlag1x - inv * d_right
+	S.vlag1y = S.vlag1y + inv * d_up
+	local vdec = 1 - ease(7.0, dt)
+	S.vlag1x, S.vlag1y = S.vlag1x * vdec, S.vlag1y * vdec
+	local von = ease(8.0, dt)
+	S.vlagx = S.vlagx + (S.vlag1x - S.vlagx) * von
+	S.vlagy = S.vlagy + (S.vlag1y - S.vlagy) * von
+
+	-- Rolling shutter rate + transient decay
+	local yaw_vel = clampv(d_right / dt, 8.0)
+	S.yaw_vel_s = S.yaw_vel_s + (yaw_vel - S.yaw_vel_s) * ease(28.0, dt)
+	S.shutter_shock = S.shutter_shock * (1 - ease(22.0, dt))
+
+	-- 2. Gait (footstep impulses, two-stage chase)
+	local sdec = 1 - ease(6.0, dt)
+	S.st1x, S.st1y, S.st1r = S.st1x * sdec, S.st1y * sdec, S.st1r * sdec
+	local son = ease(9.0, dt)
+	S.stx = S.stx + (S.st1x - S.stx) * son
+	S.sty = S.sty + (S.st1y - S.sty) * son
+	S.str = S.str + (S.st1r - S.str) * son
+
+	local vsdec = 1 - ease(5.5, dt)
+	S.vst1x, S.vst1y, S.vst1r = S.vst1x * vsdec, S.vst1y * vsdec, S.vst1r * vsdec
+	local vson = ease(10.0, dt)
+	S.vstx = S.vstx + (S.vst1x - S.vstx) * vson
+	S.vsty = S.vsty + (S.vst1y - S.vsty) * vson
+	S.vstr = S.vstr + (S.vst1r - S.vstr) * vson
+
+	-- 3. Strafe lean and vertical inertia from body velocity
+	local vx, vy, vz = (pos.x - S.pos.x) / dt, (pos.y - S.pos.y) / dt, (pos.z - S.pos.z) / dt
+	S.pos = copy(pos)
+	local v_right = vx * right.x + vy * right.y + vz * right.z
+	local v_up    = vy
+	local aon = ease(4.0, dt)
+	S.accx = S.accx + (clampv(-v_right * 0.0012, 0.006) - S.accx) * aon
+	S.accy = S.accy + (clampv(v_up * 0.0015, 0.006) - S.accy) * aon
+	S.accr = S.accr + (clampv(v_right * 0.0045, 0.03) - S.accr) * aon
+
+	local vaon = ease(5.0, dt)
+	S.vaccx = S.vaccx + (clampv(-v_right * 0.0045, 0.028) - S.vaccx) * vaon
+	S.vaccy = S.vaccy + (clampv(v_up * 0.0055, 0.028) - S.vaccy) * vaon
+	S.vaccr = S.vaccr + (clampv(v_right * 0.012, 0.065) - S.vaccr) * vaon
+
+	-- 4. Crouch / stand impulse: camera height changes without the body moving vertically
+	local cam_h = cam.y - pos.y
+	local crouch_speed = (cam_h - (S.cam_h or cam_h)) / dt
+	S.cam_h = cam_h
+	if not S.crouch_armed and abs(crouch_speed) > 1.2 and abs(v_up) < 1.0 then
+		S.crouch_armed = true
+		local down_kick = (crouch_speed < 0)
+		kick(0, down_kick and 0.06 or -0.04, rnd() * 0.04 * cfg.roll)
+		vkick(rnd() * 0.05, down_kick and 0.28 or -0.20, rnd() * 0.16 * cfg.roll, 0.12, 0)
+	elseif S.crouch_armed and abs(crouch_speed) < 0.3 then
+		S.crouch_armed = false
+	end
+
+	-- 5. Posture states (Q/E lean, crouch/low-crouch, looking down, ADS)
+	local lean_t = (move_state("mcRLookout") and 1 or 0) - (move_state("mcLLookout") and 1 or 0)
+	S.lean = S.lean + (lean_t - S.lean) * ease(8.0, dt)
+
+	local crouch_t = move_state("mcCrouch") and (move_state("mcAccel") and 1.0 or 0.55) or 0.0
+	S.crouch = S.crouch + (crouch_t - S.crouch) * ease(7.0, dt)
+
+	local pitch = cam_pitch(dir)
+	local down_t = clamp01((-pitch - 0.15) / 0.85)
+	S.look_down = S.look_down + (down_t - S.look_down) * ease(9.0, dt)
+
+	S.ads = S.ads + ((is_ads() and 1 or 0) - S.ads) * ease(10.0, dt)
+
+	-- 6. Breathing, heavier after sprinting and at low stamina
+	local sprinting = move_state("mcSprint")
+	S.sprint_b = S.sprint_b + ((sprinting and 1 or 0) - S.sprint_b) * ease(2.5, dt)
+	if sprinting then
+		S.exert = min(1, S.exert + 0.25 * dt)
+	else
+		S.exert = max(0, S.exert - 0.08 * dt)
+	end
+	local low_stam = clamp01((0.75 - actor_stamina(actor)) / 0.75)
+	local fatigue = clamp01(max(S.exert, low_stam * 0.9))
+	S.breath = (S.breath + dt * (0.24 + 0.36 * fatigue) * TWO_PI) % TWO_PI
+
+	local b = cfg.breathing * (1 + 2.0 * S.exert)
+	local bx = sin(S.breath * 0.5) * 0.0006 * b
+	local by = sin(S.breath) * 0.0012 * b
+
+	local vb = cfg.breathing * (1 + 2.5 * fatigue)
+	local vbx = sin(S.breath * 0.5) * 0.0022 * vb
+	local vby = sin(S.breath) * 0.0055 * vb
+
+	-- 7. Springs & transient decay
+	springs(dt)
+	S.tighten_pulse = S.tighten_pulse * (1 - ease(7.0, dt))
+
+	-- 8. World warp: subtle & aim-safe (nothing here depends on aiming or zoom)
+	local ox  = (S.lagx * 0.045 * cfg.turn_lag + S.stx + S.accx + S.px * 0.08 + bx) * M
+	local oy  = (S.lagy * 0.045 * cfg.turn_lag + S.sty + S.accy + S.py * 0.08 + by) * M
+	local orr = (S.lagx * 0.06 * cfg.turn_lag * cfg.roll + S.str + S.accr * cfg.roll + S.pr * 0.25) * M
+	ox, oy, orr = soft(ox, 0.03), soft(oy, 0.03), soft(orr, 0.05)
+
+	-- 9. Decoupled vignette, housing motion, chest-rig occlusion & rolling shutter
+	local vig_ox = soft((S.vlagx * 0.18 * cfg.turn_lag + S.vstx + S.vaccx + S.vpx * 0.45 + vbx - S.lean * 0.035 - S.ads * 0.014) * M, 0.12)
+	local vig_oy = soft((S.vlagy * 0.18 * cfg.turn_lag + S.vsty + S.vaccy + S.vpy * 0.24 + vby - S.look_down * 0.045 - S.crouch * 0.028) * M, 0.065)
+	local vig_roll = soft((S.vlagx * 0.22 * cfg.turn_lag * cfg.roll + S.vstr + S.vaccr * cfg.roll + S.vpr * 0.55 + S.lean * 0.12 * cfg.roll) * M, 0.16)
+
+	local breath_t = max(0, sin(S.breath)) * 0.04 * fatigue * clamp01(cfg.breathing)
+	local vig_tighten = clamp01((S.tighten_pulse + breath_t + 0.08 * S.sprint_b) * M + 0.14 * S.ads)
+
+	local occ_x = soft(S.lean * 0.52 + S.ads * 0.30 + (S.vlagx * 0.22 * cfg.turn_lag + S.vpx * 0.90) * M, 1.0)
+	local occ_y = soft(S.look_down * 0.58 + S.crouch * 0.38 + S.ads * 0.14 + (0.10 * S.sprint_b + S.vpy * 0.22) * M, 1.0)
+
+	local rs = soft((S.yaw_vel_s * 0.0045 + S.shutter_shock) * cfg.rolling_shutter * M, 0.025)
+	if abs(rs) < 1e-5 then rs = 0 end
+
+	-- 10. Intensity: always on when enabled (never fades off for inventory/PDA/UI), eased on startup
+	local target_vis = (cfg.enabled and cfg.lens_enabled) and 1 or 0
+	S.vis = S.vis + (target_vis - S.vis) * ease(10.0, dt)
+	local inten = cfg.intensity * S.vis
+
+	S.out_x, S.out_y, S.out_r, S.out_i = ox, oy, orr, inten
+	S.out_vx, S.out_vy, S.out_vt, S.out_vr = vig_ox, vig_oy, vig_tighten, vig_roll
+	S.out_ox, S.out_oy, S.out_rs = occ_x, occ_y, rs
+	return ox, oy, orr, inten, vig_ox, vig_oy, vig_tighten, vig_roll, occ_x, occ_y, rs
+end
+
+---------------------------------------------------------------------------------------------------
+-- Overlay text
+---------------------------------------------------------------------------------------------------
+
+-- day of week, 0 = Sunday (Sakamoto)
+local DOW_T = { 0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4 }
+local function dow(y, m, d)
+	if m < 3 then y = y - 1 end
+	return (y + floor(y / 4) - floor(y / 100) + floor(y / 400) + DOW_T[m] + d) % 7
+end
+
+local function last_sunday(y, m)
+	local d = 31
+	while dow(y, m, d) ~= 0 do d = d - 1 end
+	return d
+end
+
+-- Ukraine: EET +2, EEST +3 from the last Sunday of March 03:00 to the last Sunday of October 04:00
+local function zone_offset(Y, M, D, h)
+	if M > 3 and M < 10 then return 3 end
+	if M == 3 then
+		local ls = last_sunday(Y, 3)
+		return (D > ls or (D == ls and h >= 3)) and 3 or 2
+	end
+	if M == 10 then
+		local ls = last_sunday(Y, 10)
+		return (D < ls or (D == ls and h < 4)) and 3 or 2
+	end
+	return 2
+end
+
+local DAYS_IN = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 }
+local function days_in(y, m)
+	if m == 2 and ((y % 4 == 0 and y % 100 ~= 0) or y % 400 == 0) then return 29 end
+	return DAYS_IN[m]
+end
+
+-- shift a date/time by whole hours (for UTC)
+local function add_hours(Y, M, D, h, dh)
+	h = h + dh
+	while h < 0 do
+		h = h + 24 ; D = D - 1
+		if D < 1 then M = M - 1 ; if M < 1 then M = 12 ; Y = Y - 1 end ; D = days_in(Y, M) end
+	end
+	while h > 23 do
+		h = h - 24 ; D = D + 1
+		if D > days_in(Y, M) then D = 1 ; M = M + 1 ; if M > 12 then M = 1 ; Y = Y + 1 end end
+	end
+	return Y, M, D, h
+end
+
+local function date_line()
+	local Y, M, D, h, mi, s = game.get_game_time():get()
+	Y, M, D = tonumber(Y) or 2012, tonumber(M) or 1, tonumber(D) or 1
+	h, mi, s = tonumber(h) or 0, tonumber(mi) or 0, tonumber(s) or 0
+	local tz
+	if cfg.timezone == 1 then
+		Y, M, D, h = add_hours(Y, M, D, h, -zone_offset(Y, M, D, h))
+		tz = "+0000"
+	else
+		tz = string.format("+%02d00", zone_offset(Y, M, D, h))
+	end
+	return string.format("%04d-%02d-%02d %s%02d:%02d:%02d %s", Y, M, D, cfg.iso_t and "T" or "", h, mi, s, tz), s
+end
+
+local function actor_name()
+	local ok, name = pcall(function() return db.actor and db.actor:character_name() end)
+	if ok and type(name) == "string" then return name end
+	return ""
+end
+
+-- stable per character, in the style of a bodycam serial
+local SERIAL_CHARS = "0123456789ABCDEFGHJKLMNPRSTUVWXYZ"
+local function serial_for(name)
+	local h = 5381
+	for i = 1, #name do h = (h * 33 + string.byte(name, i)) % 2147483647 end
+	local out = ""
+	for _ = 1, 4 do
+		local k = h % #SERIAL_CHARS
+		out = out .. SERIAL_CHARS:sub(k + 1, k + 1)
+		h = floor(h / #SERIAL_CHARS)
+	end
+	return "X6039" .. out
+end
+
+---------------------------------------------------------------------------------------------------
+-- HUD
+---------------------------------------------------------------------------------------------------
+
+-- Overlay text is drawn from a glyph atlas (textures\ui\zbc_font.dds, built by tools\make_overlay_assets.py
+-- from the overlay font), one HUD quad per character. The engine can only load its own fixed fonts.
+local F = zbc_font_metrics
+local MAX_CHARS = 40
+local FONT_VW = { [0] = 1.0, [1] = 1.2, [2] = 1.4 }    -- the real overlay is 1.2vw
+
+local osd_char_rows = nil
+
+-- Pack up to 3 lines x 40 ASCII bytes into 31 uint4 rows for bus_zbc_osd_chars.
+local function upload_osd_chars(s1, s2, s3)
+	if not (bus_ready() and shader_bus.set_array_uint) then return end
+	if not osd_char_rows then
+		osd_char_rows = {}
+		for r = 1, 31 do osd_char_rows[r] = { 0, 0, 0, 0 } end
+	end
+	local strs = { s1 or "", s2 or "", s3 or "" }
+	local r0 = osd_char_rows[1]
+	r0[1] = min(#strs[1], MAX_CHARS)
+	r0[2] = min(#strs[2], MAX_CHARS)
+	r0[3] = min(#strs[3], MAX_CHARS)
+	r0[4] = 0
+	for i = 0, 2 do
+		local str = strs[i + 1]
+		local len = r0[i + 1]
+		local base = 2 + i * 10
+		for row_off = 0, 9 do
+			local row = osd_char_rows[base + row_off]
+			local c0 = row_off * 4
+			for comp = 1, 4 do
+				local c = c0 + comp
+				row[comp] = (c <= len) and string.byte(str, c) or 0
+			end
+		end
+	end
+	shader_bus.set_array_uint(tokens.osd_chars, 0, osd_char_rows)
+end
+
+class "ZbcHud" (CUIScriptWnd)
+
+function ZbcHud:__init() super()
+	self:SetWndRect(Frect():set(0, 0, 1024, 768))
+	self:SetAutoDelete(true)
+
+	local xml = CScriptXmlInit()
+	xml:ParseFile("ui_zbc_bodycam.xml")
+	self.ring   = xml:InitStatic("zbc_ring", self)
+	self.allies = zbc_allies.build(self, xml)      -- drawn above the housing, below the overlay
+	self.logos  = {
+		[0] = xml:InitStatic("zbc_logo_tex", self), -- official logo texture
+		[1] = xml:InitStatic("zbc_logo", self),     -- procedural swirl
+		[2] = xml:InitStatic("zbc_tri", self),      -- procedural plain triangle
+	}
+	self.lines = {}
+	for i = 1, 3 do
+		local glyphs = {}
+		for c = 1, MAX_CHARS do
+			local g = xml:InitStatic("zbc_glyph", self)
+			g:SetStretchTexture(true)
+			g:Show(false)
+			glyphs[c] = g
+		end
+		self.lines[i] = { glyphs = glyphs, text = nil, visible = false }
+	end
+	self.res = ""
+	self.asp = 16 / 9
+	self.em_v = 0
+	self.osd_dirty = true
+	self.osd_key = nil
+	self:Apply()
+end
+
+function ZbcHud:__finalize() end
+
+-- settings that change appearance
+function ZbcHud:Apply()
+	local ta = floor(255 * clamp01(cfg.text_opacity))
+	for _, line in ipairs(self.lines) do
+		for _, g in ipairs(line.glyphs) do g:SetTextureColor(GetARGB(ta, 255, 255, 255)) end
+		line.text = nil                                  -- re-lay the glyphs
+	end
+	local la = floor(255 * clamp01(cfg.logo_opacity))
+	self.logos[0]:SetTextureColor(GetARGB(la, 255, 255, 255))   -- the texture has its own colours
+	self.logos[1]:SetTextureColor(GetARGB(la, 255, 225, 0))
+	self.logos[2]:SetTextureColor(GetARGB(la, 255, 225, 0))
+	-- the ring shader reads the grain amount from the red channel
+	self.ring:SetTextureColor(GetARGB(255, floor(255 * clamp01(cfg.grain)), 255, 255))
+	self.res = ""
+	self.osd_dirty = true
+end
+
+-- the reference layout is in % of screen width (vw), measured from a real overlay recreation
+function ZbcHud:Layout()
+	local W, H = device().width, device().height
+	local key = W .. "x" .. H .. ":" .. tostring(cfg.font_size)
+	if key == self.res then return end
+	self.res = key
+
+	local ux, uy = 1024 / W, 768 / H                 -- UI units per screen pixel
+	local function vx(v) return v * 0.01 * W * ux end
+	local function vy(v) return v * 0.01 * W * uy end
+
+	self.ring:SetWndPos(vector2():set(0, 0))
+	self.ring:SetWndSize(vector2():set(1024, 768))
+
+	for _, s in pairs(self.logos) do
+		s:SetWndPos(vector2():set(vx(95.0), vy(2.6)))
+		s:SetWndSize(vector2():set(vx(3.5), vy(3.5)))  -- square on screen
+	end
+
+	-- text: right edge just left of the logo, lines one em apart starting at 3vw
+	local em_px = (FONT_VW[cfg.font_size] or 1.2) * 0.01 * W
+	self.asp = W / H
+	self.em_v = em_px / H
+	self.osd_dirty = true
+	self.glyph = {
+		scale = em_px / F.em,                          -- screen px per atlas px
+		ux = ux, uy = uy,
+		right = 94.6 * 0.01 * W,                       -- screen px
+		tops = { 3.0 * 0.01 * W, 3.0 * 0.01 * W + em_px, 3.0 * 0.01 * W + 2 * em_px },
+	}
+	for _, line in ipairs(self.lines) do line.text = nil end
+end
+
+local function drawable(code) return code ~= 32 and code >= F.first and code <= F.last end
+
+-- lay out one line of glyphs, right-aligned
+function ZbcHud:SetLine(i, str)
+	local line = self.lines[i]
+	if line.text == str then return end
+	line.text = str
+	local G = self.glyph
+	local n = min(#str, MAX_CHARS)
+	local adv = F.advance * G.scale
+	local x0 = G.right - n * adv
+	local y0 = G.tops[i]
+	local qw, qh = F.cell_w * G.scale * G.ux, F.cell_h * G.scale * G.uy
+	for c = 1, MAX_CHARS do
+		local g = line.glyphs[c]
+		local code = (c <= n) and string.byte(str, c) or 32
+		if c > n or not drawable(code) then
+			g:Show(false)
+		else
+			local k = code - F.first
+			local tx, ty = (k % F.cols) * F.cell_w, floor(k / F.cols) * F.cell_h
+			g:SetTextureRect(Frect():set(tx, ty, tx + F.cell_w, ty + F.cell_h))
+			local px = x0 + (c - 1) * adv - F.pad * G.scale
+			local py = y0 - F.pad * G.scale
+			g:SetWndPos(vector2():set(px * G.ux, py * G.uy))
+			g:SetWndSize(vector2():set(qw, qh))
+			g:Show(line.visible)
+		end
+	end
+end
+
+function ZbcHud:ShowLine(i, vis)
+	local line = self.lines[i]
+	if line.visible == vis then return end
+	line.visible = vis
+	local n = line.text and min(#line.text, MAX_CHARS) or 0
+	for c = 1, n do
+		line.glyphs[c]:Show(vis and drawable(string.byte(line.text, c)))
+	end
+end
+
+function ZbcHud:Refresh(visible, lens_on, lens)
+	self:Layout()
+
+	zbc_allies.update(self.allies, cfg, lens, visible)
+
+	-- the housing follows the lens itself, so it stays while the lens fades out (no exposed edges)
+	self.ring:Show(lens_on and not cfg.edge_in_image)
+
+	local show = cfg.overlay and visible
+	local osd_in_post = lens_on
+	if osd_in_post then
+		for _, s in pairs(self.logos) do s:Show(false) end
+		for i = 1, 3 do self:ShowLine(i, false) end
+
+		send("osd_info", show and 1 or 0, cfg.logo_style, clamp01(cfg.text_opacity), clamp01(cfg.logo_opacity))
+		if not show then return end
+
+		send("osd_layout", 0.950, 0.026 * self.asp, 0.035, self.em_v)
+		local date, sec = date_line()
+		local line_key = tostring(cfg.device_label) .. "\n" .. tostring(cfg.show_name)
+			.. "\n" .. tostring(cfg.timezone) .. "\n" .. tostring(cfg.iso_t) .. "\n" .. self.res
+		if self.osd_dirty or sec ~= self.sec or line_key ~= self.osd_key or self.lines[1].text ~= nil then
+			self.sec = sec
+			self.osd_key = line_key
+			self.osd_dirty = false
+			self.lines[1].text = nil
+			local name = actor_name()
+			upload_osd_chars(date, cfg.device_label .. " " .. serial_for(name), cfg.show_name and string.upper(name) or "")
+		end
+		return
+	end
+
+	self.osd_dirty = true
+	if tokens then
+		send("osd_info", 0, cfg.logo_style, 0, 0)
+	end
+
+	for style, s in pairs(self.logos) do s:Show(show and cfg.logo_style == style) end
+	for i = 1, 3 do self:ShowLine(i, show and (i < 3 or cfg.show_name)) end
+	if not show then return end
+
+	local date, sec = date_line()
+	if sec ~= self.sec or self.lines[1].text == nil then
+		self.sec = sec
+		local name = actor_name()
+		self:SetLine(1, date)
+		self:SetLine(2, cfg.device_label .. " " .. serial_for(name))
+		self:SetLine(3, string.upper(name))
+	end
+end
+
+---------------------------------------------------------------------------------------------------
+-- Lifecycle
+---------------------------------------------------------------------------------------------------
+
+local HUD = nil
+local in_menu = false
+lens_state = { k = 0, ox = 0, oy = 0, roll = 0, dist = 0, zoom = 1, shutter = 0 }
+
+function get_rolling_shutter()
+	return lens_state and lens_state.shutter or 0
+end
+
+local function hud_add()
+	if HUD or not cfg.enabled then return end
+	HUD = ZbcHud()
+	get_hud():AddDialogToRender(HUD)
+end
+
+local function hud_remove()
+	if not HUD then return end
+	local h = get_hud()
+	if h then h:RemoveDialogToRender(HUD) end
+	HUD = nil
+end
+
+-- main_hud_shown() without its two zoom conditions: a bodycam keeps recording while you scope in
+-- (the effect never changes with aiming: it is driven by movement only)
+local function hud_visible()
+	local ok, shown = pcall(function()
+		return _HUD_STATE
+			and actor_menu.last_mode == 0
+			and pda.dialog_closed == true
+			and not Check_UI()
+			and get_console_cmd(1, "hud_draw")
+	end)
+	if ok then return shown and true or false end
+	return true
+end
+
+local function settings_changed()
+	load_settings()
+	push_settings()
+	if not cfg.enabled then
+		hud_remove()
+		lens_off()
+		motion_reset()
+		lens_state.k = 0
+		lens_state.shutter = 0
+		return
+	end
+	if not cfg.lens_enabled then
+		lens_off()
+		motion_reset()
+		lens_state.k = 0
+		lens_state.shutter = 0
+	elseif in_menu and db.actor and bus_ready() then
+		S.vis = 1
+		S.out_i = cfg.intensity
+		S.out_rs = 0
+		send("motion",  cfg.intensity, S.out_x, S.out_y, S.out_r)
+		send("vig",     S.out_vx, S.out_vy, S.out_vt, S.out_vr)
+		send("vig_occ", S.out_ox, S.out_oy, cfg.rig_occlusion, housing_power())
+		send("sensor",  cfg.highlight_blowout, cfg.compression, 0, cfg.sensor_grade)
+		lens_state.k = clamp01(cfg.intensity)
+		lens_state.ox, lens_state.oy, lens_state.roll = S.out_x, S.out_y, S.out_r
+		lens_state.dist, lens_state.zoom, lens_state.shutter = cfg.distortion, cfg.zoom, 0
+	elseif in_menu then
+		lens_off()
+		lens_state.k = 0
+		lens_state.shutter = 0
+	end
+	if db.actor then hud_add() end
+	if HUD then HUD:Apply() end
+end
+
+function actor_on_first_update()
+	in_menu = false                          -- loading from the title menu may not fire main_menu_on_quit
+	load_settings()
+	push_settings()
+	motion_reset()
+	if not (cfg.enabled and cfg.lens_enabled) then lens_off() end
+	hud_add()
+end
+
+function actor_on_update()
+	if not cfg.enabled or in_menu then return end
+	local visible = hud_visible()
+	local ox, oy, orr, inten = 0, 0, 0, 0
+	local vx, vy, vt, vr, occ_x, occ_y, rs = 0, 0, 0, 0, 0, 0, 0
+	if cfg.lens_enabled then
+		ox, oy, orr, inten, vx, vy, vt, vr, occ_x, occ_y, rs = motion_update()
+	end
+	local lens_on = cfg.lens_enabled and inten > 0.002 and bus_ready()
+	if lens_on then
+		send("motion",  inten, ox, oy, orr)
+		send("vig",     vx, vy, vt, vr)
+		send("vig_occ", occ_x, occ_y, cfg.rig_occlusion, housing_power())
+		send("sensor",  cfg.highlight_blowout, cfg.compression, rs, cfg.sensor_grade)
+	else
+		lens_off()
+		rs = 0
+	end
+	if HUD then
+		-- the lens exactly as the shader sees it, for placing ally markers
+		local L = lens_state
+		L.k = lens_on and clamp01(inten) or 0
+		L.ox, L.oy, L.roll = ox, oy, orr
+		L.dist, L.zoom, L.shutter = cfg.distortion, cfg.zoom, rs
+		HUD:Refresh(visible, lens_on, L)
+	end
+end
+
+function actor_on_net_destroy()
+	hud_remove()
+	lens_off()
+	motion_reset()
+	lens_state.k = 0
+	lens_state.shutter = 0
+end
+
+-- Title menu (no actor): turn the lens off. In-game pause/MCM: keep the lens active and zero rolling shutter.
+function main_menu_on_init()
+	in_menu = true
+	if db.actor and cfg.enabled and cfg.lens_enabled then
+		S.yaw_vel_s = 0
+		S.shutter_shock = 0
+		S.out_rs = 0
+		lens_state.shutter = 0
+		if tokens then
+			send("sensor", cfg.highlight_blowout, cfg.compression, 0, cfg.sensor_grade)
+			send("osd_info", 0, cfg.logo_style or defaults.logo_style or 0, 0, 0)
+		end
+	else
+		lens_off()
+		lens_state.k = 0
+		lens_state.shutter = 0
+	end
+end
+
+function main_menu_on_quit()
+	in_menu = false
+	S.t = nil
+	S.ready = false
+end
+
+function on_screen_resolution_changed()
+	if HUD then HUD.res = "" end
+end
+
+function on_game_start()
+	load_settings()
+	lens_off()                               -- clears a value left in user.ltx by a crash
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("actor_on_update", actor_on_update)
+	RegisterScriptCallback("actor_on_net_destroy", actor_on_net_destroy)
+	RegisterScriptCallback("actor_on_footstep", actor_on_footstep)
+	RegisterScriptCallback("actor_on_jump", actor_on_jump)
+	RegisterScriptCallback("actor_on_land", actor_on_land)
+	RegisterScriptCallback("actor_on_weapon_fired", actor_on_weapon_fired)
+	RegisterScriptCallback("actor_on_before_hit", actor_on_before_hit)
+	RegisterScriptCallback("main_menu_on_init", main_menu_on_init)
+	RegisterScriptCallback("main_menu_on_quit", main_menu_on_quit)
+	RegisterScriptCallback("on_screen_resolution_changed", on_screen_resolution_changed)
+	RegisterScriptCallback("on_option_change", settings_changed)
+end

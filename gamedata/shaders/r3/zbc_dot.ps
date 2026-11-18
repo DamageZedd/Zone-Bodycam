@@ -1,0 +1,17 @@
+#include "common.h"
+#include "hdr10.h"
+// Zone Bodycam - distant friendly NPC dot (shader "hud\zbc_dot")
+float4 main(p_TL I) : SV_Target
+{
+	float zbc_base = (s_base.Sample(smp_base, I.Tex0).a >= -1.0) ? 1.0 : 0.0;   // keeps the bound texture; always 1
+	float  r  = length(I.Tex0 - 0.5) * 2.0;        // 0 centre .. 1 edge of the square
+	float  fw = max(fwidth(r), 0.0001);
+	float  a  = saturate((0.95 - r) / fw);
+	float  c  = saturate((0.66 - r) / fw);
+	float3 rgb = I.Color.rgb * c;
+	float4 o = float4(rgb, max(a * 0.55, c) * I.Color.a);
+	if (HDR10_IS_ENABLED)
+		o.rgb = HDR10_ToDisplay_UI(o.rgb, HDR10_UI_NITS_SCALAR, o.a);
+	o.a *= zbc_base;
+	return o;
+}

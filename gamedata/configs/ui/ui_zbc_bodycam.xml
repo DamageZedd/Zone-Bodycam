@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<!-- Zone Bodycam HUD. Positions and sizes are set by scripts\zbc_bodycam.script for the current resolution.
+     The statics are drawn by procedural shaders (shaders\r3\hud_zbc_*.s); the texture is only a placeholder
+     the UI needs and is never sampled. -->
+<w>
+	<zbc_ring x="0" y="0" width="1024" height="768" stretch="1">
+		<texture shader="hud\zbc_ring">fx\fx_noise2</texture>
+	</zbc_ring>
+
+	<zbc_logo x="0" y="0" width="36" height="48" stretch="1">
+		<texture shader="hud\zbc_logo">fx\fx_noise2</texture>
+	</zbc_logo>
+
+	<zbc_tri x="0" y="0" width="36" height="48" stretch="1">
+		<texture shader="hud\zbc_tri">fx\fx_noise2</texture>
+	</zbc_tri>
+
+	<!-- ally markers (scripts\zbc_allies.script) -->
+	<zbc_box x="0" y="0" width="40" height="80" stretch="1">
+		<texture shader="hud\zbc_box">fx\fx_noise2</texture>
+	</zbc_box>
+
+	<zbc_brackets x="0" y="0" width="40" height="80" stretch="1">
+		<texture shader="hud\zbc_brackets">fx\fx_noise2</texture>
+	</zbc_brackets>
+
+	<zbc_dot x="0" y="0" width="10" height="14" stretch="1">
+		<texture shader="hud\zbc_dot">fx\fx_noise2</texture>
+	</zbc_dot>
+
+	<!-- the official logo, a normal texture (textures\ui\zbc_logo.dds) -->
+	<zbc_logo_tex x="0" y="0" width="36" height="48" stretch="1">
+		<texture>ui\zbc_logo</texture>
+	</zbc_logo_tex>
+
+	<!-- one overlay character; the script picks its cell in the glyph atlas (textures\ui\zbc_font.dds) -->
+	<zbc_glyph x="0" y="0" width="10" height="20" stretch="1">
+		<texture>ui\zbc_font</texture>
+	</zbc_glyph>
+</w>

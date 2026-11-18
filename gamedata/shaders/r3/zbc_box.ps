@@ -1,0 +1,13 @@
+#include "common.h"
+#include "hdr10.h"
+#include "zbc_marker.h"
+// Zone Bodycam - full box around a friendly NPC (shader "hud\zbc_box")
+float4 main(p_TL I) : SV_Target
+{
+	float zbc_base = (s_base.Sample(smp_base, I.Tex0).a >= -1.0) ? 1.0 : 0.0;   // keeps the bound texture; always 1
+	float2 uv = I.Tex0;
+	float2 px = max(fwidth(uv), 0.00001);
+	float2 e  = min(uv, 1.0 - uv) / px;            // pixels to the nearest vertical / horizontal edge
+	float  d  = min(e.x, e.y);
+	return zbc_marker_out(zbc_stroke(d, I.Color.rgb), I.Color.a) * float4(1.0, 1.0, 1.0, zbc_base);
+}

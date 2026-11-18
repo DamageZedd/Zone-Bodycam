@@ -1,0 +1,608 @@
+--[[
+	Zone Bodycam - ally markers (zbc_allies.script)
+
+	"Ally safe" markers from bodycam_effect, rebuilt:
+	- boxes (or corner brackets) on friendly and neutral stalkers, another colour for companions,
+	  dots past a distance; enemies are never marked
+	- placed through the exact inverse of the Zone Bodycam lens (fisheye, zoom, body motion), so a box
+	  sits on the NPC you see, not where it would be without the lens
+	- a fixed pool of HUD statics, reused every frame (the original created new ones and leaked)
+	- candidates rescanned 4x a second; positions updated every frame
+	- optional: only NPCs the actor can see
+
+	Called by zbc_bodycam.script: build() from the HUD constructor, update() every frame.
+]]
+
+local abs, floor, min, max, sin, cos, sqrt = math.abs, math.floor, math.min, math.max, math.sin, math.cos, math.sqrt
+
+local POOL = 20
+local SCAN_INTERVAL = 0.25
+local MAX_DT = 0.1
+
+local LOS_GRACE = 0.05
+local LOS_INTERVAL = 0.05
+local RQ_FLAGS = 3               -- rqtObject (1) + rqtStatic (2)
+local FL_PASSABLE = 128             -- bit 7
+local FL_VISION_OPAQUE = 1073741824 -- bit 30 (0x40000000): set on opaque solids in gamemtl.xr
+local LOS_MAX_STEPS = 3
+
+local POP_IN_RATE = 2.5
+local POP_OUT_RATE = 2.5
+local DEAD_OUT_RATE = 5.0
+local MORPH_RATE = 1.8
+local HYST_LOW = 0.96
+local HYST_HIGH = 1.04
+
+-- MCM list value -> colour; the last entry hides that kind of NPC
+local COLORS = {
+	{ 255, 255, 255 },  -- 0 white
+	{  80, 255,  90 },  -- 1 green
+	{  70, 230, 255 },  -- 2 cyan
+	{  80, 140, 255 },  -- 3 blue
+	{ 255, 225,   0 },  -- 4 yellow
+	{ 255,  70,  60 },  -- 5 red
+	{ 200,  90, 255 },  -- 6 purple
+	false,              -- 7 none
+}
+
+local candidates = {}
+local next_scan = 0
+local states = {}
+local last_now = nil
+
+local cand_set = {}
+local proc_ids = {}
+local draw_list = {}
+local los_ray = nil
+local tmp_top, tmp_pos, tmp_sz
+local tmp_cam, tmp_bone, tmp_ray_p, tmp_ray_d
+
+local function clamp01(x) return min(max(x, 0), 1) end
+local function lerp(a, b, t) return a + (b - a) * t end
+
+local function has_bit(flags, mask)
+	if not flags then return false end
+	if bit and bit.band then return bit.band(flags, mask) ~= 0 end
+	if bit_and then return bit_and(flags, mask) ~= 0 end
+	if flags < 0 then flags = flags + 4294967296 end
+	return floor(flags / mask) % 2 == 1
+end
+
+local function smoothstep(a, b, x)
+	local t = clamp01((x - a) / (b - a))
+	return t * t * (3 - 2 * t)
+end
+
+local function ease_out3(t)
+	local u = 1 - clamp01(t)
+	return 1 - u * u * u
+end
+
+local function move_toward(cur, target, step)
+	if cur < target then return min(cur + step, target) end
+	if cur > target then return max(cur - step, target) end
+	return target
+end
+
+---------------------------------------------------------------------------------------------------
+-- Lens model, mirrored from shaders\r3\zbc_lens.h (zbc_warp).
+-- L = { k, ox, oy, roll, dist, zoom, shutter }
+---------------------------------------------------------------------------------------------------
+
+-- screen uv -> rendered-image uv (what the shader does)
+local function warp(L, a, u, v)
+	local px, py = (u - 0.5) * a, v - 0.5
+	local rs = (L.shutter ~= nil) and L.shutter or (zbc_bodycam and zbc_bodycam.get_rolling_shutter and zbc_bodycam.get_rolling_shutter() or 0)
+	px = px + rs * L.k * py
+	local r2 = px * px + py * py
+	local k1 = L.dist * L.k
+	local zoom = max(1 + (L.zoom - 1) * L.k, 0.25)
+	local f = (1 + k1 * r2 + 0.5 * k1 * k1 * r2 * r2) / zoom
+	px, py = px * f, py * f
+	local ang = L.roll * L.k
+	local s, c = sin(ang), cos(ang)
+	px, py = c * px - s * py, s * px + c * py
+	px, py = px + L.ox * L.k, py + L.oy * L.k
+	return px / a + 0.5, py + 0.5
+end
+
+-- rendered-image uv -> screen uv (where that point is shown): Newton's method with a numerical
+-- Jacobian. Tested offline against the warp over the whole screen at the most extreme MCM settings:
+-- worst error 0.01 px at 1080p.
+local function unwarp(L, a, su, sv)
+	if L.k <= 0.0005 then return su, sv end
+	local zoom = max(1 + (L.zoom - 1) * L.k, 0.25)
+	local u, v = 0.5 + (su - 0.5) * zoom, 0.5 + (sv - 0.5) * zoom
+	local h = 0.0005
+	for _ = 1, 10 do
+		local wu, wv = warp(L, a, u, v)
+		local eu, ev = su - wu, sv - wv
+		if abs(eu) + abs(ev) < 0.000005 then break end
+		local au, av = warp(L, a, u + h, v)
+		local bu, bv = warp(L, a, u, v + h)
+		local j11, j21 = (au - wu) / h, (av - wv) / h
+		local j12, j22 = (bu - wu) / h, (bv - wv) / h
+		local det = j11 * j22 - j12 * j21
+		if abs(det) < 1e-9 then break end
+		u = u + ( j22 * eu - j12 * ev) / det
+		v = v + (-j21 * eu + j11 * ev) / det
+	end
+	return u, v
+end
+
+---------------------------------------------------------------------------------------------------
+-- Pool
+---------------------------------------------------------------------------------------------------
+
+local function hide(slot)
+	slot.box:Show(false)
+	slot.brk:Show(false)
+	slot.dot:Show(false)
+end
+
+local function reset_state()
+	candidates = {}
+	next_scan = 0
+	states = {}
+	last_now = nil
+	los_ray = nil
+	for k in pairs(cand_set) do cand_set[k] = nil end
+	for i = 1, #proc_ids do proc_ids[i] = nil end
+	for i = 1, #draw_list do draw_list[i] = nil end
+end
+
+function build(hud, xml)
+	reset_state()
+	local pool = {}
+	for i = 1, POOL do
+		pool[i] = {
+			box = xml:InitStatic("zbc_box", hud),
+			brk = xml:InitStatic("zbc_brackets", hud),
+			dot = xml:InitStatic("zbc_dot", hud),
+		}
+		hide(pool[i])
+	end
+	return pool
+end
+
+function hide_all(pool)
+	if not pool then return end
+	for i = 1, #pool do hide(pool[i]) end
+end
+
+---------------------------------------------------------------------------------------------------
+-- Candidates
+---------------------------------------------------------------------------------------------------
+
+local function scan(actor, range)
+	local apos = actor:position()
+	local r2 = range * range
+	local list = {}
+	for id, st in pairs(db.storage) do
+		local obj = st and st.object
+		if obj and id ~= 0 and IsStalker(obj) and obj:alive() then
+			local d2 = obj:position():distance_to_sqr(apos)
+			if d2 <= r2 and obj:relation(actor) ~= game_object.enemy then
+				list[#list + 1] = { id = id, d2 = d2 }
+			end
+		end
+	end
+	table.sort(list, function(x, y) return x.d2 < y.d2 end)
+	candidates = {}
+	for i = 1, min(#list, POOL) do candidates[i] = list[i].id end
+end
+
+local function project(vec)
+	if not vec then return nil end
+	local p = game.world2ui(vec, false)
+	if not p or p.x == -9999 then return nil end
+	return p.x / 1024, p.y / 768
+end
+
+local function project_dot(obj, L, a)
+	local su, sv = project(utils_obj.safe_bone_pos(obj, "bip01_spine"))
+	if not su then return nil end
+	local u, v = unwarp(L, a, su, sv)
+	if u > 0 and u < 1 and v > 0 and v < 1 then
+		return u * 1024, v * 768
+	end
+	return nil
+end
+
+local function project_box(obj, L, a, ux, uy, size)
+	local feet = obj:position()
+	local head = utils_obj.safe_bone_pos(obj, "bip01_head") or feet
+	tmp_top:set(head.x, max(head.y, feet.y + 0.5) + 0.22, head.z)
+	local tu, tv = project(tmp_top)
+	local fu, fv = project(feet)
+	if not (tu and fu) then return nil end
+	tu, tv = unwarp(L, a, tu, tv)
+	fu, fv = unwarp(L, a, fu, fv)
+	local h_ui = abs(fv - tv) * 768
+	if h_ui <= 2 then return nil end
+	h_ui = h_ui * size
+	local w_ui = (h_ui / uy) * 0.42 * ux
+	local cx = (tu + fu) * 0.5 * 1024
+	local cy = (tv + fv) * 0.5 * 768
+	if cx + w_ui * 0.5 <= 0 or cx - w_ui * 0.5 >= 1024 or cy + h_ui * 0.5 <= 0 or cy - h_ui * 0.5 >= 768 then
+		return nil
+	end
+	return cx, cy, w_ui, h_ui
+end
+
+---------------------------------------------------------------------------------------------------
+-- Animation & Slot Rendering
+---------------------------------------------------------------------------------------------------
+
+local function refresh_projections(ent, obj, L, a, ux, uy, size, dot_w, dot_h)
+	local bcx, dcx
+	if ent.target_dot == 0 or ent.dot_t < 0.99 then
+		local bcy, bw, bh
+		bcx, bcy, bw, bh = project_box(obj, L, a, ux, uy, size)
+		if bcx then
+			ent.bcx, ent.bcy, ent.bw, ent.bh = bcx, bcy, bw, bh
+		end
+	end
+	if ent.target_dot == 1 or ent.dot_t > 0.01 then
+		local dcy
+		dcx, dcy = project_dot(obj, L, a)
+		if dcx then
+			ent.dcx, ent.dcy = dcx, dcy
+		end
+	end
+	ent.dw, ent.dh = dot_w, dot_h
+	return (bcx ~= nil) or (dcx ~= nil)
+end
+
+local function ray_to_point(actor, obj_id, cam_vec, tx, ty, tz)
+	local dx = tx - cam_vec.x
+	local dy = ty - cam_vec.y
+	local dz = tz - cam_vec.z
+	local d = sqrt(dx * dx + dy * dy + dz * dz)
+	if d <= 0.25 then return true end
+	local inv = 1 / d
+	tmp_ray_d:set(dx * inv, dy * inv, dz * inv)
+	tmp_ray_p:set(cam_vec.x, cam_vec.y, cam_vec.z)
+	local rem = d - 0.15
+
+	los_ray = los_ray or ray_pick()
+	los_ray:set_flags(RQ_FLAGS)
+	los_ray:set_ignore_object(actor)
+
+	for step = 0, LOS_MAX_STEPS do
+		if rem <= 0.05 then return true end
+		los_ray:set_position(tmp_ray_p)
+		los_ray:set_direction(tmp_ray_d)
+		los_ray:set_range(rem)
+		if not los_ray:query() then return true end
+
+		local hit_obj = los_ray:get_object()
+		if hit_obj and hit_obj:id() == obj_id then return true end
+
+		local rq = los_ray:get_result()
+		local hit_dist = (rq and rq.range) or (los_ray.get_distance and los_ray:get_distance())
+		if not hit_dist or hit_dist < 0 then return false end
+		if hit_dist >= rem then return true end
+
+		local flags = rq and rq.material_flags
+		if not flags then return false end
+		local vis_tr = rq.material_vis_transparency_factor or 0
+		-- Bit 30 is set on opaque solids (concrete/bricks/metal/wood/earth) and clear on glass/bushes/mesh.
+		local pass = (not has_bit(flags, FL_VISION_OPAQUE))
+			and (has_bit(flags, FL_PASSABLE) or vis_tr >= 0.5)
+		if not pass or step == LOS_MAX_STEPS then return false end
+
+		local advance = hit_dist + 0.05
+		tmp_ray_p:set(
+			tmp_ray_p.x + tmp_ray_d.x * advance,
+			tmp_ray_p.y + tmp_ray_d.y * advance,
+			tmp_ray_p.z + tmp_ray_d.z * advance
+		)
+		rem = rem - advance
+	end
+	return false
+end
+
+local function has_los(actor, obj, obj_id, check_los, cam_vec)
+	if not check_los then return true end
+	if not (ray_pick and cam_vec) then
+		return actor:see(obj)
+	end
+	local safe_bone = utils_obj and utils_obj.safe_bone_pos
+	local pos = obj:position()
+
+	local head = safe_bone and safe_bone(obj, "bip01_head")
+	if head then
+		if ray_to_point(actor, obj_id, cam_vec, head.x, head.y, head.z) then return true end
+	else
+		tmp_bone:set(pos.x, pos.y + 1.5, pos.z)
+		if ray_to_point(actor, obj_id, cam_vec, tmp_bone.x, tmp_bone.y, tmp_bone.z) then return true end
+	end
+
+	local spine = safe_bone and safe_bone(obj, "bip01_spine")
+	if spine then
+		if ray_to_point(actor, obj_id, cam_vec, spine.x, spine.y, spine.z) then return true end
+	else
+		tmp_bone:set(pos.x, pos.y + 1.0, pos.z)
+		if ray_to_point(actor, obj_id, cam_vec, tmp_bone.x, tmp_bone.y, tmp_bone.z) then return true end
+	end
+	return false
+end
+
+local function step_entity(
+	id, actor, apos, cam_vec, now, range, dot_dist, in_cand,
+	cfg, L, a, ux, uy, dot_w, dot_h, col_n, col_c, dt
+)
+	local ent = states[id]
+	local obj = level.object_by_id(id)
+	if not obj or obj:relation(actor) == game_object.enemy then
+		states[id] = nil
+		return false
+	end
+
+	local col
+	if obj:has_info("npcx_is_companion") then
+		col = col_c
+	else
+		col = col_n
+	end
+	if not col then
+		states[id] = nil
+		return false
+	end
+
+	if not obj:alive() then
+		if not ent then return false end
+		ent.target_vis = 0
+		ent.los_grace = 0
+		ent.col = col
+		refresh_projections(ent, obj, L, a, ux, uy, cfg.allies_size, dot_w, dot_h)
+		ent.vis = move_toward(ent.vis, 0, DEAD_OUT_RATE * dt)
+		ent.dot_t = move_toward(ent.dot_t, ent.target_dot, MORPH_RATE * dt)
+		if ent.vis <= 0 then
+			states[id] = nil
+			return false
+		end
+		return ent.bcx ~= nil or ent.dcx ~= nil
+	end
+
+	local dist = obj:position():distance_to(apos)
+	local in_range = in_cand and (dist <= range)
+
+	if not ent then
+		if not in_range then return false end
+		local init_dot = (dist > dot_dist) and 1 or 0
+		local bcx, bcy, bw, bh, dcx, dcy
+		if init_dot == 1 then
+			dcx, dcy = project_dot(obj, L, a)
+		else
+			bcx, bcy, bw, bh = project_box(obj, L, a, ux, uy, cfg.allies_size)
+		end
+		if not (bcx or dcx) then return false end
+		if not has_los(actor, obj, id, cfg.allies_los, cam_vec) then return false end
+		ent = {
+			vis = move_toward(0, 1, POP_IN_RATE * dt),
+			target_vis = 1,
+			los_grace = LOS_GRACE,
+			los_ok = true,
+			next_los = now + LOS_INTERVAL,
+			dot_t = init_dot,
+			target_dot = init_dot,
+			col = col,
+			base_alpha = cfg.allies_opacity * (1 - smoothstep(range * 0.85, range, dist)),
+			bcx = bcx, bcy = bcy, bw = bw, bh = bh,
+			dcx = dcx, dcy = dcy, dw = dot_w, dh = dot_h,
+		}
+		states[id] = ent
+		return ent.vis > 0
+	end
+
+	ent.col = col
+	if dist <= range then
+		ent.base_alpha = cfg.allies_opacity * (1 - smoothstep(range * 0.85, range, dist))
+	end
+
+	if in_range then
+		if ent.target_dot == 0 then
+			if dist > dot_dist * HYST_HIGH then ent.target_dot = 1 end
+		else
+			if dist < dot_dist * HYST_LOW then ent.target_dot = 0 end
+		end
+	end
+
+	local live_ok = refresh_projections(ent, obj, L, a, ux, uy, cfg.allies_size, dot_w, dot_h)
+
+	if not in_range or not live_ok then
+		ent.los_grace = 0
+		ent.target_vis = 0
+	else
+		local seen
+		if not cfg.allies_los then
+			seen = true
+			ent.los_ok = true
+			ent.next_los = now
+		else
+			if not ent.next_los or now >= ent.next_los then
+				ent.los_ok = has_los(actor, obj, id, true, cam_vec)
+				ent.next_los = now + LOS_INTERVAL
+			end
+			seen = ent.los_ok
+		end
+		if seen then
+			ent.los_grace = LOS_GRACE
+			ent.target_vis = 1
+		else
+			ent.los_grace = max(ent.los_grace - dt, 0)
+			ent.target_vis = (ent.los_grace > 0) and 1 or 0
+		end
+	end
+
+	local vis_rate = (ent.target_vis == 1) and POP_IN_RATE or POP_OUT_RATE
+	ent.vis = move_toward(ent.vis, ent.target_vis, vis_rate * dt)
+	ent.dot_t = move_toward(ent.dot_t, ent.target_dot, MORPH_RATE * dt)
+
+	if ent.target_vis == 0 and ent.vis <= 0 then
+		states[id] = nil
+		return false
+	end
+	return (ent.vis > 0) and (ent.bcx ~= nil or ent.dcx ~= nil)
+end
+
+-- Prioritize active targets first, then highest-vis fading-out targets.
+local function cmp_draw(a, b)
+	local sa, sb = states[a], states[b]
+	if sa.target_vis ~= sb.target_vis then return sa.target_vis > sb.target_vis end
+	if sa.vis ~= sb.vis then return sa.vis > sb.vis end
+	return a < b
+end
+
+local function apply_wnd(wnd, cx, cy, w, h, argb)
+	wnd:SetWndPos(tmp_pos:set(cx - w * 0.5, cy - h * 0.5))
+	wnd:SetWndSize(tmp_sz:set(w, h))
+	wnd:SetTextureColor(argb)
+	wnd:Show(true)
+end
+
+local function draw_slot(slot, ent, dot_w, dot_h, style)
+	local col = ent.col
+	local r, g, b = col[1], col[2], col[3]
+	local vis_e = (ent.target_vis == 1) and ease_out3(ent.vis) or smoothstep(0, 1, ent.vis)
+	local pop_alpha = ent.base_alpha * vis_e
+
+	local box_pop_scale = (ent.target_vis == 1) and lerp(1.24, 1.0, vis_e) or lerp(1.14, 1.0, vis_e)
+	local dot_pop_scale = lerp(0.35, 1.0, vis_e)
+
+	local m = smoothstep(0, 1, ent.dot_t)
+	local dw, dh = ent.dw or dot_w, ent.dh or dot_h
+
+	local bx, by, bw, bh
+	if ent.bcx ~= nil then
+		bx, by, bw, bh = ent.bcx, ent.bcy, ent.bw, ent.bh
+	else
+		bx, by = ent.dcx, ent.dcy
+		bw, bh = dw * 2.5, dh * 5.0
+	end
+
+	local dx, dy = ent.dcx or bx, ent.dcy or by
+
+	local brackets = (style ~= 1)
+	local st = brackets and slot.brk or slot.box
+	local other = brackets and slot.box or slot.brk
+
+	if m <= 0.02 then
+		local argb = GetARGB(floor(255 * clamp01(pop_alpha)), r, g, b)
+		apply_wnd(st, bx, by, bw * box_pop_scale, bh * box_pop_scale, argb)
+		other:Show(false)
+		slot.dot:Show(false)
+	elseif m >= 0.98 then
+		local argb = GetARGB(floor(255 * clamp01(pop_alpha)), r, g, b)
+		apply_wnd(slot.dot, dx, dy, dw * dot_pop_scale, dh * dot_pop_scale, argb)
+		slot.box:Show(false)
+		slot.brk:Show(false)
+	else
+		local mcx = lerp(bx, dx, m)
+		local mcy = lerp(by, dy, m)
+
+		local box_w = lerp(bw, dw * 1.35, m) * box_pop_scale
+		local box_h = lerp(bh, dh * 1.35, m) * box_pop_scale
+		local box_a = (1 - smoothstep(0.15, 0.95, m)) * pop_alpha
+		apply_wnd(st, mcx, mcy, box_w, box_h, GetARGB(floor(255 * clamp01(box_a)), r, g, b))
+		other:Show(false)
+
+		local d_scale = lerp(0.55, 1.0, m) * dot_pop_scale
+		local dot_a = smoothstep(0.10, 0.85, m) * pop_alpha
+		apply_wnd(slot.dot, mcx, mcy, dw * d_scale, dh * d_scale, GetARGB(floor(255 * clamp01(dot_a)), r, g, b))
+	end
+end
+
+---------------------------------------------------------------------------------------------------
+-- Per frame
+---------------------------------------------------------------------------------------------------
+
+-- cfg: zbc_bodycam settings; L: lens state; visible: HUD shown
+function update(pool, cfg, L, visible)
+	if not pool then return end
+	local actor = db.actor
+	if not (visible and cfg.allies and actor) then
+		reset_state()
+		hide_all(pool)
+		return
+	end
+
+	tmp_top   = tmp_top   or vector()
+	tmp_pos   = tmp_pos   or vector2()
+	tmp_sz    = tmp_sz    or vector2()
+	tmp_cam   = tmp_cam   or vector()
+	tmp_bone  = tmp_bone  or vector()
+	tmp_ray_p = tmp_ray_p or vector()
+	tmp_ray_d = tmp_ray_d or vector()
+
+	local range = max(cfg.allies_range, 2)
+	local now = time_global() / 1000
+	if last_now and now < last_now then
+		next_scan = 0
+		last_now = nil
+		for _, ent in pairs(states) do ent.next_los = 0 end
+	end
+	local dt = last_now and min(max(now - last_now, 0), MAX_DT) or 0
+	last_now = now
+
+	if now >= next_scan then
+		next_scan = now + SCAN_INTERVAL
+		scan(actor, range)
+	end
+
+	local dev = device()
+	local W, H = dev.width, dev.height
+	local a = W / H
+	local ux, uy = 1024 / W, 768 / H
+	local cam_vec = nil
+	if dev.cam_pos then
+		cam_vec = tmp_cam:set(dev.cam_pos.x, dev.cam_pos.y, dev.cam_pos.z)
+	end
+	local apos = actor:position()
+	local col_n, col_c = COLORS[cfg.allies_color_neutral + 1], COLORS[cfg.allies_color_companion + 1]
+	local dot_dist = range * cfg.allies_dot_ratio
+	local dot_w, dot_h = 11 * cfg.allies_size * ux, 11 * cfg.allies_size * uy
+
+	for k in pairs(cand_set) do cand_set[k] = nil end
+	local n_proc = 0
+	for i = 1, #candidates do
+		local id = candidates[i]
+		if not cand_set[id] then
+			cand_set[id] = true
+			n_proc = n_proc + 1
+			proc_ids[n_proc] = id
+		end
+	end
+	for id in pairs(states) do
+		if not cand_set[id] then
+			n_proc = n_proc + 1
+			proc_ids[n_proc] = id
+		end
+	end
+
+	local n_draw = 0
+	for i = 1, n_proc do
+		local id = proc_ids[i]
+		local ok = step_entity(
+			id, actor, apos, cam_vec, now, range, dot_dist, cand_set[id] == true,
+			cfg, L, a, ux, uy, dot_w, dot_h, col_n, col_c, dt
+		)
+		if ok then
+			n_draw = n_draw + 1
+			draw_list[n_draw] = id
+		end
+	end
+	for i = n_draw + 1, #draw_list do draw_list[i] = nil end
+
+	if n_draw > 1 then
+		table.sort(draw_list, cmp_draw)
+	end
+
+	local n_shown = min(n_draw, #pool)
+	for i = 1, n_shown do
+		draw_slot(pool[i], states[draw_list[i]], dot_w, dot_h, cfg.allies_style)
+	end
+	for i = n_shown + 1, #pool do hide(pool[i]) end
+end
