@@ -112,7 +112,7 @@
     <text>Lens zoom</text>
   </string>
   <string id="ui_mcm_zone_bodycam_zoom_desc">
-    <text>Crops in so the body motion never shows the image edge.</text>
+    <text>Minimum crop. The lens always zooms in far enough to fill the screen for the current fisheye distortion and screen shape, so there are no black edges. Set this higher to crop in further.</text>
   </string>
   <string id="ui_mcm_zone_bodycam_allies">
     <text>Ally markers</text>

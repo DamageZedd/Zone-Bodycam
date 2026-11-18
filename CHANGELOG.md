@@ -23,4 +23,5 @@
 - The overlay's pixel shader area grew slightly (x from 0.55, y to 0.22), so larger text sizes and ultrawide layouts are no longer cut off.
 
 ### Fixed
+- **No more black edges when raising the fisheye distortion.** The lens now zooms in automatically, just far enough to fill the screen for the current distortion and screen shape (rolling-shutter shear included). The MCM **Lens zoom** slider is now a minimum: raise it to crop in further. Ally markers follow the same zoom.
 - Hiding the overlay right after changing a setting could leave the previous text on screen. Hiding now clears every glyph.

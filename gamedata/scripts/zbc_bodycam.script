@@ -209,8 +209,35 @@ local function housing_power()
 	return 2.0 + 3.0 * clamp01(cfg.housing_roundness or defaults.housing_roundness)
 end
 
+-- The barrel warp pushes the screen corners outside the rendered image (black edges), so the lens
+-- zooms in at least far enough that the corner still samples inside it. Mirrors zbc_warp in
+-- shaders\r3\zbc_lens.h at full intensity; at lower intensity the warp grows slower than the zoom
+-- (it is convex in the intensity), so the same value stays safe while the lens fades in.
+local FILL_SHEAR  = 0.0125   -- worst rolling-shutter shear at the corner (0.025 limit x half height)
+local FILL_MARGIN = 1.005    -- half a percent so filtering never reaches the very edge
+
+local function fill_zoom(k1)
+	local dev = device()
+	local asp = (dev and dev.height and dev.height > 0) and (dev.width / dev.height) or (16 / 9)
+	local uw  = min(1, (16 / 9) / max(asp, 0.1))
+	local px, py = asp * 0.5 + FILL_SHEAR, 0.5
+	local r2 = (px * px + py * py) * uw * uw
+	-- the shear also moves the corner sideways by itself, so it must shrink back to the image edge
+	return (1 + k1 * r2 + 0.5 * k1 * k1 * r2 * r2) * (px / (asp * 0.5)) * FILL_MARGIN
+end
+
+-- the zoom the lens actually uses: the MCM zoom, or more when the distortion needs it
+function lens_zoom()
+	local z = cfg.zoom or defaults.zoom
+	local d = cfg.distortion or defaults.distortion
+	return max(z, fill_zoom(max(d, 0)))
+end
+
+local cur_zoom = nil   -- lens_zoom() for the current settings and resolution, set by push_settings
+
 local function push_settings()
-	send("lens",    cfg.distortion, cfg.aberration, cfg.zoom, cfg.edge_soft_blur)
+	cur_zoom = lens_zoom()
+	send("lens",    cfg.distortion, cfg.aberration, cur_zoom, cfg.edge_soft_blur)
 	send("edge",    cfg.edge_radius, max(cfg.edge_softness, 0.001), cfg.vignette, clamp01(cfg.edge_shape))
 	send("extra",   min(max(cfg.edge_follow, 0), 3), clamp01(cfg.sharpen), clamp01(cfg.grain), cfg.edge_in_image and 1.0 or 0.0)
 	send("vig_occ", 0, 0, cfg.rig_occlusion, housing_power())
@@ -1148,7 +1175,7 @@ local function settings_changed()
 		send("sensor",  cfg.highlight_blowout, cfg.compression, 0, cfg.sensor_grade)
 		lens_state.k = clamp01(cfg.intensity)
 		lens_state.ox, lens_state.oy, lens_state.roll = S.out_x, S.out_y, S.out_r
-		lens_state.dist, lens_state.zoom, lens_state.shutter = cfg.distortion, cfg.zoom, 0
+		lens_state.dist, lens_state.zoom, lens_state.shutter = cfg.distortion, cur_zoom or lens_zoom(), 0
 	elseif in_menu then
 		lens_off()
 		lens_state.k = 0
@@ -1193,7 +1220,7 @@ function actor_on_update()
 		local L = lens_state
 		L.k = lens_on and clamp01(inten) or 0
 		L.ox, L.oy, L.roll = ox, oy, orr
-		L.dist, L.zoom, L.shutter = cfg.distortion, cfg.zoom, rs
+		L.dist, L.zoom, L.shutter = cfg.distortion, cur_zoom or lens_zoom(), rs
 		HUD:Refresh(visible, lens_on, L)
 	end
 end
@@ -1237,6 +1264,7 @@ end
 
 function on_screen_resolution_changed()
 	if HUD then HUD.last_w = -1 end
+	if db.actor and cfg.enabled ~= nil then push_settings() end   -- the fill zoom depends on the aspect ratio
 end
 
 function on_game_start()
