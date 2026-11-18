@@ -15,8 +15,6 @@
 
 <sub>Gameplay clip. Click it for the full-quality MP4 with sound.</sub>
 
-![Zone Bodycam in-game preview](docs/images/preview.png)
-
 ![Recording timer, overlay and ally markers](docs/images/rec_timer.webp)
 
 ---
