@@ -27,9 +27,10 @@ float4 main( p_postpr I ) : SV_Target
 {
 	float3	t_0;
 	float3	t_1;
+	float2	src_0 = I.Tex0;
 	[branch] if (ZBC_ACTIVE)
 	{
-		t_0 = zbc_lens_sample(s_base0, I.Tex0);
+		t_0 = zbc_lens_sample(s_base0, I.Tex0, src_0);
 		t_1 = (abs(I.Tex1.x - I.Tex0.x) + abs(I.Tex1.y - I.Tex0.y) < 0.000001) ? t_0 : zbc_lens_sample(s_base1, I.Tex1);
 	}
 	else
@@ -42,7 +43,7 @@ float4 main( p_postpr I ) : SV_Target
 	float	scene_vis = 1.0;
 	[branch] if (ZBC_ACTIVE)
 	{
-		scene_vis = zbc_valid(I.Tex0);
+		scene_vis = zbc_valid_src(src_0);
 		if (bus_zbc_extra.w >= 0.5)
 			scene_vis *= lerp(1.0, zbc_render(I.Tex0), saturate(bus_zbc_motion.x * 4.0));
 		image *= scene_vis;

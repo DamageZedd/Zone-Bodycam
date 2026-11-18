@@ -123,8 +123,8 @@ float4 zbc_osd_eval(float2 uv_s, float text_op, float logo_op, float logo_style,
 	if (text_op > 0.001)
 	{
 		float em_u     = em_v / asp.x;
-		float right_u  = 0.946;
-		float top_v    = 0.030 * asp.x;
+		float right_u  = logo_x - (0.004 / 0.035) * logo_w;
+		float top_v    = logo_y * (3.0 / 2.6);
 		float adv_u    = (33.0 / 64.0) * em_u;
 		float cell_w_u = (43.0 / 64.0) * em_u;
 		float cell_h_v = (81.0 / 64.0) * em_v;
@@ -179,7 +179,7 @@ float4 zbc_osd_eval(float2 uv_s, float text_op, float logo_op, float logo_style,
 void zbc_osd_composite(inout float3 image, float2 uv, inout float osd_mask)
 {
 	osd_mask = 0.0;
-	[branch] if (bus_zbc_osd_info.x > 0.5 && uv.x >= 0.60 && uv.y <= 0.18)
+	[branch] if (bus_zbc_osd_info.x > 0.5 && uv.x >= 0.55 && uv.y <= 0.22)
 	{
 		float  text_op    = saturate(bus_zbc_osd_info.z);
 		float  logo_op    = saturate(bus_zbc_osd_info.w);
@@ -192,6 +192,49 @@ void zbc_osd_composite(inout float3 image, float2 uv, inout float osd_mask)
 
 		float ca_px = screen_res.z * (0.65 + 0.55 * saturate(bus_zbc_lens.y));
 		float dy_px = screen_res.w * 0.70;
+
+		// Tight active OSD bounding rect (logo + max active lines + filter pad) to skip empty quadrant pixels
+		float  logo_x   = bus_zbc_osd_layout.x;
+		float  logo_y   = bus_zbc_osd_layout.y;
+		float  logo_w   = max(bus_zbc_osd_layout.z, 0.0001);
+		float2 osd_min  = float2(10.0, 10.0);
+		float2 osd_max  = float2(-10.0, -10.0);
+		if (logo_op > 0.001 && logo_style < 2.5)
+		{
+			osd_min = float2(logo_x, logo_y);
+			osd_max = float2(logo_x + logo_w, logo_y + logo_w * asp.x);
+		}
+		if (text_op > 0.001)
+		{
+			uint len0    = zbc_osd_len(0u);
+			uint len1    = zbc_osd_len(1u);
+			uint len2    = zbc_osd_len(2u);
+			uint max_len = max(len0, max(len1, len2));
+			if (max_len > 0u)
+			{
+				float em_v     = max(bus_zbc_osd_layout.w, 0.001);
+				float em_u     = em_v / asp.x;
+				float right_u  = logo_x - (0.004 / 0.035) * logo_w;
+				float top_v    = logo_y * (3.0 / 2.6);
+				float adv_u    = (33.0 / 64.0) * em_u;
+				float cell_w_u = (43.0 / 64.0) * em_u;
+				float cell_h_v = (81.0 / 64.0) * em_v;
+				float pad_u    = (5.0 / 64.0) * em_u;
+				float pad_v    = (5.0 / 64.0) * em_v;
+				uint  first_i  = (len0 > 0u) ? 0u : ((len1 > 0u) ? 1u : 2u);
+				uint  last_i   = (len2 > 0u) ? 2u : ((len1 > 0u) ? 1u : 0u);
+				float tx0      = right_u - (float)max_len * adv_u - pad_u;
+				float tx1      = right_u - adv_u - pad_u + cell_w_u;
+				float ty0      = top_v + (float)first_i * em_v - pad_v;
+				float ty1      = top_v + (float)last_i  * em_v - pad_v + cell_h_v;
+				osd_min = min(osd_min, float2(tx0, ty0));
+				osd_max = max(osd_max, float2(tx1, ty1));
+			}
+		}
+		float2 pad_roi = float2(ca_px + screen_res.z, dy_px + screen_res.w);
+		if (uv_o.x < osd_min.x - pad_roi.x || uv_o.x > osd_max.x + pad_roi.x
+		 || uv_o.y < osd_min.y - pad_roi.y || uv_o.y > osd_max.y + pad_roi.y)
+			return;
 
 		float4 c_r  = float4(0.0, 0.0, 0.0, 0.0);
 		float4 c_g  = float4(0.0, 0.0, 0.0, 0.0);

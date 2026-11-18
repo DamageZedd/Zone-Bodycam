@@ -53,6 +53,8 @@ local last_now = nil
 local cand_set = {}
 local proc_ids = {}
 local draw_list = {}
+local scan_ids, scan_d2 = {}, {}
+local frame_W = {}
 local los_ray = nil
 local tmp_top, tmp_pos, tmp_sz
 local tmp_cam, tmp_bone, tmp_ray_p, tmp_ray_d
@@ -89,37 +91,57 @@ end
 -- L = { k, ox, oy, roll, dist, zoom, shutter }
 ---------------------------------------------------------------------------------------------------
 
--- screen uv -> rendered-image uv (what the shader does)
-local function warp(L, a, u, v)
-	local px, py = (u - 0.5) * a, v - 0.5
-	local rs = (L.shutter ~= nil) and L.shutter or (zbc_bodycam and zbc_bodycam.get_rolling_shutter and zbc_bodycam.get_rolling_shutter() or 0)
-	px = px + rs * L.k * py
-	local r2 = px * px + py * py
-	local k1 = L.dist * L.k
-	local zoom = max(1 + (L.zoom - 1) * L.k, 0.25)
-	local f = (1 + k1 * r2 + 0.5 * k1 * k1 * r2 * r2) / zoom
+-- Precompute frame-constant lens parameters for warp/unwarp.
+local function fill_warp_frame(W, L, a)
+	local k = L.k
+	local get_rs = zbc_bodycam and zbc_bodycam.get_rolling_shutter
+	local rs = (L.shutter ~= nil) and L.shutter or (get_rs and get_rs() or 0)
+	local zoom = max(1 + (L.zoom - 1) * k, 0.25)
+	local uw = min(1, (16 / 9) / max(a, 0.1))
+	local ang = L.roll * k
+	W.k = k
+	W.a = a
+	W.inv_a = 1 / a
+	W.rsk = rs * k
+	W.k1 = L.dist * k
+	W.k2 = 0.5 * W.k1 * W.k1
+	W.zoom = zoom
+	W.inv_zoom = 1 / zoom
+	W.uw2 = uw * uw
+	W.s = sin(ang)
+	W.c = cos(ang)
+	W.oxk = L.ox * k
+	W.oyk = L.oy * k
+	return W
+end
+
+-- screen uv -> rendered-image uv using precomputed frame constants W
+local function warp_frame(W, u, v)
+	local px, py = (u - 0.5) * W.a, v - 0.5
+	px = px + W.rsk * py
+	local r2_eff = (px * px + py * py) * W.uw2
+	local f = (1 + W.k1 * r2_eff + W.k2 * r2_eff * r2_eff) * W.inv_zoom
 	px, py = px * f, py * f
-	local ang = L.roll * L.k
-	local s, c = sin(ang), cos(ang)
+	local s, c = W.s, W.c
 	px, py = c * px - s * py, s * px + c * py
-	px, py = px + L.ox * L.k, py + L.oy * L.k
-	return px / a + 0.5, py + 0.5
+	return (px + W.oxk) * W.inv_a + 0.5, py + W.oyk + 0.5
 end
 
 -- rendered-image uv -> screen uv (where that point is shown): Newton's method with a numerical
 -- Jacobian. Tested offline against the warp over the whole screen at the most extreme MCM settings:
 -- worst error 0.01 px at 1080p.
-local function unwarp(L, a, su, sv)
+local function unwarp(L, a, su, sv, W)
 	if L.k <= 0.0005 then return su, sv end
-	local zoom = max(1 + (L.zoom - 1) * L.k, 0.25)
+	W = W or fill_warp_frame(frame_W, L, a)
+	local zoom = W.zoom
 	local u, v = 0.5 + (su - 0.5) * zoom, 0.5 + (sv - 0.5) * zoom
 	local h = 0.0005
 	for _ = 1, 10 do
-		local wu, wv = warp(L, a, u, v)
+		local wu, wv = warp_frame(W, u, v)
 		local eu, ev = su - wu, sv - wv
 		if abs(eu) + abs(ev) < 0.000005 then break end
-		local au, av = warp(L, a, u + h, v)
-		local bu, bv = warp(L, a, u, v + h)
+		local au, av = warp_frame(W, u + h, v)
+		local bu, bv = warp_frame(W, u, v + h)
 		local j11, j21 = (au - wu) / h, (av - wv) / h
 		local j12, j22 = (bu - wu) / h, (bv - wv) / h
 		local det = j11 * j22 - j12 * j21
@@ -141,7 +163,7 @@ local function hide(slot)
 end
 
 local function reset_state()
-	candidates = {}
+	for i = 1, #candidates do candidates[i] = nil end
 	next_scan = 0
 	states = {}
 	last_now = nil
@@ -149,6 +171,10 @@ local function reset_state()
 	for k in pairs(cand_set) do cand_set[k] = nil end
 	for i = 1, #proc_ids do proc_ids[i] = nil end
 	for i = 1, #draw_list do draw_list[i] = nil end
+	for i = 1, #scan_ids do
+		scan_ids[i] = nil
+		scan_d2[i] = nil
+	end
 end
 
 function build(hud, xml)
@@ -177,19 +203,29 @@ end
 local function scan(actor, range)
 	local apos = actor:position()
 	local r2 = range * range
-	local list = {}
+	local n = 0
 	for id, st in pairs(db.storage) do
 		local obj = st and st.object
 		if obj and id ~= 0 and IsStalker(obj) and obj:alive() then
 			local d2 = obj:position():distance_to_sqr(apos)
 			if d2 <= r2 and obj:relation(actor) ~= game_object.enemy then
-				list[#list + 1] = { id = id, d2 = d2 }
+				if n < POOL or d2 < scan_d2[POOL] then
+					local limit = (n < POOL) and (n + 1) or POOL
+					local pos = limit
+					while pos > 1 and d2 < scan_d2[pos - 1] do
+						scan_d2[pos] = scan_d2[pos - 1]
+						scan_ids[pos] = scan_ids[pos - 1]
+						pos = pos - 1
+					end
+					scan_d2[pos] = d2
+					scan_ids[pos] = id
+					if n < POOL then n = n + 1 end
+				end
 			end
 		end
 	end
-	table.sort(list, function(x, y) return x.d2 < y.d2 end)
-	candidates = {}
-	for i = 1, min(#list, POOL) do candidates[i] = list[i].id end
+	for i = 1, n do candidates[i] = scan_ids[i] end
+	for i = n + 1, #candidates do candidates[i] = nil end
 end
 
 local function project(vec)
@@ -199,25 +235,25 @@ local function project(vec)
 	return p.x / 1024, p.y / 768
 end
 
-local function project_dot(obj, L, a)
+local function project_dot(obj, L, a, W)
 	local su, sv = project(utils_obj.safe_bone_pos(obj, "bip01_spine"))
 	if not su then return nil end
-	local u, v = unwarp(L, a, su, sv)
+	local u, v = unwarp(L, a, su, sv, W)
 	if u > 0 and u < 1 and v > 0 and v < 1 then
 		return u * 1024, v * 768
 	end
 	return nil
 end
 
-local function project_box(obj, L, a, ux, uy, size)
+local function project_box(obj, L, a, ux, uy, size, W)
 	local feet = obj:position()
 	local head = utils_obj.safe_bone_pos(obj, "bip01_head") or feet
 	tmp_top:set(head.x, max(head.y, feet.y + 0.5) + 0.22, head.z)
 	local tu, tv = project(tmp_top)
 	local fu, fv = project(feet)
 	if not (tu and fu) then return nil end
-	tu, tv = unwarp(L, a, tu, tv)
-	fu, fv = unwarp(L, a, fu, fv)
+	tu, tv = unwarp(L, a, tu, tv, W)
+	fu, fv = unwarp(L, a, fu, fv, W)
 	local h_ui = abs(fv - tv) * 768
 	if h_ui <= 2 then return nil end
 	h_ui = h_ui * size
@@ -234,18 +270,18 @@ end
 -- Animation & Slot Rendering
 ---------------------------------------------------------------------------------------------------
 
-local function refresh_projections(ent, obj, L, a, ux, uy, size, dot_w, dot_h)
+local function refresh_projections(ent, obj, L, a, ux, uy, size, dot_w, dot_h, W)
 	local bcx, dcx
 	if ent.target_dot == 0 or ent.dot_t < 0.99 then
 		local bcy, bw, bh
-		bcx, bcy, bw, bh = project_box(obj, L, a, ux, uy, size)
+		bcx, bcy, bw, bh = project_box(obj, L, a, ux, uy, size, W)
 		if bcx then
 			ent.bcx, ent.bcy, ent.bw, ent.bh = bcx, bcy, bw, bh
 		end
 	end
 	if ent.target_dot == 1 or ent.dot_t > 0.01 then
 		local dcy
-		dcx, dcy = project_dot(obj, L, a)
+		dcx, dcy = project_dot(obj, L, a, W)
 		if dcx then
 			ent.dcx, ent.dcy = dcx, dcy
 		end
@@ -331,7 +367,7 @@ end
 
 local function step_entity(
 	id, actor, apos, cam_vec, now, range, dot_dist, in_cand,
-	cfg, L, a, ux, uy, dot_w, dot_h, col_n, col_c, dt
+	cfg, L, a, ux, uy, dot_w, dot_h, col_n, col_c, dt, W
 )
 	local ent = states[id]
 	local obj = level.object_by_id(id)
@@ -356,7 +392,7 @@ local function step_entity(
 		ent.target_vis = 0
 		ent.los_grace = 0
 		ent.col = col
-		refresh_projections(ent, obj, L, a, ux, uy, cfg.allies_size, dot_w, dot_h)
+		refresh_projections(ent, obj, L, a, ux, uy, cfg.allies_size, dot_w, dot_h, W)
 		ent.vis = move_toward(ent.vis, 0, DEAD_OUT_RATE * dt)
 		ent.dot_t = move_toward(ent.dot_t, ent.target_dot, MORPH_RATE * dt)
 		if ent.vis <= 0 then
@@ -374,9 +410,9 @@ local function step_entity(
 		local init_dot = (dist > dot_dist) and 1 or 0
 		local bcx, bcy, bw, bh, dcx, dcy
 		if init_dot == 1 then
-			dcx, dcy = project_dot(obj, L, a)
+			dcx, dcy = project_dot(obj, L, a, W)
 		else
-			bcx, bcy, bw, bh = project_box(obj, L, a, ux, uy, cfg.allies_size)
+			bcx, bcy, bw, bh = project_box(obj, L, a, ux, uy, cfg.allies_size, W)
 		end
 		if not (bcx or dcx) then return false end
 		if not has_los(actor, obj, id, cfg.allies_los, cam_vec) then return false end
@@ -410,7 +446,7 @@ local function step_entity(
 		end
 	end
 
-	local live_ok = refresh_projections(ent, obj, L, a, ux, uy, cfg.allies_size, dot_w, dot_h)
+	local live_ok = refresh_projections(ent, obj, L, a, ux, uy, cfg.allies_size, dot_w, dot_h, W)
 
 	if not in_range or not live_ok then
 		ent.los_grace = 0
@@ -553,9 +589,10 @@ function update(pool, cfg, L, visible)
 	end
 
 	local dev = device()
-	local W, H = dev.width, dev.height
-	local a = W / H
-	local ux, uy = 1024 / W, 768 / H
+	local sw, sh = dev.width, dev.height
+	local a = sw / sh
+	local ux, uy = 1024 / sw, 768 / sh
+	local W = fill_warp_frame(frame_W, L, a)
 	local cam_vec = nil
 	if dev.cam_pos then
 		cam_vec = tmp_cam:set(dev.cam_pos.x, dev.cam_pos.y, dev.cam_pos.z)
@@ -587,7 +624,7 @@ function update(pool, cfg, L, visible)
 		local id = proc_ids[i]
 		local ok = step_entity(
 			id, actor, apos, cam_vec, now, range, dot_dist, cand_set[id] == true,
-			cfg, L, a, ux, uy, dot_w, dot_h, col_n, col_c, dt
+			cfg, L, a, ux, uy, dot_w, dot_h, col_n, col_c, dt, W
 		)
 		if ok then
 			n_draw = n_draw + 1

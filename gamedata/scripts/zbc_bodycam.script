@@ -153,6 +153,13 @@ local LANES = {
 local tokens = nil          -- nil: not tried yet, false: bus unavailable
 local bus_warned = false
 local atlas_uploaded = false
+local sent_cache = {}
+
+local function clear_send_cache()
+	for _, c in pairs(sent_cache) do
+		c[1] = nil
+	end
+end
 
 local function bus_ready()
 	if tokens == nil then
@@ -166,6 +173,7 @@ local function bus_ready()
 				t[key] = tok
 			end
 			tokens = t
+			if tokens then clear_send_cache() end
 		end
 		if tokens == false and not bus_warned then
 			bus_warned = true
@@ -184,6 +192,14 @@ local function finite(v) return type(v) == "number" and v == v and v > -1e9 and 
 local function send(lane, x, y, z, w)
 	if not bus_ready() then return end
 	if not (finite(x) and finite(y) and finite(z) and finite(w)) then return end
+	local c = sent_cache[lane]
+	if c and c[1] == x and c[2] == y and c[3] == z and c[4] == w then return end
+	if not c then
+		c = { x, y, z, w }
+		sent_cache[lane] = c
+	else
+		c[1], c[2], c[3], c[4] = x, y, z, w
+	end
 	shader_bus.set(tokens[lane], x, y, z, w)
 end
 
@@ -225,8 +241,10 @@ local function move_state(name)
 	return ok and (res == true)
 end
 
+local function read_actor_power(actor) return actor.power end
+
 local function actor_stamina(actor)
-	local ok, p = pcall(function() return actor.power end)
+	local ok, p = pcall(read_actor_power, actor)
 	if ok and type(p) == "number" then return clamp01(p) end
 	return 1.0
 end
@@ -241,15 +259,18 @@ local function is_ads()
 	return w == true
 end
 
+local function read_dir_pitch(dir) return dir:getP() end
+
 local function cam_pitch(dir)
 	if dir and dir.getP then
-		local ok, p = pcall(function() return dir:getP() end)
+		local ok, p = pcall(read_dir_pitch, dir)
 		if ok and type(p) == "number" then return p end
 	end
 	return asin(clampv(dir.y, 1))
 end
 
 local function motion_reset()
+	clear_send_cache()
 	S = {
 		ready = false,
 		t = nil,
@@ -372,15 +393,29 @@ function actor_on_weapon_fired(obj)
 	vkick(0.09 + rnd() * 0.06, -0.18, (0.14 + rnd() * 0.16) * cfg.roll, 0.22, rnd() * 0.018)
 end
 
+local function read_shit_power(shit) return shit.power end
+
 function actor_on_before_hit(shit)
 	if not (cfg.enabled and cfg.lens_enabled and S.ready) then return end
-	local ok, p = pcall(function() return shit.power end)
+	local ok, p = pcall(read_shit_power, shit)
 	local k = min(max(ok and tonumber(p) or 0.3, 0.15), 1.5)
 	kick(rnd() * 0.12 * k, 0.08 * k, rnd() * 0.18 * k * cfg.roll)
 	vkick(rnd() * 0.40 * k, 0.32 * k, rnd() * 0.55 * k * cfg.roll, min(0.45 * k, 0.85), rnd() * 0.030 * k)
 end
 
-local function copy(v) return vector():set(v) end
+local mv_dir, mv_right, mv_top, mv_pos
+
+local function seed_motion_vecs(dir, right, top, pos)
+	mv_dir   = mv_dir   or vector()
+	mv_right = mv_right or vector()
+	mv_top   = mv_top   or vector()
+	mv_pos   = mv_pos   or vector()
+	mv_dir:set(dir.x, dir.y, dir.z)
+	mv_right:set(right.x, right.y, right.z)
+	mv_top:set(top.x, top.y, top.z)
+	mv_pos:set(pos.x, pos.y, pos.z)
+	S.dir, S.right, S.top, S.pos = mv_dir, mv_right, mv_top, mv_pos
+end
 
 -- returns world (ox, oy, roll, inten), vignette (vig_ox, vig_oy, vig_tighten, vig_roll),
 -- chest-rig occlusion (occ_x, occ_y), and rolling_shutter
@@ -394,7 +429,8 @@ local function motion_update()
 	local pos = actor:position()
 
 	if not S.ready or not S.t then
-		S.t, S.dir, S.right, S.top, S.pos = now, copy(dir), copy(right), copy(top), copy(pos)
+		S.t = now
+		seed_motion_vecs(dir, right, top, pos)
 		S.cam_h = cam.y - pos.y
 		S.ready = true
 		return S.out_x, S.out_y, S.out_r, S.out_i, S.out_vx, S.out_vy, S.out_vt, S.out_vr, S.out_ox, S.out_oy, 0
@@ -403,7 +439,7 @@ local function motion_update()
 	local dt = now - S.t
 	S.t = now
 	if dt <= 0.0001 or dt > 0.25 then           -- paused, loading hitch or teleport: re-seed
-		S.dir, S.right, S.top, S.pos = copy(dir), copy(right), copy(top), copy(pos)
+		seed_motion_vecs(dir, right, top, pos)
 		S.cam_h = cam.y - pos.y
 		return S.out_x, S.out_y, S.out_r, S.out_i, S.out_vx, S.out_vy, S.out_vt, S.out_vr, S.out_ox, S.out_oy, S.out_rs
 	end
@@ -415,7 +451,9 @@ local function motion_update()
 	local ddx, ddy, ddz = dir.x - S.dir.x, dir.y - S.dir.y, dir.z - S.dir.z
 	local d_right = ddx * S.right.x + ddy * S.right.y + ddz * S.right.z
 	local d_up    = ddx * S.top.x   + ddy * S.top.y   + ddz * S.top.z
-	S.dir, S.right, S.top = copy(dir), copy(right), copy(top)
+	S.dir:set(dir.x, dir.y, dir.z)
+	S.right:set(right.x, right.y, right.z)
+	S.top:set(top.x, top.y, top.z)
 	local lim = 8.0 * dt                        -- ignore animation spikes above 8 rad/s
 	d_right, d_up = clampv(d_right, lim), clampv(d_up, lim)
 	local inv = cfg.turn_invert and -1 or 1
@@ -458,7 +496,7 @@ local function motion_update()
 
 	-- 3. Strafe lean and vertical inertia from body velocity
 	local vx, vy, vz = (pos.x - S.pos.x) / dt, (pos.y - S.pos.y) / dt, (pos.z - S.pos.z) / dt
-	S.pos = copy(pos)
+	S.pos:set(pos.x, pos.y, pos.z)
 	local v_right = vx * right.x + vy * right.y + vz * right.z
 	local v_up    = vy
 	local aon = ease(4.0, dt)
@@ -603,22 +641,36 @@ local function add_hours(Y, M, D, h, dh)
 	return Y, M, D, h
 end
 
+local d_Y, d_M, d_D, d_h, d_mi, d_s, d_tz, d_iso, d_str
+
 local function date_line()
 	local Y, M, D, h, mi, s = game.get_game_time():get()
 	Y, M, D = tonumber(Y) or 2012, tonumber(M) or 1, tonumber(D) or 1
 	h, mi, s = tonumber(h) or 0, tonumber(mi) or 0, tonumber(s) or 0
+	local tz_cfg = cfg.timezone
+	local iso = (cfg.iso_t == true)
+	if d_str and Y == d_Y and M == d_M and D == d_D
+		and h == d_h and mi == d_mi and s == d_s
+		and tz_cfg == d_tz and iso == d_iso then
+		return d_str, d_s
+	end
+	d_Y, d_M, d_D, d_h, d_mi, d_s, d_tz, d_iso = Y, M, D, h, mi, s, tz_cfg, iso
+	local oY, oM, oD, oh = Y, M, D, h
 	local tz
-	if cfg.timezone == 1 then
-		Y, M, D, h = add_hours(Y, M, D, h, -zone_offset(Y, M, D, h))
+	if tz_cfg == 1 then
+		oY, oM, oD, oh = add_hours(oY, oM, oD, oh, -zone_offset(oY, oM, oD, oh))
 		tz = "+0000"
 	else
-		tz = string.format("+%02d00", zone_offset(Y, M, D, h))
+		tz = string.format("+%02d00", zone_offset(oY, oM, oD, oh))
 	end
-	return string.format("%04d-%02d-%02d %s%02d:%02d:%02d %s", Y, M, D, cfg.iso_t and "T" or "", h, mi, s, tz), s
+	d_str = string.format("%04d-%02d-%02d %s%02d:%02d:%02d %s", oY, oM, oD, iso and "T" or "", oh, mi, s, tz)
+	return d_str, s
 end
 
+local function read_actor_name() return db.actor and db.actor:character_name() end
+
 local function actor_name()
-	local ok, name = pcall(function() return db.actor and db.actor:character_name() end)
+	local ok, name = pcall(read_actor_name)
 	if ok and type(name) == "string" then return name end
 	return ""
 end
@@ -678,10 +730,13 @@ local function upload_osd_chars(s1, s2, s3)
 	shader_bus.set_array_uint(tokens.osd_chars, 0, osd_char_rows)
 end
 
+local tmp_v2, tmp_rect
+
 class "ZbcHud" (CUIScriptWnd)
 
 function ZbcHud:__init() super()
-	self:SetWndRect(Frect():set(0, 0, 1024, 768))
+	tmp_rect = tmp_rect or Frect()
+	self:SetWndRect(tmp_rect:set(0, 0, 1024, 768))
 	self:SetAutoDelete(true)
 
 	local xml = CScriptXmlInit()
@@ -704,11 +759,26 @@ function ZbcHud:__init() super()
 		end
 		self.lines[i] = { glyphs = glyphs, text = nil, visible = false }
 	end
-	self.res = ""
+	self.last_w = -1
+	self.last_h = -1
+	self.last_fs = -1
 	self.asp = 16 / 9
+	self.eff_w_u = 1
+	self.eff_asp = 16 / 9
 	self.em_v = 0
+	self.ring_shown = nil
+	self.logos_hidden = false
+	self.shown_logo_style = nil
 	self.osd_dirty = true
-	self.osd_key = nil
+	self.osd_date = nil
+	self.osd_dev = nil
+	self.osd_show_name = nil
+	self.osd_tz = nil
+	self.osd_iso = nil
+	self.osd_w = nil
+	self.osd_h = nil
+	self.osd_fs = nil
+	self.sec_date = nil
 	self:Apply()
 end
 
@@ -727,39 +797,46 @@ function ZbcHud:Apply()
 	self.logos[2]:SetTextureColor(GetARGB(la, 255, 225, 0))
 	-- the ring shader reads the grain amount from the red channel
 	self.ring:SetTextureColor(GetARGB(255, floor(255 * clamp01(cfg.grain)), 255, 255))
-	self.res = ""
+	self.last_w = -1
+	self.shown_logo_style = nil
 	self.osd_dirty = true
 end
 
--- the reference layout is in % of screen width (vw), measured from a real overlay recreation
+-- the reference layout is in % of effective 16:9 width (eff_w), keeping ultrawide crisp in top-right
 function ZbcHud:Layout()
 	local W, H = device().width, device().height
-	local key = W .. "x" .. H .. ":" .. tostring(cfg.font_size)
-	if key == self.res then return end
-	self.res = key
+	local fs = cfg.font_size
+	if W == self.last_w and H == self.last_h and fs == self.last_fs then return end
+	self.last_w, self.last_h, self.last_fs = W, H, fs
 
 	local ux, uy = 1024 / W, 768 / H                 -- UI units per screen pixel
-	local function vx(v) return v * 0.01 * W * ux end
-	local function vy(v) return v * 0.01 * W * uy end
+	local eff_w = min(W, H * (16 / 9))
 
-	self.ring:SetWndPos(vector2():set(0, 0))
-	self.ring:SetWndSize(vector2():set(1024, 768))
+	tmp_v2 = tmp_v2 or vector2()
+	self.ring:SetWndPos(tmp_v2:set(0, 0))
+	self.ring:SetWndSize(tmp_v2:set(1024, 768))
 
+	local logo_x = (W - 0.050 * eff_w) * ux
+	local logo_y = (0.026 * eff_w) * uy
+	local logo_w = (0.035 * eff_w) * ux
+	local logo_h = (0.035 * eff_w) * uy
 	for _, s in pairs(self.logos) do
-		s:SetWndPos(vector2():set(vx(95.0), vy(2.6)))
-		s:SetWndSize(vector2():set(vx(3.5), vy(3.5)))  -- square on screen
+		s:SetWndPos(tmp_v2:set(logo_x, logo_y))
+		s:SetWndSize(tmp_v2:set(logo_w, logo_h))    -- square on screen
 	end
 
 	-- text: right edge just left of the logo, lines one em apart starting at 3vw
-	local em_px = (FONT_VW[cfg.font_size] or 1.2) * 0.01 * W
+	local em_px = (FONT_VW[fs] or 1.2) * 0.01 * eff_w
 	self.asp = W / H
+	self.eff_w_u = eff_w / W
+	self.eff_asp = eff_w / H
 	self.em_v = em_px / H
 	self.osd_dirty = true
 	self.glyph = {
 		scale = em_px / F.em,                          -- screen px per atlas px
 		ux = ux, uy = uy,
-		right = 94.6 * 0.01 * W,                       -- screen px
-		tops = { 3.0 * 0.01 * W, 3.0 * 0.01 * W + em_px, 3.0 * 0.01 * W + 2 * em_px },
+		right = W - 0.054 * eff_w,                     -- screen px
+		tops = { 0.030 * eff_w, 0.030 * eff_w + em_px, 0.030 * eff_w + 2 * em_px },
 	}
 	for _, line in ipairs(self.lines) do line.text = nil end
 end
@@ -776,6 +853,8 @@ function ZbcHud:SetLine(i, str)
 	local adv = F.advance * G.scale
 	local x0 = G.right - n * adv
 	local y0 = G.tops[i]
+	tmp_v2 = tmp_v2 or vector2()
+	tmp_rect = tmp_rect or Frect()
 	local qw, qh = F.cell_w * G.scale * G.ux, F.cell_h * G.scale * G.uy
 	for c = 1, MAX_CHARS do
 		local g = line.glyphs[c]
@@ -785,11 +864,11 @@ function ZbcHud:SetLine(i, str)
 		else
 			local k = code - F.first
 			local tx, ty = (k % F.cols) * F.cell_w, floor(k / F.cols) * F.cell_h
-			g:SetTextureRect(Frect():set(tx, ty, tx + F.cell_w, ty + F.cell_h))
+			g:SetTextureRect(tmp_rect:set(tx, ty, tx + F.cell_w, ty + F.cell_h))
 			local px = x0 + (c - 1) * adv - F.pad * G.scale
 			local py = y0 - F.pad * G.scale
-			g:SetWndPos(vector2():set(px * G.ux, py * G.uy))
-			g:SetWndSize(vector2():set(qw, qh))
+			g:SetWndPos(tmp_v2:set(px * G.ux, py * G.uy))
+			g:SetWndSize(tmp_v2:set(qw, qh))
 			g:Show(line.visible)
 		end
 	end
@@ -811,24 +890,47 @@ function ZbcHud:Refresh(visible, lens_on, lens)
 	zbc_allies.update(self.allies, cfg, lens, visible)
 
 	-- the housing follows the lens itself, so it stays while the lens fades out (no exposed edges)
-	self.ring:Show(lens_on and not cfg.edge_in_image)
+	local ring_vis = lens_on and not cfg.edge_in_image
+	if self.ring_shown ~= ring_vis then
+		self.ring:Show(ring_vis)
+		self.ring_shown = ring_vis
+	end
 
 	local show = cfg.overlay and visible
 	local osd_in_post = lens_on
 	if osd_in_post then
-		for _, s in pairs(self.logos) do s:Show(false) end
-		for i = 1, 3 do self:ShowLine(i, false) end
+		if not self.logos_hidden then
+			for _, s in pairs(self.logos) do s:Show(false) end
+			for i = 1, 3 do self:ShowLine(i, false) end
+			self.logos_hidden = true
+			self.shown_logo_style = -1
+		end
 
 		send("osd_info", show and 1 or 0, cfg.logo_style, clamp01(cfg.text_opacity), clamp01(cfg.logo_opacity))
 		if not show then return end
 
-		send("osd_layout", 0.950, 0.026 * self.asp, 0.035, self.em_v)
+		send("osd_layout", 1.0 - 0.050 * self.eff_w_u, 0.026 * self.eff_asp, 0.035 * self.eff_w_u, self.em_v)
 		local date, sec = date_line()
-		local line_key = tostring(cfg.device_label) .. "\n" .. tostring(cfg.show_name)
-			.. "\n" .. tostring(cfg.timezone) .. "\n" .. tostring(cfg.iso_t) .. "\n" .. self.res
-		if self.osd_dirty or sec ~= self.sec or line_key ~= self.osd_key or self.lines[1].text ~= nil then
+		if self.osd_dirty
+			or date ~= self.osd_date
+			or cfg.device_label ~= self.osd_dev
+			or cfg.show_name ~= self.osd_show_name
+			or cfg.timezone ~= self.osd_tz
+			or cfg.iso_t ~= self.osd_iso
+			or self.last_w ~= self.osd_w
+			or self.last_h ~= self.osd_h
+			or self.last_fs ~= self.osd_fs
+			or self.lines[1].text ~= nil
+		then
 			self.sec = sec
-			self.osd_key = line_key
+			self.osd_date = date
+			self.osd_dev = cfg.device_label
+			self.osd_show_name = cfg.show_name
+			self.osd_tz = cfg.timezone
+			self.osd_iso = cfg.iso_t
+			self.osd_w = self.last_w
+			self.osd_h = self.last_h
+			self.osd_fs = self.last_fs
 			self.osd_dirty = false
 			self.lines[1].text = nil
 			local name = actor_name()
@@ -838,17 +940,23 @@ function ZbcHud:Refresh(visible, lens_on, lens)
 	end
 
 	self.osd_dirty = true
+	self.logos_hidden = false
 	if tokens then
 		send("osd_info", 0, cfg.logo_style, 0, 0)
 	end
 
-	for style, s in pairs(self.logos) do s:Show(show and cfg.logo_style == style) end
+	local target_logo = show and cfg.logo_style or -1
+	if self.shown_logo_style ~= target_logo then
+		for style, s in pairs(self.logos) do s:Show(show and cfg.logo_style == style) end
+		self.shown_logo_style = target_logo
+	end
 	for i = 1, 3 do self:ShowLine(i, show and (i < 3 or cfg.show_name)) end
 	if not show then return end
 
 	local date, sec = date_line()
-	if sec ~= self.sec or self.lines[1].text == nil then
+	if date ~= self.sec_date or sec ~= self.sec or self.lines[1].text == nil then
 		self.sec = sec
+		self.sec_date = date
 		local name = actor_name()
 		self:SetLine(1, date)
 		self:SetLine(2, cfg.device_label .. " " .. serial_for(name))
@@ -881,21 +989,24 @@ local function hud_remove()
 	HUD = nil
 end
 
+local function read_hud_visible()
+	return _HUD_STATE
+		and actor_menu.last_mode == 0
+		and pda.dialog_closed == true
+		and not Check_UI()
+		and get_console_cmd(1, "hud_draw")
+end
+
 -- main_hud_shown() without its two zoom conditions: a bodycam keeps recording while you scope in
 -- (the effect never changes with aiming: it is driven by movement only)
 local function hud_visible()
-	local ok, shown = pcall(function()
-		return _HUD_STATE
-			and actor_menu.last_mode == 0
-			and pda.dialog_closed == true
-			and not Check_UI()
-			and get_console_cmd(1, "hud_draw")
-	end)
+	local ok, shown = pcall(read_hud_visible)
 	if ok then return shown and true or false end
 	return true
 end
 
 local function settings_changed()
+	clear_send_cache()
 	load_settings()
 	push_settings()
 	if not cfg.enabled then
@@ -933,6 +1044,7 @@ end
 
 function actor_on_first_update()
 	in_menu = false                          -- loading from the title menu may not fire main_menu_on_quit
+	clear_send_cache()
 	load_settings()
 	push_settings()
 	motion_reset()
@@ -970,6 +1082,7 @@ end
 
 function actor_on_net_destroy()
 	hud_remove()
+	clear_send_cache()
 	lens_off()
 	motion_reset()
 	lens_state.k = 0
@@ -979,6 +1092,7 @@ end
 -- Title menu (no actor): turn the lens off. In-game pause/MCM: keep the lens active and zero rolling shutter.
 function main_menu_on_init()
 	in_menu = true
+	clear_send_cache()
 	if db.actor and cfg.enabled and cfg.lens_enabled then
 		S.yaw_vel_s = 0
 		S.shutter_shock = 0
@@ -1002,7 +1116,7 @@ function main_menu_on_quit()
 end
 
 function on_screen_resolution_changed()
-	if HUD then HUD.res = "" end
+	if HUD then HUD.last_w = -1 end
 end
 
 function on_game_start()

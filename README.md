@@ -27,6 +27,8 @@
   Displays in-game date/time (`Zone` `+0200`/`+0300` summer or `UTC +0000`, optional `ISO T`), configurable device label & serial (`AXON BODY 3`), character name, and logo (`ui\zbc_logo.dds`, swirl triangle, plain triangle, or hidden). Composited inside `postprocess` after fisheye warp and above the corner vignette—so text stays unwarped while passing through CMOS compression, grading, grain, and rolling-shutter shear.
 - **Line-of-Sight Ally & Companion Markers** (`gamedata/scripts/zbc_allies.script`):
   Marks friendly/neutral stalkers and companions (never enemies) through the exact inverse lens warp (`unwarp`) using a fixed pool of 20 reusable HUD statics. Uses real-time 20 Hz `ray_pick` camera line-of-sight that blocks on solid opaque geometry (`FL_VISION_OPAQUE` / `gamemtl.xr` bit 30) while seeing through foliage (`FL_PASSABLE`), fences, water, and destructible object glass, with smooth pop-in/out (`0.40 s`), quick death fade (`0.20 s`), and bidirectional bracket-to-dot morphing (`~0.56 s`).
+- **Automatic Aspect-Ratio Scaling**:
+  Works out of the box across `4:3`, `16:10`, `16:9`, `21:9` (`2560x1080`, `3440x1440`), and `32:9` (`5120x1440`) without separate FOMOD patches—preventing ultrawide barrel-warp side clipping, matching 16:9 vignette framing, keeping `unwarp` aligned, and preserving consistent top-right Axon overlay sizing.
 - **Full MCM Support** (`gamedata/scripts/zbc_bodycam_mcm.script`):
   In-game sliders and toggles for Master Toggle, Lens & Sensor, Body Motion, Overlay, and Ally Markers.
 

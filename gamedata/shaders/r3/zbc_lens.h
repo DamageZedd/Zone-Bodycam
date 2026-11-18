@@ -28,6 +28,14 @@ float zbc_hash(float2 p)
 	return frac((p.x + p.y) * p.x);
 }
 
+// Vectorized 2D -> 3D hash in [0, 1) for decorrelated luma + chroma sensor grain
+float3 zbc_hash3(float2 p)
+{
+	float3 p3 = frac(float3(p.xyx) * float3(0.1031, 0.1030, 0.0973));
+	p3 += dot(p3, p3.yxz + 33.33);
+	return frac((p3.xxy + p3.yzz) * p3.zyx);
+}
+
 // body motion: roll about the centre, then shift (p centred, in screen heights)
 float2 zbc_motion(float2 p, float amount)
 {
@@ -41,51 +49,36 @@ float2 zbc_motion(float2 p, float amount)
 // screen uv -> uv in the rendered image: rolling-shutter shear, barrel distortion, zoom, then world motion.
 float2 zbc_warp(float2 uv)
 {
-	float  k    = ZBC_INTENSITY;
-	float2 asp  = zbc_aspect();
-	float2 p    = (uv - 0.5) * asp;
-	p.x        += bus_zbc_sensor.z * k * (uv.y - 0.5);
-	float  r2   = dot(p, p);
-	float  k1   = bus_zbc_lens.x * k;
-	float  zoom = max(lerp(1.0, bus_zbc_lens.z, k), 0.25);
-	p *= (1.0 + k1 * r2 + 0.5 * k1 * k1 * r2 * r2) / zoom;
+	float  k      = ZBC_INTENSITY;
+	float2 asp    = zbc_aspect();
+	float2 p      = (uv - 0.5) * asp;
+	p.x          += bus_zbc_sensor.z * k * (uv.y - 0.5);
+	float  r2     = dot(p, p);
+	float  k1     = bus_zbc_lens.x * k;
+	float  zoom   = max(lerp(1.0, bus_zbc_lens.z, k), 0.25);
+	float  uw     = min(1.0, (16.0 / 9.0) / asp.x);
+	float  r2_eff = r2 * uw * uw;
+	p *= (1.0 + k1 * r2_eff + 0.5 * k1 * k1 * r2_eff * r2_eff) / zoom;
 	p  = zbc_motion(p, 1.0);
 	return p / asp + 0.5;
 }
 
 // 1 inside the rendered image, feathering smoothly to 0 over ~10 px where the lens would sample past its edge.
-float zbc_valid(float2 uv)
+float zbc_valid_src(float2 src)
 {
-	float2 src = zbc_warp(uv);
-	float2 d   = min(src, 1.0 - src) * screen_res.xy;
+	float2 d = min(src, 1.0 - src) * screen_res.xy;
 	return smoothstep(0.0, 10.0, min(d.x, d.y));
 }
 
-// Single-tap-group helper: reuses 4 cross neighbors for both unsharp mask and radial peripheral softness.
-float3 zbc_sample_4tap(Texture2D tex, float2 uv, float2 px_step, float sh, float edge_soft)
-{
-	float3 c = tex.SampleLevel(smp_rtlinear, uv, 0).rgb;
-	[branch] if (sh > 0.0001 || edge_soft > 0.0001)
-	{
-		float3 n = tex.SampleLevel(smp_rtlinear, uv + float2(px_step.x, 0.0), 0).rgb
-		         + tex.SampleLevel(smp_rtlinear, uv - float2(px_step.x, 0.0), 0).rgb
-		         + tex.SampleLevel(smp_rtlinear, uv + float2(0.0, px_step.y), 0).rgb
-		         + tex.SampleLevel(smp_rtlinear, uv - float2(0.0, px_step.y), 0).rgb;
-		float3 avg    = n * 0.25;
-		float3 detail = c - avg;
-		float  sh_eff = sh * (1.0 - 0.65 * edge_soft);
-		c += clamp(detail, -0.08, 0.08) * (sh_eff * 1.6);
-		c  = lerp(c, avg, edge_soft);
-	}
-	return c;
-}
+float zbc_valid(float2 uv) { return zbc_valid_src(zbc_warp(uv)); }
 
-// Lens tap: warp, per-channel sharpen + wide-angle peripheral softness BEFORE radial CA (zero cross-channel bleed).
-float3 zbc_lens_sample(Texture2D tex, float2 uv)
+// Lens tap: warp, 5-tap center unsharp + wide-angle peripheral softness + 2-tap (.r/.b) radial CA (7 taps max).
+float3 zbc_lens_sample(Texture2D tex, float2 uv, out float2 out_src)
 {
 	float  k   = ZBC_INTENSITY;
 	float2 asp = zbc_aspect();
 	float2 src = zbc_warp(uv);
+	out_src    = src;
 	float  ca  = bus_zbc_lens.y * k;
 	float  sh  = saturate(bus_zbc_extra.y) * k;
 
@@ -94,19 +87,37 @@ float3 zbc_lens_sample(Texture2D tex, float2 uv)
 	float  edge_soft = saturate(bus_zbc_lens.w) * k * r2_norm * 0.60;
 	float2 px_step   = screen_res.zw * (1.0 + 1.4 * edge_soft);
 
-	float3 col;
+	float3 c_g   = tex.SampleLevel(smp_rtlinear, src, 0).rgb;
+	float3 avg   = c_g;
+	float  d_lum = 0.0;
+	[branch] if (sh > 0.0001 || edge_soft > 0.0001)
+	{
+		float3 n = tex.SampleLevel(smp_rtlinear, src + float2(px_step.x, 0.0), 0).rgb
+		         + tex.SampleLevel(smp_rtlinear, src - float2(px_step.x, 0.0), 0).rgb
+		         + tex.SampleLevel(smp_rtlinear, src + float2(0.0, px_step.y), 0).rgb
+		         + tex.SampleLevel(smp_rtlinear, src - float2(0.0, px_step.y), 0).rgb;
+		avg   = n * 0.25;
+		d_lum = dot(c_g - avg, float3(0.2126, 0.7152, 0.0722));
+	}
+
+	float3 col = c_g;
 	[branch] if (ca > 0.0001)
 	{
 		float2 o = (src - 0.5) * (0.012 * ca);
-		col.r = zbc_sample_4tap(tex, src + o, px_step, sh, edge_soft).r;
-		col.g = zbc_sample_4tap(tex, src,     px_step, sh, edge_soft).g;
-		col.b = zbc_sample_4tap(tex, src - o, px_step, sh, edge_soft).b;
+		col.r = tex.SampleLevel(smp_rtlinear, src + o, 0).r;
+		col.b = tex.SampleLevel(smp_rtlinear, src - o, 0).b;
 	}
-	else
-	{
-		col = zbc_sample_4tap(tex, src, px_step, sh, edge_soft);
-	}
+
+	float sh_eff = sh * (1.0 - 0.65 * edge_soft);
+	col += clamp(d_lum, -0.08, 0.08) * (sh_eff * 1.6);
+	col  = lerp(col, avg, edge_soft);
 	return max(col, 0.0);
+}
+
+float3 zbc_lens_sample(Texture2D tex, float2 uv)
+{
+	float2 src;
+	return zbc_lens_sample(tex, uv, src);
 }
 
 // Modern-gritty Axon CMOS sensor pass (before engine colormap/gamma):
@@ -172,14 +183,19 @@ float3 zbc_sensor_pass(float3 c, float2 uv, float3 ddx_c, float3 ddy_c)
 // Only used in postprocess pass; HUD-layer mode uses zbc_ring.ps.
 float3 zbc_grain(float3 c, float2 uv, float osd_mask, float scene_vis)
 {
+	float lift_w = saturate(scene_vis + osd_mask);
+	if (lift_w <= 0.0001)
+		return c;
+
 	float g = saturate(bus_zbc_extra.z) * ZBC_INTENSITY;
 	[branch] if (g >= 0.001)
 	{
 		float2 px    = floor(uv * screen_res.xy);
 		float2 t_off = floor(timers.x * 30.0) * float2(37.0, 17.0);
-		float  nl    = zbc_hash(px + t_off) - 0.5;
-		float  nc_r  = zbc_hash(px + t_off + float2(113.0, 71.0)) - 0.5;
-		float  nc_b  = zbc_hash(px + t_off + float2(241.0, 137.0)) - 0.5;
+		float3 h3    = zbc_hash3(px + t_off) - 0.5;
+		float  nl    = h3.x;
+		float  nc_r  = h3.y;
+		float  nc_b  = h3.z;
 		float3 grain = nl.xxx + float3(nc_r, -0.5 * (nc_r + nc_b), nc_b) * 0.35;
 
 		float  luma     = dot(c, float3(0.2126, 0.7152, 0.0722));
@@ -187,7 +203,6 @@ float3 zbc_grain(float3 c, float2 uv, float osd_mask, float scene_vis)
 		// inv_l * sqrt(inv_l) = inv_l^1.5 without pow(0, 1.5) NaN risk
 		float  shadow_w = max(0.08 + 0.92 * inv_l * sqrt(max(inv_l, 0.0)), 0.42 * saturate(osd_mask));
 		float  amp      = g * shadow_w;
-		float  lift_w   = saturate(scene_vis + osd_mask);
 
 		c = max(c * (1.0 + grain * (amp * 0.22)) + grain * (amp * 0.022 * inv_l * lift_w), 0.0);
 	}
@@ -211,27 +226,45 @@ float zbc_render(float2 uv)
 	sincos(bus_zbc_vig.w * k, s, c);
 	d = float2(c * d.x - s * d.y, s * d.x + c * d.y);
 
-	// 2. Clean circle (0) -> screen aspect (1) shape interpolation
-	d.x /= max(lerp(1.0, asp.x, saturate(bus_zbc_edge.w)), 0.1);
+	// 2. Clean circle (0) -> screen aspect (1) shape interpolation, matching 16:9 framing on ultrawides
+	float s_w    = saturate(bus_zbc_edge.w);
+	float w_div  = lerp(1.0, asp.x, s_w);
+	float asp_16 = 16.0 / 9.0;
+	if (asp.x > asp_16)
+	{
+		float w_match = (asp.x / asp_16) * lerp(1.0, asp_16, s_w);
+		w_div = lerp(1.0, w_match, smoothstep(0.0, 0.25, s_w));
+	}
+	d.x /= max(w_div, 0.1);
 
-	// 3. Overflow/NaN-safe superellipse distance (p in 2..6)
+	// 3. Overflow/NaN-safe superellipse distance (p in 2..6; fast L2 when circular, single pow when rounded)
 	float  n  = clamp(bus_zbc_vig_occ.w, 2.0, 6.0);
 	float2 ad = abs(d);
 	float  m  = max(ad.x, ad.y);
 	float  r  = 0.0;
 	if (m > 1e-5)
 	{
-		float2 q = max(ad / m, 1e-4);
-		r = m * pow(pow(q.x, n) + pow(q.y, n), 1.0 / n);
+		if (n <= 2.001)
+		{
+			r = sqrt(dot(ad, ad));
+		}
+		else
+		{
+			float q_min = max(min(ad.x, ad.y) / m, 1e-4);
+			r = m * pow(1.0 + pow(q_min, n), 1.0 / n);
+		}
 	}
 
-	// 4. Smooth optical vignette + dynamic tightening + rounded housing bezel
+	// 4. Rounded housing bezel first: early out on dead-black corners before optical cos() / occlusion
 	float tighten = saturate(bus_zbc_vig.z) * k;
 	float R_base  = max(bus_zbc_edge.x, 0.05);
 	float R_eff   = max(R_base * (1.0 - 0.05 * tighten), 0.10);
 	float b       = max(bus_zbc_edge.y, 0.001);
 	float housing = 1.0 - smoothstep(R_eff - b, R_eff, r);
+	if (housing <= 0.0001)
+		return 0.0;
 
+	// 5. Smooth optical vignette + dynamic tightening
 	float vig_str  = saturate(bus_zbc_edge.z + 0.14 * tighten);
 	float t        = saturate(r / max(R_eff, 0.25));
 	float c_opt    = cos(t * 1.12);
