@@ -3,80 +3,76 @@
 <sub>S.T.A.L.K.E.R. ANOMALY / G.A.M.M.A.</sub>
 
 # ZONE BODYCAM
-### CHEST-MOUNTED BODYCAM LENS, CMOS SENSOR, MOTION & TACTICAL OVERLAY
 
-*Wide-angle optical housing, Axon CMOS sensor pipeline, chest body motion, and line-of-sight tactical markers.*
+*See the Zone through a chest-mounted police bodycam.*
 
 ![Version](https://img.shields.io/badge/version-v1.0.0-e0a43c?style=for-the-badge) ![Author](https://img.shields.io/badge/by-Damage__Zedd-8fae5a?style=for-the-badge) ![Game](https://img.shields.io/badge/S.T.A.L.K.E.R.-Anomaly%201.5.3%20%2F%20GAMMA-555555?style=for-the-badge)
 
-</div>
-
 [![Zone Bodycam gameplay](docs/images/gameplay.webp)](docs/images/gameplay.mp4)
 
-<sub>Gameplay clip. Click it for the full-quality MP4 with sound.</sub>
+<sub>Click the clip for the full-quality video with sound.</sub>
 
-![Recording timer, overlay and ally markers](docs/images/rec_timer.webp)
+</div>
 
----
+## What you get
 
-## Features
+- **Bodycam lens.** Fisheye view with the camera housing around the edges, a small-sensor look, grain and a slight wobble when you turn fast or get hit. The lens zooms in by itself, so stronger fisheye never leaves black edges.
+- **Chest-mounted motion.** The camera sits on your chest, not your head. It lags behind your turns, bobs with your steps, and jolts when you land, shoot or get hit. Your aim is never affected.
+- **Bodycam overlay.**
+  - **Top right:** in-game date and time, device name and serial, your character's name and the logo.
+  - **Top left:** a flashing red dot and `REC 00:54:17`, showing how long you've been recording this playthrough. It counts real time and is kept in your save.
+- **Ally markers.** Friendly and neutral stalkers you can see get a box, so you know who not to shoot. Enemies are never marked.
+- **Every screen shape.** 4:3, 16:9, ultrawide 21:9 and 32:9 all work out of the box.
 
-- **Post-Upscale Optical Fisheye & Housing** (`gamedata/shaders/r3/zbc_lens.h`, `postprocess.ps`, `postprocess_cm.ps`):
-  Runs in the display-resolution post chain after DLSS/FSR reconstruction via `shader_bus`, so upscalers never see barrel distortion. Includes radial chromatic aberration, peripheral optical softness, sensor sharpening, configurable circle-to-squircle bezel geometry (`housing_roundness`), motion-reactive neutral vignette (`edge_follow`), and dynamic chest-rig / shoulder / weapon-aim frame occlusion.
-- **Axon-Style CMOS Sensor Pipeline**:
-  Small-sensor highlight blowout roll-off, subtle digital video compression & horizontal chroma bleed, cool-neutral CMOS contrast grade, 30 Hz sensor grain, and signed horizontal rolling-shutter shear on rapid turns, gunfire, and hits.
-- **Chest Body Motion** (`gamedata/scripts/zbc_bodycam.script`):
-  Frame-rate independent two-stage damped tracking for turn lag, walking gait bob & roll, breathing, crouch/lean shifts, and spring-damped impacts (steps, landings, jumps, shots, hits). Always active across HUD and UI states when enabled.
-- **In-Shader Top-Right Axon Overlay** (`gamedata/shaders/r3/zbc_osd.h`, `zbc_osd_atlas.script`):
-  Displays in-game date/time (`Zone` `+0200`/`+0300` summer or `UTC +0000`, optional `ISO T`), configurable device label & serial (`AXON BODY 3`), character name, and logo (`ui\zbc_logo.dds`, swirl triangle, plain triangle, or hidden). Composited inside `postprocess` after fisheye warp and above the corner vignette—so text stays unwarped while passing through CMOS compression, grading, grain, and rolling-shutter shear.
-- **Recording Timer (top left)** (`gamedata/scripts/zbc_bodycam.script`, `zbc_osd.h`):
-  A flashing red dot and `REC HH:MM:SS` showing how long the camera has been recording in this playthrough. It uses the overlay font and mirrors the top-right margin. The time is real time, stored on the actor, so it carries through saves and level changes. It can be turned off in MCM and is on by default.
-- **Line-of-Sight Ally & Companion Markers** (`gamedata/scripts/zbc_allies.script`):
-  Marks friendly/neutral stalkers and companions (never enemies) through the exact inverse lens warp (`unwarp`) using a fixed pool of 20 reusable HUD statics. Uses real-time 20 Hz `ray_pick` camera line-of-sight that blocks on solid opaque geometry (`FL_VISION_OPAQUE` / `gamemtl.xr` bit 30) while seeing through foliage (`FL_PASSABLE`), fences, water, and destructible object glass, with smooth pop-in/out (`0.40 s`), quick death fade (`0.20 s`), and bidirectional bracket-to-dot morphing (`~0.56 s`).
-- **Automatic Aspect-Ratio Scaling**:
-  Works out of the box across `4:3`, `16:10`, `16:9`, `21:9` (`2560x1080`, `3440x1440`), and `32:9` (`5120x1440`) without separate FOMOD patches—preventing ultrawide barrel-warp side clipping, matching 16:9 vignette framing, keeping `unwarp` aligned, and preserving consistent top-right Axon overlay sizing.
-- **Full MCM Support** (`gamedata/scripts/zbc_bodycam_mcm.script`):
-  In-game sliders and toggles for Master Toggle, Lens & Sensor, Body Motion, Overlay, and Ally Markers.
+Everything can be tuned or turned off in MCM.
 
----
+![Recording timer, overlay and ally markers in game](docs/images/rec_timer.webp)
 
 ## Requirements
 
-- **S.T.A.L.K.E.R. Anomaly 1.5.3** (tested on **G.A.M.M.A.**)
-- **xray-monolith-bodycam (Slop-Ray engine)** with `shader_bus` support for the post-process lens, CMOS pipeline, and in-shader overlay *(falls back gracefully to HUD overlay if Shader Bus is unavailable)*
-- **MCM (Mod Configuration Menu)** recommended
-
----
+- S.T.A.L.K.E.R. Anomaly 1.5.3. Made and tested on G.A.M.M.A.
+- **Slop-Ray engine** (xray-monolith-bodycam) for the lens. Without it the lens is off, but the overlay and markers still work.
+- **MCM** to change settings (recommended).
 
 ## Installation
 
-1. Install into **Mod Organizer 2** as its own mod containing `gamedata/` (above mods providing vanilla `postprocess.ps` / `postprocess_cm.ps` overrides, if applicable).
-2. Clear `Anomaly/appdata/shaders_cache` before launching so DX11 shaders recompile cleanly.
-3. Configure preferences in **MCM -> Zone Bodycam**.
+1. Install the archive with Mod Organizer 2 like any other mod.
+2. If another mod also replaces `postprocess.ps` or `postprocess_cm.ps`, give Zone Bodycam higher priority (put it lower in MO2's left pane).
+3. Delete the contents of `Anomaly\appdata\shaders_cache` once, so the new shaders are built.
+4. Start the game and open **MCM → Zone Bodycam**.
 
----
+## Settings
 
-## Repository Layout
+| Section | What you can change |
+|---|---|
+| **Lens** | Strength, fisheye, zoom, chromatic aberration, sharpening, edge size and shape, vignette, grain, colour grade, rolling shutter |
+| **Body motion** | Overall amount, turn lag, walking bob, camera roll, impacts, breathing |
+| **Overlay** | Overlay on/off, recording timer on/off, device name, show your name, logo style, time zone, text size and opacity |
+| **Ally markers** | On/off, only NPCs you can see, style, colours, range, size, opacity |
 
-```text
-.
-├── docs/images/            # README screenshots and gameplay clip
-├── fomod/                  # FOMOD installer metadata (info.xml, ModuleConfig.xml)
-├── gamedata/
-│   ├── configs/            # UI XML & MCM English localization (ui_st_zbc_bodycam.xml)
-│   ├── scripts/            # Motion, Shader Bus driver, MCM, baked OSD atlas, LOS ally markers
-│   ├── shaders/r3/         # Lens, CMOS sensor, OSD compositing, and HUD marker shaders
-│   └── textures/ui/        # Pre-built glyph atlas (zbc_font.dds) & logo texture (zbc_logo.dds)
-├── tools/
-│   ├── make_overlay_assets.py
-│   └── source_assets/      # Font & logo source assets for regenerating DDS textures & font metrics
-└── meta.ini                # MO2 mod metadata
-```
+## Good to know
 
-### Regenerating Overlay Textures
+- **Black edges or a broken screen after updating?** Clear `Anomaly\appdata\shaders_cache` and restart.
+- **Too much fisheye?** Lower **Fisheye distortion**. The zoom adjusts by itself. **Lens zoom** only adds extra crop on top.
+- **Using a run timer mod?** Run timers usually sit in the top-left corner too. Move them, or turn off the recording timer in MCM.
+- **Changes** are listed in [CHANGELOG.md](CHANGELOG.md).
 
-Requires Python + Pillow (`PIL`):
+## Credits
 
-```bash
-py -I tools/make_overlay_assets.py tools/source_assets/KlartextMonoBold.ttf tools/source_assets/logo.png gamedata
-```
+- Mod by **Damage_Zedd**.
+- Body motion based on the damped camera chase from **Sludge's Intrusive 3D Masks**.
+
+<details>
+<summary><b>For modders</b></summary>
+
+<br>
+
+- Lens, sensor and overlay are drawn in `postprocess.ps` / `postprocess_cm.ps` (`gamedata/shaders/r3/zbc_*.h`), after DLSS/FSR, with values sent through Slop-Ray's Shader Bus.
+- Scripts: `zbc_bodycam.script` (settings, motion, overlay, timer), `zbc_allies.script` (markers), `zbc_bodycam_mcm.script` (menu).
+- The overlay font and logo textures are generated from `tools/source_assets`. To rebuild them (needs Python and Pillow):
+
+  ```bash
+  py -I tools/make_overlay_assets.py tools/source_assets/KlartextMonoBold.ttf tools/source_assets/logo.png gamedata
+  ```
+
+</details>
