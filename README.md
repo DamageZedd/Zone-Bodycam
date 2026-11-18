@@ -31,7 +31,7 @@ Everything can be tuned or turned off in MCM.
 ## Requirements
 
 - S.T.A.L.K.E.R. Anomaly 1.5.3. Made and tested on G.A.M.M.A.
-- **Slop-Ray engine** (xray-monolith-bodycam) for the lens. Without it the lens is off, but the overlay and markers still work.
+- **[Modded exes](https://github.com/themrdemonized/xray-monolith/releases) 2026.10.11 or newer** for the lens. They include the Shader Bus it needs. The [Slop-Ray engine](https://github.com/asuparabekon/xray-monolith-bodycam) works too. With older exes the lens is off, but the overlay and markers still work.
 - **MCM** to change settings (recommended).
 
 ## Installation
@@ -60,7 +60,8 @@ Everything can be tuned or turned off in MCM.
 ## Credits
 
 - Mod by **Damage_Zedd**.
-- **asuparabekon** for [xray-monolith-bodycam (Slop-Ray)](https://github.com/asuparabekon/xray-monolith-bodycam): the Shader Bus and post-process base the lens runs on.
+- **themrdemonized** and the modded exes contributors for the Shader Bus the lens runs on.
+- **asuparabekon** for [xray-monolith-bodycam (Slop-Ray)](https://github.com/asuparabekon/xray-monolith-bodycam), the engine the mod was built on.
 - Body motion based on the damped camera chase from **Sludge's Intrusive 3D Masks**.
 
 <details>
@@ -68,7 +69,7 @@ Everything can be tuned or turned off in MCM.
 
 <br>
 
-- Lens, sensor and overlay are drawn in `postprocess.ps` / `postprocess_cm.ps` (`gamedata/shaders/r3/zbc_*.h`), after DLSS/FSR, with values sent through Slop-Ray's Shader Bus.
+- Lens, sensor and overlay are drawn in `postprocess.ps` / `postprocess_cm.ps` (`gamedata/shaders/r3/zbc_*.h`), with values sent through the modded exes' Shader Bus (version 7: `try_register`, `set_array_uint`). On Slop-Ray this pass runs after DLSS/FSR, so the upscaler never sees the warp.
 - Scripts: `zbc_bodycam.script` (settings, motion, overlay, timer), `zbc_allies.script` (markers), `zbc_bodycam_mcm.script` (menu).
 - The overlay font and logo textures are generated from `tools/source_assets`. To rebuild them (needs Python and Pillow):
 

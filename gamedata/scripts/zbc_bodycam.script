@@ -1,7 +1,8 @@
 --[[
 	Zone Bodycam (zbc_bodycam.script)
 
-	A chest-mounted police bodycam look for GAMMA on the Slop-Ray engine.
+	A chest-mounted police bodycam look for Anomaly / GAMMA. The lens needs the Shader Bus of the
+	modded exes (2026.10.11 or newer, bus version 7); the Slop-Ray engine also works.
 
 	- Lens: barrel distortion, zoom, chromatic aberration, sharpening and a small-sensor grade, applied
 	  in the display-resolution post chain (shaders\r3\postprocess*.ps + zbc_lens.h). Slop-Ray runs
@@ -14,7 +15,7 @@
 	- Overlay (top right): game date and time with the Zone's UTC offset, device line with a serial,
 	  character name, and the triangle logo. All procedural, no texture files.
 
-	Shader values go through Slop-Ray's Shader Bus on three private lanes (bus_zbc_motion per frame,
+	Shader values go through the modded exes' Shader Bus on private lanes (bus_zbc_motion per frame,
 	bus_zbc_lens and bus_zbc_edge for settings), so nothing is written to the console or user.ltx.
 	HUD shaders bind the base texture like the engine's hud_default: the UI expects every HUD shader to.
 	The Lua name "bodycam" belongs to the engine's Immersive Bodycam, so everything here is "zbc".
@@ -135,7 +136,7 @@ end
 -- Shader constants
 ---------------------------------------------------------------------------------------------------
 
--- Slop-Ray Shader Bus: private float4 lanes, bound to the HLSL constants bus_<id>
+-- Modded exes Shader Bus (version 7): private float4 lanes, bound to the HLSL constants bus_<id>
 -- (see lua_help_ex shader_bus). No console writes, nothing saved to user.ltx, nothing shared.
 local BUS_OWNER = "zone_bodycam_v1"
 local LANES = {
@@ -179,7 +180,7 @@ local function bus_ready()
 		end
 		if tokens == false and not bus_warned then
 			bus_warned = true
-			printf("! [Zone Bodycam] Shader Bus unavailable: the lens is off, the overlay still works")
+			printf("! [Zone Bodycam] Shader Bus unavailable (needs modded exes 2026.10.11 or newer): the lens is off, the overlay still works")
 		end
 	end
 	if tokens and not atlas_uploaded and shader_bus.set_array_uint and zbc_osd_atlas and zbc_osd_atlas.ROWS then
