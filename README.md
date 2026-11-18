@@ -6,7 +6,7 @@
 
 *See the Zone through a chest-mounted police bodycam.*
 
-![Version](https://img.shields.io/badge/version-v1.0.0-e0a43c?style=for-the-badge) ![Author](https://img.shields.io/badge/by-Damage__Zedd-8fae5a?style=for-the-badge) ![Game](https://img.shields.io/badge/S.T.A.L.K.E.R.-Anomaly%201.5.3%20%2F%20GAMMA-555555?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-v1.0.1-e0a43c?style=for-the-badge) ![Author](https://img.shields.io/badge/by-Damage__Zedd-8fae5a?style=for-the-badge) ![Game](https://img.shields.io/badge/S.T.A.L.K.E.R.-Anomaly%201.5.3%20%2F%20GAMMA-555555?style=for-the-badge)
 
 [![Zone Bodycam gameplay](docs/images/gameplay.webp)](docs/images/gameplay.mp4)
 
@@ -60,6 +60,7 @@ Everything can be tuned or turned off in MCM.
 ## Credits
 
 - Mod by **Damage_Zedd**.
+- **asuparabekon** for [xray-monolith-bodycam (Slop-Ray)](https://github.com/asuparabekon/xray-monolith-bodycam): the Shader Bus and post-process base the lens runs on.
 - Body motion based on the damped camera chase from **Sludge's Intrusive 3D Masks**.
 
 <details>

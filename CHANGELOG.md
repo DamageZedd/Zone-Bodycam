@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.0.1
+## v1.0.1 - 2026-11-18
 
 ### Added
 - **Recording timer (top left).** A flashing red dot and `REC HH:MM:SS` showing how long the camera has been recording in this playthrough. It uses the same font, size and text opacity as the top-right overlay and mirrors its margin.
