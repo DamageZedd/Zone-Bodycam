@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<string_table>
+  <string id="st_zbc_bodycam_item_name">
+    <text>Body Camera</text>
+  </string>
+  <string id="st_zbc_bodycam_item_descr">
+    <text>A rugged chest-mounted body camera with a wide-angle lens, a time-stamped overlay and a friend-or-foe tag display. Carry it anywhere in your inventory and it records on its own.\n\nRuns on a standard battery: drag a battery onto the camera to swap it. When the charge runs out the camera shuts off, but the recording clock keeps counting.</text>
+  </string>
+  <string id="st_zbc_bodycam_item_dead">
+    <text>Body camera: battery dead</text>
+  </string>
+  <string id="ui_mcm_menu_zone_bodycam_item">
+    <text>Zone Bodycam: Item</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_item_title">
+    <text>Bodycam item</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_item_battery_hours">
+    <text>Battery life (real hours)</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_item_battery_hours_desc">
+    <text>How long a full battery lasts while the camera records, in real-time hours. Scaled by the difficulty's battery consumption setting.</text>
+  </string>
+</string_table>

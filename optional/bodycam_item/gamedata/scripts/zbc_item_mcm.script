@@ -1,0 +1,13 @@
+--[[
+	Zone Bodycam - bodycam item MCM menu (optional FOMOD component). Read by zbc_item.script.
+]]
+
+function on_mcm_load()
+	return {
+		id = "zone_bodycam_item", sh = true,
+		gr = {
+			{ id = "title",         type = "title", text = "ui_mcm_zone_bodycam_item_title", align = "c" },
+			{ id = "battery_hours", type = "track", val = 2, min = 0.25, max = 48, step = 0.25, def = 4 },
+		},
+	}
+end

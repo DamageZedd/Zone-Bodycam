@@ -1,0 +1,26 @@
+; Zone Bodycam - bodycam item (optional FOMOD component)
+; Carried anywhere in the inventory, it powers the bodycam effect (scripts\zbc_item.script).
+; Condition = battery charge; batteries are swapped like vanilla devices (mod_devices_zbc_bodycam.ltx).
+
+[zbc_bodycam_item]:identity_immunities
+GroupControlSection  = spawn_group
+discovery_dependency =
+$spawn               = "devices\zbc_bodycam_item"
+class                = II_ATTCH
+kind                 = i_device
+cform                = skeleton
+visual               = dynamics\devices\zbc_bodycam\zbc_bodycam.ogf
+inv_name             = st_zbc_bodycam_item_name
+inv_name_short       = st_zbc_bodycam_item_name
+description          = st_zbc_bodycam_item_descr
+inv_weight           = 0.32
+icons_texture        = ui\ui_icon_zbc_bodycam
+inv_grid_width       = 2
+inv_grid_height      = 2
+inv_grid_x           = 0
+inv_grid_y           = 0
+cost                 = 5000
+tier                 = 2
+power_critical       = 0.05
+use6_functor         = item_device.menu_battery
+use6_action_functor  = item_device.func_battery

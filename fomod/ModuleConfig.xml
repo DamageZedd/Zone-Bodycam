@@ -4,4 +4,23 @@
 	<requiredInstallFiles>
 		<folder source="gamedata" destination="gamedata" priority="0" />
 	</requiredInstallFiles>
+	<installSteps order="Explicit">
+		<installStep name="Optional">
+			<optionalFileGroups order="Explicit">
+				<group name="Optional components" type="SelectAny">
+					<plugins order="Explicit">
+						<plugin name="Bodycam item (battery powered)">
+							<description>Adds a Body Camera item sold by general traders. The bodycam effect only runs while you carry a charged camera anywhere in your inventory; it drains in real time and takes standard batteries (drag a battery onto it). Battery life is set in MCM (Zone Bodycam: Item). The REC timer keeps counting while the camera is off. Leave unchecked to keep the bodycam always on.</description>
+							<files>
+								<folder source="optional\bodycam_item\gamedata" destination="gamedata" priority="1" />
+							</files>
+							<typeDescriptor>
+								<type name="Optional" />
+							</typeDescriptor>
+						</plugin>
+					</plugins>
+				</group>
+			</optionalFileGroups>
+		</installStep>
+	</installSteps>
 </config>

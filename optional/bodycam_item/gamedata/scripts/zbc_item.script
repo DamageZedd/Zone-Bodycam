@@ -1,0 +1,190 @@
+--[[
+	Zone Bodycam - bodycam item (optional FOMOD component)
+
+	The bodycam effect only runs while the actor carries a charged bodycam (section zbc_bodycam_item)
+	anywhere in the inventory, like the Wearable Devices items. The item's condition is its charge:
+	it drains in real time while the camera runs and is swapped with vanilla batteries (drag a battery
+	onto it, or "Unpack battery"), registered in items\settings\mod_devices_zbc_bodycam.ltx.
+
+	Hooks into zbc_bodycam.script through zbc_bodycam.set_power_gate(); the base mod never looks this
+	script up, so without this component it stays always-on. The REC timer keeps counting regardless.
+]]
+
+ITEM_SECTION = "zbc_bodycam_item"
+
+local DEFAULT_HOURS   = 4        -- real hours of recording per full charge
+local MIN_HOURS       = 0.25
+local MAX_HOURS       = 48
+local DEFAULT_CRIT    = 0.05     -- vanilla condition_critical, used if item_device has no value
+local SCAN_MS         = 1000     -- inventory re-scan period
+local MAX_STEP_MS     = 1000     -- longer gaps (loading, pause hitches) are not drained
+
+---------------------------------------------------------------------------------------------------
+-- Pure logic (tested by tools\tests\zbc_item_test.lua)
+---------------------------------------------------------------------------------------------------
+
+-- battery life in real hours, from the MCM value (any type), clamped
+function clamp_hours(v)
+	v = tonumber(v)
+	if not v or v ~= v then return DEFAULT_HOURS end
+	if v < MIN_HOURS then return MIN_HOURS end
+	if v > MAX_HOURS then return MAX_HOURS end
+	return v
+end
+
+-- charge after dt_ms milliseconds of recording; factor scales the drain (difficulty economy)
+function drain_step(charge, dt_ms, hours, factor)
+	charge = tonumber(charge) or 0
+	dt_ms = tonumber(dt_ms) or 0
+	if dt_ms <= 0 or dt_ms > MAX_STEP_MS then return charge end
+	factor = tonumber(factor) or 1
+	if factor < 0 then factor = 0 end
+	local loss = (dt_ms / 1000) / (clamp_hours(hours) * 3600) * factor
+	local c = charge - loss
+	if c < 0 then c = 0 end
+	return c
+end
+
+-- true while the charge is above the critical level (vanilla: devices stop below it)
+function is_charged(charge, critical)
+	charge = tonumber(charge)
+	if not charge then return false end
+	return charge > (tonumber(critical) or DEFAULT_CRIT)
+end
+
+-- index of the entry with the highest charge in a list of charges (nil for an empty list)
+function best_index(charges)
+	local best, bi = nil, nil
+	for i = 1, #charges do
+		local c = tonumber(charges[i])
+		if c and (not best or c > best) then best, bi = c, i end
+	end
+	return bi
+end
+
+---------------------------------------------------------------------------------------------------
+-- Runtime
+---------------------------------------------------------------------------------------------------
+
+local cam_id = nil           -- id of the bodycam being drained, nil: none carried
+local cam_charged = false
+local next_scan = 0
+local last_t = nil
+local hours = DEFAULT_HOURS
+local warned_dead = false
+
+local function mcm(id, def)
+	if ui_mcm and ui_mcm.get then
+		local ok, v = pcall(ui_mcm.get, id)
+		if ok and v ~= nil then return v end
+	end
+	return def
+end
+
+local function load_settings()
+	hours = clamp_hours(mcm("zone_bodycam_item/battery_hours", DEFAULT_HOURS))
+end
+
+local function bodycam_enabled()
+	return mcm("zone_bodycam/enabled", true) == true
+end
+
+local function critical()
+	local c = item_device and item_device.get_power_critical and item_device.get_power_critical(ITEM_SECTION)
+	return tonumber(c) or DEFAULT_CRIT
+end
+
+local function eco_factor()
+	if game_difficulties and game_difficulties.get_eco_factor then
+		local ok, f = pcall(game_difficulties.get_eco_factor, "battery_consumption")
+		if ok and tonumber(f) then return tonumber(f) end
+	end
+	return 1
+end
+
+-- picks the carried bodycam with the most charge
+local function scan()
+	local actor = db.actor
+	cam_id = nil
+	if not actor then return end
+	local ids, charges = {}, {}
+	actor:iterate_inventory(function(_, obj)
+		if obj and obj:section() == ITEM_SECTION then
+			ids[#ids + 1] = obj:id()
+			charges[#charges + 1] = obj:condition()
+		end
+	end, actor)
+	local i = best_index(charges)
+	if i then cam_id = ids[i] end
+end
+
+local function refresh(now)
+	if now >= next_scan then
+		next_scan = now + SCAN_MS
+		scan()
+	end
+	local obj = cam_id and level.object_by_id(cam_id)
+	local parent = obj and obj:parent()
+	if not (parent and parent:id() == AC_ID) then
+		cam_id = nil
+		obj = nil
+	end
+	local was = cam_charged
+	cam_charged = obj and is_charged(obj:condition(), critical()) or false
+	if was and not cam_charged and obj then
+		if not warned_dead and actor_menu and actor_menu.set_msg then
+			actor_menu.set_msg(1, game.translate_string("st_zbc_bodycam_item_dead"), 4)
+		end
+		warned_dead = true
+	elseif cam_charged then
+		warned_dead = false
+	end
+	return obj
+end
+
+-- the power gate for zbc_bodycam.script
+function has_power()
+	return cam_charged
+end
+
+local function actor_on_update()
+	local now = time_global()
+	local last = last_t
+	last_t = now
+	local obj = refresh(now)
+	if obj and cam_charged and last and bodycam_enabled() then
+		obj:set_condition(drain_step(obj:condition(), now - last, hours, eco_factor()))
+	end
+end
+
+local function actor_on_first_update()
+	load_settings()
+	last_t = nil
+	next_scan = 0
+	cam_charged = false
+	refresh(time_global())
+	warned_dead = not cam_charged    -- no "battery dead" message for a camera that was already dead
+end
+
+local function inventory_changed()
+	next_scan = 0                    -- re-scan on the next update
+end
+
+local function main_menu_on_quit()
+	last_t = nil                     -- the pause is not drained
+end
+
+function on_game_start()
+	load_settings()
+	if zbc_bodycam and zbc_bodycam.set_power_gate then
+		zbc_bodycam.set_power_gate(has_power)
+	else
+		printf("! [Zone Bodycam] bodycam item: zbc_bodycam.script not found, the item component needs the base mod")
+	end
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("actor_on_update", actor_on_update)
+	RegisterScriptCallback("actor_on_item_take", inventory_changed)
+	RegisterScriptCallback("actor_on_item_drop", inventory_changed)
+	RegisterScriptCallback("main_menu_on_quit", main_menu_on_quit)
+	RegisterScriptCallback("on_option_change", load_settings)
+end

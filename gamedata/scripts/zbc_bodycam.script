@@ -256,6 +256,23 @@ local function lens_off()
 end
 
 ---------------------------------------------------------------------------------------------------
+-- Power gate: the optional bodycam item component (zbc_item.script) registers a function that says
+-- whether the camera has power. Without it the camera is always on, exactly as before.
+---------------------------------------------------------------------------------------------------
+
+local power_gate = nil
+
+function set_power_gate(fn)
+	power_gate = (type(fn) == "function") and fn or nil
+end
+
+local function powered()
+	if not power_gate then return true end
+	local ok, on = pcall(power_gate)
+	return (not ok) or (on and true or false)   -- a broken gate never hides the camera
+end
+
+---------------------------------------------------------------------------------------------------
 -- Recording timer: real seconds the camera has been running in this playthrough, saved with the game
 ---------------------------------------------------------------------------------------------------
 
@@ -1121,7 +1138,7 @@ function get_rolling_shutter()
 end
 
 local function hud_add()
-	if HUD or not cfg.enabled then return end
+	if HUD or not cfg.enabled or not powered() then return end
 	HUD = ZbcHud()
 	get_hud():AddDialogToRender(HUD)
 end
@@ -1149,6 +1166,17 @@ local function hud_visible()
 	return true
 end
 
+-- the camera lost power (bodycam item component): everything off, like the MCM toggle
+local was_powered = true
+
+local function power_down()
+	hud_remove()
+	lens_off()
+	motion_reset()
+	lens_state.k = 0
+	lens_state.shutter = 0
+end
+
 local function settings_changed()
 	clear_send_cache()
 	load_settings()
@@ -1166,7 +1194,7 @@ local function settings_changed()
 		motion_reset()
 		lens_state.k = 0
 		lens_state.shutter = 0
-	elseif in_menu and db.actor and bus_ready() then
+	elseif in_menu and db.actor and powered() and bus_ready() then
 		S.vis = 1
 		S.out_i = cfg.intensity
 		S.out_rs = 0
@@ -1193,13 +1221,24 @@ function actor_on_first_update()
 	load_settings()
 	push_settings()
 	motion_reset()
-	if not (cfg.enabled and cfg.lens_enabled) then lens_off() end
+	was_powered = powered()
+	if not (cfg.enabled and cfg.lens_enabled and was_powered) then lens_off() end
 	hud_add()
 end
 
 function actor_on_update()
 	if not cfg.enabled or in_menu then return end
-	rec_tick()
+	rec_tick()                               -- keeps recording while the camera has no power
+	if not powered() then
+		if was_powered then power_down() end
+		was_powered = false
+		return
+	end
+	if not was_powered then
+		was_powered = true
+		motion_reset()                       -- fades back in
+		hud_add()
+	end
 	local visible = hud_visible()
 	local ox, oy, orr, inten = 0, 0, 0, 0
 	local vx, vy, vt, vr, occ_x, occ_y, rs = 0, 0, 0, 0, 0, 0, 0
@@ -1239,7 +1278,7 @@ end
 function main_menu_on_init()
 	in_menu = true
 	clear_send_cache()
-	if db.actor and cfg.enabled and cfg.lens_enabled then
+	if db.actor and cfg.enabled and cfg.lens_enabled and powered() then
 		S.yaw_vel_s = 0
 		S.shutter_shock = 0
 		S.out_rs = 0
