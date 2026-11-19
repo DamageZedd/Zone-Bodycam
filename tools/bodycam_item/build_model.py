@@ -464,7 +464,8 @@ for s in (-1, 1):
     def k(x, x0, x1, h1):        # linear height from h=0 at x0 to h1 at x1
         return h1 * (abs(x) - x0) / (x1 - x0)
 
-    col_pts = [P(X_FRAME, 36.4, 0), P(X_COL_IN, 36.4, H_COLUMN), P(X_COL_IN, -28.2, H_COLUMN), P(X_FRAME, -28.2, 0)]
+    # beside the lens block only: lower down the button block's own sloped side takes over
+    col_pts = [P(X_FRAME, 36.4, 0), P(X_COL_IN, 36.4, H_COLUMN), P(X_COL_IN, 3.9, H_COLUMN), P(X_FRAME, 3.9, 0)]
     top_pts = [P(X_FRAME, TOP_IN_T, 0), P(6.6, TOP_IN_T, H_SPINE), P(6.6, 36.4, H_SPINE), P(X_FRAME, 36.4, 0)]
     bot_pts = [P(X_FRAME, -28.2, 0), P(20.6, -28.2, k(20.6, X_FRAME, 6.6, H_SPINE)), P(6.6, -34.6, H_SPINE),
                P(6.6, TOP_IN_B, H_SPINE), P(X_FRAME, TOP_IN_B, 0)]
@@ -519,10 +520,14 @@ def recess(name, r, cx, cz, y_floor, targets, ridges=False):
 
 lx, lz = LENS
 bx, bz = BTN
-Y_LENS_FLOOR = Y0 - 1.5                          # 2.5 mm deep pocket, knurled wall
-Y_WELL_FLOOR = Y0 - 1.8                          # 2.2 mm deep well with a glossy sloped wall
-recess("lens_pocket", 10.2, lx, lz, Y_LENS_FLOOR, ["lens_block", "spine"], ridges=True)
-recess("button_well", 21.7, bx, bz, Y_WELL_FLOOR, ["button_block", "column_l", "column_r", "spine"])
+# both are pressed into the body itself: the pocket floors lie behind the front plane, so the lens
+# and the button sit below the frame around them (the raised blocks only form the pocket rims)
+Y_LENS_FLOOR = Y0 + 2.5                          # 6.5 mm deep pocket, knurled wall
+Y_WELL_FLOOR = Y0 + 1.5                          # 5.5 mm deep well with a glossy sloped wall
+recess("lens_pocket", 10.2, lx, lz, Y_LENS_FLOOR,
+       ["body", "lens_block", "spine", "top_facet_l", "top_facet_r"], ridges=True)
+recess("button_well", 21.7, bx, bz, Y_WELL_FLOOR,
+       ["body", "button_block", "column_l", "column_r", "spine", "bottom_facet_l", "bottom_facet_r"])
 
 # ------------------------------------------------------------------------------------------------
 # lens (on the pocket floor): dark ring with four light tabs, black groove, face, glass
