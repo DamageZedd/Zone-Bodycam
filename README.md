@@ -10,14 +10,14 @@
 
 [![Zone Bodycam gameplay](docs/images/gameplay.webp)](docs/images/gameplay.mp4)
 
-<sub>Click the clip for the full-quality video with sound.</sub>
+<sub>Recorded on the <a href="https://github.com/asuparabekon/xray-monolith-bodycam">Slop-Ray engine</a> with its <b>Immersive Bodycam</b> camera on. The free-floating camera and weapon movement come from Slop-Ray, <b>not from this mod</b>. Click the clip for the full-quality video with sound.</sub>
 
 </div>
 
 ## What you get
 
 - **Bodycam lens.** Fisheye view with the camera housing around the edges, a small-sensor look, grain and a slight wobble when you turn fast or get hit. The lens zooms in by itself, so stronger fisheye never leaves black edges.
-- **Chest-mounted motion.** The camera sits on your chest, not your head. It lags behind your turns, bobs with your steps, and jolts when you land, shoot or get hit. Your aim is never affected.
+- **Chest-mounted feel.** The lens housing and vignette lag behind your turns, bob with your steps, and jolt when you land, shoot or get hit. The image itself only sways slightly. Your view and aim stay where the game puts them; this mod doesn't detach the camera from your weapon.
 - **Bodycam overlay.**
   - **Top right:** in-game date and time, device name and serial, your character's name and the logo.
   - **Top left:** a flashing red dot and `REC 00:54:17`, showing how long you've been recording this playthrough. It counts real time and is kept in your save.
