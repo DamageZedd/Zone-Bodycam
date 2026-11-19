@@ -23,10 +23,11 @@ for o in list(sc.objects):
 col = sc.collection
 
 # ---- body dimensions (mm)
-W, D = 64.5, 28.0
+W, D = 64.5, 30.0
 Z_TOP, Z_BOT = 47.0, -48.0    # body top and bottom (95 mm; the features are centred on Z = 0)
 CUT_X, CUT_Z = 10.3, 7.7      # corner cuts of the outline
-FRONT_CHAMFER = 3.4           # dark rim band around the front
+FRONT_CHAMFER = 3.4           # dark rim band around the front (rounded profile)
+CORNER_R = 3.0                # rounding of the cut corners
 Y0 = -D / 2                   # front plane
 EMBED = 0.3                   # relief parts start this far inside the shell
 
@@ -379,14 +380,18 @@ M_HOLE = material("zbc_hole", (0.002, 0.002, 0.002), 0.9)
 M_SCREW = material("zbc_screw", (0.035, 0.035, 0.038), 0.40, metal=1.0)
 M_TEXT = material("zbc_text", (0.72, 0.72, 0.72), 0.45)
 M_LOGO = material("zbc_logo", (0.006, 0.006, 0.007), 0.30)
-M_LIGHTPIPE = material("zbc_lightpipe", (0.42, 0.43, 0.45), 0.25)
+M_LIGHTPIPE = material("zbc_lightpipe", (0.22, 0.23, 0.24), 0.25)
 M_BUTTON = material("zbc_button", (0.045, 0.046, 0.050), 0.70)
-M_DISC = material("zbc_disc", (0.040, 0.041, 0.045), 0.55)
+M_DISC = material("zbc_disc", (0.056, 0.057, 0.062), 0.50)
 M_GRIP = material("zbc_grip", (0.020, 0.020, 0.022), 0.80)
 M_MOUNT = material("zbc_mount", (0.018, 0.018, 0.020), 0.50)
+M_TAB = material("zbc_tab", (0.085, 0.087, 0.092), 0.45)
+M_DISPLAY = material("zbc_display", (0.006, 0.009, 0.016), 0.05, spec=1.0)
+M_LABEL = material("zbc_label", (0.30, 0.30, 0.31), 0.6)
+M_MAGNET = material("zbc_magnet", (0.05, 0.05, 0.055), 0.35, metal=1.0)
 for m in (M_BODY, M_FACE, M_DISC, M_MOUNT):
     surface_noise(m)
-knurl(M_BUTTON, BTN[0], BTN[1], 13.3, 19.6, 1.0, (0.044, 0.045, 0.049), (0.060, 0.061, 0.066), (0.012, 0.012, 0.013))
+knurl(M_BUTTON, BTN[0], BTN[1], 13.3, 19.6, 0.85, (0.040, 0.041, 0.045), (0.050, 0.051, 0.056), (0.010, 0.010, 0.011))
 dots(M_GRIP, 1, 2, 1.1, 0.33, (0.018, 0.018, 0.020), (0.032, 0.032, 0.035))
 
 # ------------------------------------------------------------------------------------------------
@@ -396,7 +401,36 @@ dots(M_GRIP, 1, 2, 1.1, 0.33, (0.018, 0.018, 0.020), (0.032, 0.032, 0.035))
 hw = W / 2
 outline = [(-hw + CUT_X, Z_TOP), (hw - CUT_X, Z_TOP), (hw, Z_TOP - CUT_Z), (hw, Z_BOT + CUT_Z),
            (hw - CUT_X, Z_BOT), (-hw + CUT_X, Z_BOT), (-hw, Z_BOT + CUT_Z), (-hw, Z_TOP - CUT_Z)]
-body = assign(prism("body", outline, D / 2, D, chamfer=FRONT_CHAMFER, seg=1, back_chamfer=3.0, back_seg=3), M_BODY)
+def shell(name):
+    """Extruded outline; the cut corners rounded, then a rounded rim at the front and the back."""
+    o = prism(name, outline, D / 2, D)
+    bm = bmesh.new()
+    bm.from_mesh(o.data)
+    ye = [e for e in bm.edges if abs(e.verts[0].co.x - e.verts[1].co.x) < 1e-9 and abs(e.verts[0].co.z - e.verts[1].co.z) < 1e-9]
+    bmesh.ops.bevel(bm, geom=ye, offset=CORNER_R * MM, segments=4, profile=0.5, affect="EDGES", clamp_overlap=True)
+    fe = [e for e in bm.edges if all(abs(v.co.y - Y0 * MM) < 1e-9 for v in e.verts)]
+    bmesh.ops.bevel(bm, geom=fe, offset=FRONT_CHAMFER * MM, segments=3, profile=0.62, affect="EDGES", clamp_overlap=True)
+    be = [e for e in bm.edges if all(abs(v.co.y - D / 2 * MM) < 1e-9 for v in e.verts)]
+    bmesh.ops.bevel(bm, geom=be, offset=3.0 * MM, segments=3, profile=0.5, affect="EDGES", clamp_overlap=True)
+    bm.to_mesh(o.data)
+    bm.free()
+    return o
+
+
+def hull(name, pts):
+    bm = bmesh.new()
+    for p in pts:
+        bm.verts.new(v3(*p))
+    bmesh.ops.convex_hull(bm, input=bm.verts[:])
+    return finish(bm, name)
+
+
+body = assign(shell("body"), M_BODY)
+# notches in the front rim beside programmable button 1: the floor slopes back from Z 25.2 to Z 31
+for s_ in (-1, 1):
+    pts = [(-25.8, Y0, 25.2), (-40, Y0, 25.2), (-40, Y0 + 3.2, 31.0), (-30.0, Y0 + 3.2, 31.0),
+           (-25.8, Y0 - 3, 25.2), (-40, Y0 - 3, 25.2), (-40, Y0 - 3, 31.0), (-30.0, Y0 - 3, 31.0)]
+    boolean(body, hull("notch", [(s_ * x, y, z) for x, y, z in pts]))
 
 # ------------------------------------------------------------------------------------------------
 # front relief (measured outlines, mm)
@@ -453,12 +487,17 @@ Y_BLOCK = Y0 - H_BLOCK
 lx, lz = LENS
 yb = Y_BLOCK - 3.6
 assign(disc("lens_bezel", 10.2, lx, lz, Y_BLOCK + 0.3, yb, seg=120, chamfer=0.35, ridges=True, ridge_depth=0.22), M_BEZEL)
-yl = yb - 0.5
-lug = assign(disc("lens_lugring", 8.6, lx, lz, yb + 0.2, yl, seg=96, chamfer=0.35, cseg=2), M_LENSFACE)
+yl = yb - 0.4
+assign(disc("lens_ring", 8.6, lx, lz, yb + 0.2, yl, seg=96, chamfer=0.3, cseg=2), M_BEZEL)
 for a in (45, 135, 225, 315):
     r = math.radians(a)
-    cut = box("lug_cut", 2.2, 3.0, 1.1, (lx + 7.9 * math.cos(r), yl, lz + 7.9 * math.sin(r)), rot=(0, -r, 0))
-    boolean(lug, cut)
+    ur, ut = (math.cos(r), math.sin(r)), (-math.sin(r), math.cos(r))
+
+    def q(rad, t):
+        return (lx + ur[0] * rad + ut[0] * t, lz + ur[1] * rad + ut[1] * t)
+
+    tab = [q(6.9, -1.0), q(6.9, 1.0), q(8.5, 1.55), q(8.5, -1.55)]
+    assign(prism("lens_tab", tab, yl + 0.2, 0.65, chamfer=0.15), M_TAB)
 assign(annulus("lens_groove", lx, lz, 6.75, 7.10, yl - 0.02), M_HOLE)
 assign(disc("lens_face", 6.75, lx, lz, yl + 0.2, yl - 0.25, seg=96, chamfer=0.25, cseg=2), M_LENSFACE)
 assign(disc("lens_step", 5.0, lx, lz, yl, yl - 0.75, seg=64, chamfer=0.3, cseg=2), M_BEZEL)
@@ -483,8 +522,8 @@ yface = Y_BLOCK - 2.0
 assign(disc("button", 19.9, bx, bz, Y_BLOCK - 0.5, yface, seg=128, chamfer=0.45, cseg=2), M_BUTTON)
 ydisc = yface - 0.35
 assign(disc("button_disc", 13.3, bx, bz, yface + 0.1, ydisc, seg=96, chamfer=0.3, cseg=2), M_DISC)
-assign(annulus("lightpipe_top", bx, bz, 16.2, 17.1, yface - 0.03, 72, 110, seg=128), M_LIGHTPIPE)
-assign(annulus("lightpipe_left", bx, bz, 16.2, 17.1, yface - 0.03, 203, 240, seg=128), M_LIGHTPIPE)
+assign(annulus("lightpipe_top", bx, bz, 16.4, 16.9, yface - 0.03, 72, 110, seg=128), M_LIGHTPIPE)
+assign(annulus("lightpipe_left", bx, bz, 16.4, 16.9, yface - 0.03, 203, 240, seg=128), M_LIGHTPIPE)
 for i in range(9):                              # speaker/indicator ticks on the right
     a = 302 + i * 3.9
     assign(annulus("tick_%d" % i, bx, bz, 16.0, 18.4, yface - 0.03, a, a + 1.4, seg=360), M_HOLE)
@@ -503,7 +542,7 @@ def polar(rad, deg):
 
 def cut_curve(phi):
     """Swirl cut from the edge midpoint at angle phi into the centre (quadratic curve, 7 points)."""
-    p0, p1, p2 = polar(r_in * 1.02, phi), polar(r_in * 0.62, phi + 55), (lcx, lcz)
+    p0, p1, p2 = polar(r_in * 1.02, phi), polar(r_in * 0.6, phi + 42), (lcx, lcz)
     pts = []
     for i in range(7):
         t = i / 6
@@ -522,7 +561,7 @@ for i in range(3):
     gz = sum(p[1] for p in poly) / len(poly)
     # open a gap along both cuts: push each point away from the cut lines towards the blade's vertex
     vx, vz = polar(R, th)
-    poly = [(x + (vx - x) * 0.08, z + (vz - z) * 0.08) for x, z in poly]
+    poly = [(x + (vx - x) * 0.055, z + (vz - z) * 0.055) for x, z in poly]
     assign(prism("logo_%d" % i, poly, ydisc + 0.1, 0.55), M_LOGO)
 
 # ------------------------------------------------------------------------------------------------
@@ -542,15 +581,19 @@ for i, (x, z) in enumerate([(-27.1, 36.8), (27.1, 36.8), (-27.1, 1.6), (27.1, 1.
     screw("screw_%d" % i, x, z)
 
 
-def hole(name, x, z, r, h=0.0):
-    assign(disc(name, r, x, z, Y0 - h + 0.3, Y0 - h - 0.03, seg=16), M_HOLE)
+def hole(name, x, z, r, h=0.0, dhdx=0.0):
+    """Dark hole on a facet whose height changes by dhdx per mm across X (disc tilted to lie on it)."""
+    o = assign(disc(name, r, 0, 0, 0.3, -0.04, seg=16), M_HOLE)
+    o.location = v3(x, Y0 - h, z)
+    o.rotation_euler = (0, 0, -math.atan(dhdx))
 
 
-H_COL_AT_HOLE = H_COLUMN * (X_FRAME - 18.8) / (X_FRAME - X_COL_IN)   # the top holes sit on the side columns
-hole("hole_tl", -18.8, 35.6, 0.65, H_COL_AT_HOLE)
-hole("hole_tr", 18.8, 35.6, 0.65, H_COL_AT_HOLE)
+COL_SLOPE = H_COLUMN / (X_FRAME - X_COL_IN)          # left column rises towards +X
+for name, x in (("hole_tl", -18.8), ("hole_tr", 18.8)):
+    hole(name, x, 35.6, 0.65, COL_SLOPE * (X_FRAME - abs(x)), COL_SLOPE if x < 0 else -COL_SLOPE)
+BOT_SLOPE = H_SPINE / (X_FRAME - 6.6)                # right bottom facet falls towards +X
 for name, x, z in (("hole_b0", 12.6, -35.6), ("hole_b1", 15.4, -34.9)):
-    hole(name, x, z, 0.62, H_SPINE * (X_FRAME - x) / (X_FRAME - 6.6))
+    hole(name, x, z, 0.62, BOT_SLOPE * (X_FRAME - x), -BOT_SLOPE)
 
 cu = bpy.data.curves.new("axon_txt", "FONT")
 cu.body = "AXON"
@@ -581,23 +624,49 @@ assign(txt, M_TEXT)
 # sides, top, bottom, back
 # ------------------------------------------------------------------------------------------------
 
-# left side: two buttons
-assign(box("btn_left_0", 2.6, 10.0, 5.7, (-hw - 0.2, -2.0, 28.75), bevel=0.9, seg=3), M_RUBBER)
-assign(box("btn_left_1", 2.6, 10.0, 14.1, (-hw - 0.2, -2.0, 13.75), bevel=0.9, seg=3), M_RUBBER)
-# right side: rocker near the top and a dotted grip panel
-assign(box("btn_right", 2.4, 9.0, 13.0, (hw + 0.1, -2.0, 30.0), bevel=0.9, seg=3), M_RUBBER)
-assign(box("grip_right", 1.6, 16.0, 46.0, (hw - 0.3, 0.0, -14.0), bevel=0.6, seg=2), M_GRIP)
-assign(box("grip_left", 1.6, 16.0, 30.0, (-hw + 0.3, 0.0, -22.0), bevel=0.6, seg=2), M_GRIP)
-# top: program button and status LED
-assign(box("btn_top", 16.0, 9.0, 2.2, (-6.0, 0.0, Z_TOP - 0.2), bevel=0.8, seg=3), M_RUBBER)
-led = assign(disc("led", 1.3, 13.0, 0.0, 0.0, -0.5, seg=20), material("zbc_led", (0.35, 0.03, 0.03), 0.2))
+# left side (manual: programmable 1 and 2, volume up, select, volume down, power) on a rubber strip
+assign(box("side_strip_l", 1.4, 11.0, 58.0, (-hw - 0.1, -1.0, 3.0), bevel=0.6, seg=2), M_RUBBER)
+for i, (z0, z1) in enumerate([(31.6, 25.9), (20.8, 14.6), (13.2, 6.7), (3.5, -2.5), (-4.5, -10.5), (-13.0, -19.5)]):
+    assign(box("btn_side_%d" % i, 2.4, 8.0, z0 - z1, (-hw - 0.5, -1.0, (z0 + z1) / 2), bevel=1.0, seg=3), M_RUBBER)
+assign(box("grip_left", 1.0, 16.0, 14.0, (-hw + 0.1, 0.0, -33.0), bevel=0.4, seg=2), M_GRIP)
+# right side: POV connector port cover at lens height, dotted grip below
+assign(box("pov_cover", 1.6, 7.5, 19.0, (hw + 0.2, -2.0, 26.5), bevel=0.7, seg=3), M_RUBBER)
+assign(box("pov_slot", 0.6, 1.2, 12.0, (hw + 1.0, -2.0, 26.5), bevel=0.25, seg=2), M_HOLE)
+assign(box("grip_right", 1.0, 18.0, 50.0, (hw + 0.1, 0.0, -14.0), bevel=0.4, seg=2), M_GRIP)
+# top: status display in a rubber bezel, operation LED
+assign(box("display_bezel", 40.0, 16.0, 1.6, (1.5, -2.5, Z_TOP + 0.2), bevel=1.2, seg=3), M_RUBBER)
+assign(box("display", 34.0, 11.5, 1.6, (1.5, -2.5, Z_TOP + 0.35), bevel=0.8, seg=3), M_DISPLAY)
+led = assign(disc("led", 1.1, 0, 0, 0.0, -0.45, seg=20), material("zbc_led", (0.35, 0.03, 0.03), 0.2))
 led.rotation_euler = (math.radians(-90), 0, 0)
-led.location = v3(0, -2.0, Z_TOP + 0.05)
-# bottom: dock connector
-assign(box("port", 14.0, 4.0, 1.2, (0, 0.5, Z_BOT + 0.25), bevel=0.4, seg=2), M_HOLE)
-# back: RapidLock mount plate
-assign(box("mount", 44.0, 4.0, 60.0, (0, D / 2 + 1.6, 0), bevel=1.5, seg=3), M_MOUNT)
-assign(box("mount_lip", 36.0, 2.5, 8.0, (0, D / 2 + 4.6, 22.0), bevel=1.0, seg=3), M_MOUNT)
+led.location = v3(-24.0, -6.0, Z_TOP + 0.05)
+# bottom: USB-C port in a rubber surround, drainage holes
+assign(box("port_frame", 14.0, 6.5, 1.4, (0, -3.0, Z_BOT + 0.1), bevel=0.6, seg=2), M_RUBBER)
+assign(box("port", 9.0, 3.2, 1.6, (0, -3.0, Z_BOT + 0.05), bevel=1.2, seg=3), M_HOLE)
+assign(box("port_tongue", 6.6, 0.7, 1.7, (0, -3.0, Z_BOT + 0.05), bevel=0.2, seg=1), M_SCREW)
+for i, x in enumerate((-16.0, 16.0)):
+    assign(box("drain_bottom_%d" % i, 3.0, 1.4, 1.2, (x, 4.0, Z_BOT + 0.1), bevel=0.5, seg=2), M_HOLE)
+
+
+def back_disc(name, r, x, z, h, mat, seg=48, chamfer=0.0):
+    """Disc on the back face (normal +Y), standing h mm proud."""
+    return assign(disc(name, r, x, z, D / 2 - 0.3, D / 2 + h, seg=seg, chamfer=chamfer, cseg=2), mat)
+
+
+# back: RapidLock receiver, two mount magnets, vent, drainage holes, serial label
+back_disc("rapidlock_rim", 12.5, 0, 2.0, 0.8, M_MOUNT, seg=64, chamfer=0.4)
+back_disc("rapidlock_well", 10.6, 0, 2.0, 0.85, M_HOLE, seg=64)
+back_disc("rapidlock_boss", 4.5, 0, 2.0, 1.2, M_MOUNT, seg=32, chamfer=0.3)
+for i, a in enumerate((0, 180)):
+    r = math.radians(a)
+    assign(box("rapidlock_key_%d" % i, 3.0, 1.0, 2.0, (7.6 * math.cos(r), D / 2 + 0.9, 2.0 + 7.6 * math.sin(r)), bevel=0.3, seg=1), M_MOUNT)
+for i, z in enumerate((28.0, -26.0)):
+    back_disc("magnet_%d" % i, 5.5, 0, z, 0.15, M_MAGNET, seg=40, chamfer=0.2)
+for i in range(6):
+    assign(box("vent_%d" % i, 1.1, 0.8, 7.0, (-8.75 + i * 3.5, D / 2 + 0.05, 40.0), bevel=0.4, seg=2), M_HOLE)
+for i, x in enumerate((-20.0, 20.0)):
+    back_disc("drain_back_%d" % i, 0.9, x, -40.0, 0.05, M_HOLE, seg=12)
+    back_disc("mic_back_%d" % i, 0.7, x, 38.0, 0.05, M_HOLE, seg=12)
+assign(box("serial_label", 24.0, 0.3, 9.0, (0, D / 2 + 0.05, -38.0), bevel=0.8, seg=2), M_LABEL)
 
 # shading: smooth with sharp edges above 30 degrees
 meshes = [o for o in sc.objects if o.type == "MESH"]
