@@ -5,7 +5,13 @@
 #include "zbc_lens.h"
 #include "zbc_logo.h"
 
-uniform float4 bus_zbc_osd_info;         // x: active (>0.5), y: logo_style (0=official, 1=swirl, 2=plain, 3=none), z: text_opacity, w: logo_opacity
+// The overlay reads uint4 constants. Exes older than modded exes 2026.10.11 (Shader Bus 7) stop with
+// "R_constant_table::parse: unexpected shader variable type" on any uint constant, so the in-shader
+// overlay only compiles where the engine says it can fill them. Elsewhere the lens is off and the
+// script draws the overlay as HUD glyphs instead.
+#if defined(SHADER_BUS) && SHADER_BUS >= 7
+
+uniform float4 bus_zbc_osd_info;        // x: active (>0.5), y: logo_style (0=official, 1=swirl, 2=plain, 3=none), z: text_opacity, w: logo_opacity
 uniform float4 bus_zbc_osd_layout;       // x: logo_x (0.950), y: logo_y (0.026*asp.x), z: logo_w (0.035), w: em_v (em_px / H)
 uniform uint4  bus_zbc_osd_chars[31];    // row 0: (len0, len1, len2, 0); row 1+i*10+(c>>2) comp (c&3) = ASCII byte
 uniform uint4  bus_zbc_osd_atlas[816];   // rows 0..751: ASCII 33..126 16x32 2-bit (8 uint4s/glyph); rows 752..815: 64x64 2-bit logo
@@ -424,5 +430,15 @@ void zbc_osd_composite(inout float3 image, float2 uv, inout float osd_mask)
 			zbc_osd_right(image, uv, uv_o, asp, ca_px, dy_px, osd_mask);
 	}
 }
+
+#else
+
+// Old exes: no in-shader overlay (see the note at the top of this file).
+void zbc_osd_composite(inout float3 image, float2 uv, inout float osd_mask)
+{
+	osd_mask = 0.0;
+}
+
+#endif // SHADER_BUS >= 7
 
 #endif
