@@ -31,7 +31,7 @@ Everything can be tuned or turned off in MCM.
 ## Requirements
 
 - S.T.A.L.K.E.R. Anomaly 1.5.3. Made and tested on G.A.M.M.A.
-- **[Modded exes](https://github.com/themrdemonized/xray-monolith/releases) 2026.10.11 or newer** for the lens. They include the Shader Bus it needs. The [Slop-Ray engine](https://github.com/asuparabekon/xray-monolith-bodycam) works too. With older exes the lens is off, but the overlay and markers still work.
+- **[Modded exes](https://github.com/themrdemonized/xray-monolith/releases) 2026.10.11 or newer** for the lens. They include the Shader Bus it needs. The [Bodycam exes](https://github.com/asuparabekon/xray-monolith-bodycam) (such as Slop-Ray) work too. **v1.0.1 crashes on start with older exes**, so update your exes first. The next update fixes this: on older exes the lens will simply be off, while the overlay and markers still work.
 - **MCM** to change settings (recommended).
 
 ## Installation
@@ -61,7 +61,7 @@ Everything can be tuned or turned off in MCM.
 
 - Mod by **Damage_Zedd**.
 - **themrdemonized** and the modded exes contributors for the Shader Bus the lens runs on.
-- **asuparabekon** for [xray-monolith-bodycam (Slop-Ray)](https://github.com/asuparabekon/xray-monolith-bodycam), the engine the mod was built on.
+- **asuparabekon** for the [Bodycam exes](https://github.com/asuparabekon/xray-monolith-bodycam) (such as Slop-Ray), the engine the mod was built on.
 - Body motion based on the damped camera chase from **Sludge's Intrusive 3D Masks**.
 
 <details>
