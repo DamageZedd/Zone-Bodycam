@@ -23,8 +23,9 @@ for o in list(sc.objects):
 col = sc.collection
 
 # ---- body dimensions (mm)
-W, H, D = 64.5, 96.5, 28.0
-CORNER = 8.0                  # corner cut of the outline
+W, D = 64.5, 28.0
+Z_TOP, Z_BOT = 47.0, -48.0    # body top and bottom (95 mm; the features are centred on Z = 0)
+CUT_X, CUT_Z = 10.3, 7.7      # corner cuts of the outline
 FRONT_CHAMFER = 3.4           # dark rim band around the front
 Y0 = -D / 2                   # front plane
 EMBED = 0.3                   # relief parts start this far inside the shell
@@ -392,19 +393,23 @@ dots(M_GRIP, 1, 2, 1.1, 0.33, (0.018, 0.018, 0.020), (0.032, 0.032, 0.035))
 # shell
 # ------------------------------------------------------------------------------------------------
 
-hw, hh, c = W / 2, H / 2, CORNER
-outline = [(-hw + c, hh), (hw - c, hh), (hw, hh - c), (hw, -hh + c), (hw - c, -hh), (-hw + c, -hh), (-hw, -hh + c), (-hw, hh - c)]
+hw = W / 2
+outline = [(-hw + CUT_X, Z_TOP), (hw - CUT_X, Z_TOP), (hw, Z_TOP - CUT_Z), (hw, Z_BOT + CUT_Z),
+           (hw - CUT_X, Z_BOT), (-hw + CUT_X, Z_BOT), (-hw, Z_BOT + CUT_Z), (-hw, Z_TOP - CUT_Z)]
 body = assign(prism("body", outline, D / 2, D, chamfer=FRONT_CHAMFER, seg=1, back_chamfer=3.0, back_seg=3), M_BODY)
 
 # ------------------------------------------------------------------------------------------------
 # front relief (measured outlines, mm)
 # ------------------------------------------------------------------------------------------------
 
-TOP_IN = hh - FRONT_CHAMFER - 0.6        # top/bottom limit of the relief inside the rim chamfer
+Z_END_T, Z_END_B = Z_TOP - FRONT_CHAMFER, Z_BOT + FRONT_CHAMFER   # the rim chamfer starts here
+TOP_IN_T, TOP_IN_B = Z_END_T - H_SPINE, Z_END_B + H_SPINE         # the spine ramps down beyond these
 X_FRAME = 25.8                           # outer flat frame (with the screws) ends here
 
 # central spine, top to bottom, with the chin under the button block
-spine = block("spine", [(-6.6, TOP_IN), (6.6, TOP_IN), (6.6, -TOP_IN), (-6.6, -TOP_IN)], H_SPINE, 0.4)
+spine = block("spine", [(-6.6, TOP_IN_T), (6.6, TOP_IN_T), (6.6, TOP_IN_B), (-6.6, TOP_IN_B)], H_SPINE, 0.4)
+for nm, zi, ze in (("spine_ramp_top", TOP_IN_T, Z_END_T), ("spine_ramp_bottom", TOP_IN_B, Z_END_B)):
+    assign(slab(nm, [(-6.2, zi, H_SPINE), (6.2, zi, H_SPINE), (6.6, ze, 0), (-6.6, ze, 0)]), M_FACE)
 assign(spine, M_FACE)
 
 # lens block: octagon whose lower corners run diagonally into the spine
@@ -426,11 +431,15 @@ for s in (-1, 1):
         return h1 * (abs(x) - x0) / (x1 - x0)
 
     col_pts = [P(X_FRAME, 36.4, 0), P(X_COL_IN, 36.4, H_COLUMN), P(X_COL_IN, -28.2, H_COLUMN), P(X_FRAME, -28.2, 0)]
-    top_pts = [P(X_FRAME, TOP_IN, 0), P(6.6, TOP_IN, H_SPINE), P(6.6, 36.4, H_SPINE), P(X_FRAME, 36.4, 0)]
+    top_pts = [P(X_FRAME, TOP_IN_T, 0), P(6.6, TOP_IN_T, H_SPINE), P(6.6, 36.4, H_SPINE), P(X_FRAME, 36.4, 0)]
     bot_pts = [P(X_FRAME, -28.2, 0), P(20.6, -28.2, k(20.6, X_FRAME, 6.6, H_SPINE)), P(6.6, -34.6, H_SPINE),
-               P(6.6, -TOP_IN, H_SPINE), P(X_FRAME, -TOP_IN, 0)]
+               P(6.6, TOP_IN_B, H_SPINE), P(X_FRAME, TOP_IN_B, 0)]
     if s > 0:
         col_pts, top_pts, bot_pts = col_pts[::-1], top_pts[::-1], bot_pts[::-1]
+    # where the facets meet the rim chamfer, the step along the spine ramps down to the front plane
+    for nm, zi, ze in (("top_end", TOP_IN_T, Z_END_T), ("bottom_end", TOP_IN_B, Z_END_B)):
+        tri = [P(X_FRAME, zi, 0), P(6.6, zi, H_SPINE), P(6.6, ze, 0)]
+        assign(slab("%s_%s" % (nm, "r" if s > 0 else "l"), tri), M_FACE)
     assign(slab("column_%s" % ("r" if s > 0 else "l"), col_pts), M_FACE)
     assign(slab("top_facet_%s" % ("r" if s > 0 else "l"), top_pts), M_FACE)
     assign(slab("bottom_facet_%s" % ("r" if s > 0 else "l"), bot_pts), M_FACE)
@@ -537,8 +546,9 @@ def hole(name, x, z, r, h=0.0):
     assign(disc(name, r, x, z, Y0 - h + 0.3, Y0 - h - 0.03, seg=16), M_HOLE)
 
 
-hole("hole_tl", -18.8, 37.4, 0.65)
-hole("hole_tr", 18.8, 37.4, 0.65)
+H_COL_AT_HOLE = H_COLUMN * (X_FRAME - 18.8) / (X_FRAME - X_COL_IN)   # the top holes sit on the side columns
+hole("hole_tl", -18.8, 35.6, 0.65, H_COL_AT_HOLE)
+hole("hole_tr", 18.8, 35.6, 0.65, H_COL_AT_HOLE)
 for name, x, z in (("hole_b0", 12.6, -35.6), ("hole_b1", 15.4, -34.9)):
     hole(name, x, z, 0.62, H_SPINE * (X_FRAME - x) / (X_FRAME - 6.6))
 
@@ -579,12 +589,12 @@ assign(box("btn_right", 2.4, 9.0, 13.0, (hw + 0.1, -2.0, 30.0), bevel=0.9, seg=3
 assign(box("grip_right", 1.6, 16.0, 46.0, (hw - 0.3, 0.0, -14.0), bevel=0.6, seg=2), M_GRIP)
 assign(box("grip_left", 1.6, 16.0, 30.0, (-hw + 0.3, 0.0, -22.0), bevel=0.6, seg=2), M_GRIP)
 # top: program button and status LED
-assign(box("btn_top", 16.0, 9.0, 2.2, (-6.0, 0.0, hh - 0.2), bevel=0.8, seg=3), M_RUBBER)
+assign(box("btn_top", 16.0, 9.0, 2.2, (-6.0, 0.0, Z_TOP - 0.2), bevel=0.8, seg=3), M_RUBBER)
 led = assign(disc("led", 1.3, 13.0, 0.0, 0.0, -0.5, seg=20), material("zbc_led", (0.35, 0.03, 0.03), 0.2))
 led.rotation_euler = (math.radians(-90), 0, 0)
-led.location = v3(0, -2.0, hh + 0.05)
+led.location = v3(0, -2.0, Z_TOP + 0.05)
 # bottom: dock connector
-assign(box("port", 14.0, 4.0, 1.2, (0, 0.5, -hh + 0.25), bevel=0.4, seg=2), M_HOLE)
+assign(box("port", 14.0, 4.0, 1.2, (0, 0.5, Z_BOT + 0.25), bevel=0.4, seg=2), M_HOLE)
 # back: RapidLock mount plate
 assign(box("mount", 44.0, 4.0, 60.0, (0, D / 2 + 1.6, 0), bevel=1.5, seg=3), M_MOUNT)
 assign(box("mount_lip", 36.0, 2.5, 8.0, (0, D / 2 + 4.6, 22.0), bevel=1.0, seg=3), M_MOUNT)

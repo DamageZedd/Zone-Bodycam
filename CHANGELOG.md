@@ -7,6 +7,7 @@
   - The camera's condition is its battery. It drains in real time while recording (MCM **Zone Bodycam: Item > Battery life**, 4 real hours by default, scaled by the difficulty's battery consumption).
   - Swap batteries like vanilla devices: drag a battery onto the camera, or use **Unpack battery**.
   - With no camera or a dead battery, the lens, overlay, REC timer display and ally markers are all off. The REC timer keeps counting in the background.
+  - The Body Camera has its own model (an Axon Body 4, measured from Axon's product render), texture and inventory icon. Build scripts: `tools/bodycam_item/`.
   - Without the optional component the mod is unchanged: the bodycam is always on.
   - Tests: `tools/tests/zbc_item_test.lua`.
 
