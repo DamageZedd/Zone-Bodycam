@@ -10,7 +10,7 @@
 
 [![Zone Bodycam gameplay](docs/images/gameplay.webp)](docs/images/gameplay.mp4)
 
-<sub>Recorded on the <a href="https://github.com/asuparabekon/xray-monolith-bodycam">Slop-Ray engine</a> with its <b>Immersive Bodycam</b> camera on. The free-floating camera and weapon movement come from Slop-Ray, <b>not from this mod</b>. Click the clip for the full-quality video with sound.</sub>
+<sub>Recorded on the modded <a href="https://github.com/asuparabekon/xray-monolith-bodycam">Bodycam exes</a> (such as Slop-Ray) with their <b>Immersive Bodycam</b> camera on. The free-floating camera and weapon movement come from the Bodycam exes, <b>not from this mod</b>. Click the clip for the full-quality video with sound.</sub>
 
 </div>
 
