@@ -104,6 +104,33 @@ local CLAMPS = {
 	compression       = { 0, 1 },
 	rolling_shutter   = { 0, 1.5 },
 	sensor_grade      = { 0, 1 },
+	motion            = { 0, 5 },
+	turn_lag          = { 0, 5 },
+	walk_bob          = { 0, 5 },
+	roll              = { 0, 5 },
+	impacts           = { 0, 5 },
+	breathing         = { 0, 5 },
+	text_opacity      = { 0, 1 },
+	logo_opacity      = { 0, 1 },
+	allies_range           = { 2, 200 },
+	allies_dot_ratio       = { 0, 1 },
+	allies_size            = { 0.1, 3 },
+	allies_opacity         = { 0, 1 },
+	logo_style             = { 0, 3 },
+	timezone               = { 0, 1 },
+	font_size              = { 0, 2 },
+	allies_style           = { 0, 1 },
+	allies_color_neutral   = { 0, 7 },
+	allies_color_companion = { 0, 7 },
+}
+
+local LIST_OPTS = {
+	logo_style             = true,
+	timezone               = true,
+	font_size              = true,
+	allies_style           = true,
+	allies_color_neutral   = true,
+	allies_color_companion = true,
 }
 
 local cfg = {}
@@ -121,6 +148,8 @@ local function load_settings()
 		local v = mcm_get(k)
 		if type(def) == "number" then
 			v = tonumber(v) or def
+			if v ~= v then v = def end
+			if LIST_OPTS[k] then v = floor(v + 0.5) end
 			local b = CLAMPS[k]
 			if b then v = min(max(v, b[1]), b[2]) end
 		elseif type(def) == "boolean" then
@@ -183,7 +212,9 @@ local function bus_ready()
 			printf("! [Zone Bodycam] Shader Bus unavailable (needs modded exes 2026.10.11 or newer): the lens is off, the overlay still works")
 		end
 	end
-	if tokens and not atlas_uploaded and shader_bus.set_array_uint and zbc_osd_atlas and zbc_osd_atlas.ROWS then
+	local can_uint_osd = shader_bus and shader_bus.set_array_uint
+		and (not shader_bus.version or shader_bus.version() >= 7)
+	if tokens and not atlas_uploaded and can_uint_osd and zbc_osd_atlas and zbc_osd_atlas.ROWS then
 		shader_bus.set_array_uint(tokens.osd_atlas, 0, zbc_osd_atlas.ROWS)
 		atlas_uploaded = true
 	end
@@ -219,7 +250,9 @@ local FILL_MARGIN = 1.005    -- half a percent so filtering never reaches the ve
 
 local function fill_zoom(k1)
 	local dev = device()
-	local asp = (dev and dev.height and dev.height > 0) and (dev.width / dev.height) or (16 / 9)
+	local w = dev and dev.width or 0
+	local h = dev and dev.height or 0
+	local asp = (w > 0 and h > 0) and (w / h) or (16 / 9)
 	local uw  = min(1, (16 / 9) / max(asp, 0.1))
 	local px, py = asp * 0.5 + FILL_SHEAR, 0.5
 	local r2 = (px * px + py * py) * uw * uw
@@ -234,7 +267,7 @@ function lens_zoom()
 	return max(z, fill_zoom(max(d, 0)))
 end
 
-local cur_zoom = nil   -- lens_zoom() for the current settings and resolution, set by push_settings
+local cur_zoom = nil   -- lens_zoom() for the current settings and resolution, set by sync_lens_settings
 
 local function push_settings()
 	cur_zoom = lens_zoom()
@@ -243,6 +276,14 @@ local function push_settings()
 	send("extra",   min(max(cfg.edge_follow, 0), 3), clamp01(cfg.sharpen), clamp01(cfg.grain), cfg.edge_in_image and 1.0 or 0.0)
 	send("vig_occ", 0, 0, cfg.rig_occlusion, housing_power())
 	send("sensor",  cfg.highlight_blowout, cfg.compression, 0, cfg.sensor_grade)
+end
+
+local function sync_lens_settings()
+	if cfg.enabled and cfg.lens_enabled then
+		push_settings()
+	else
+		cur_zoom = lens_zoom()
+	end
 end
 
 local function lens_off()
@@ -261,16 +302,21 @@ end
 
 local rec = { secs = nil, last_t = nil }    -- secs: nil until loaded or seeded
 
+local function read_zone_time()
+	return utils_obj.time_spent_in_zone(1) / level.get_time_factor()
+end
+
 -- saves made before the timer existed start from the time spent in the Zone, like the run timer mods
 local function rec_seed()
 	if not (utils_obj and utils_obj.time_spent_in_zone and level and level.get_time_factor) then return 0 end
-	local ok, secs = pcall(function() return utils_obj.time_spent_in_zone(1) / level.get_time_factor() end)
+	local ok, secs = pcall(read_zone_time)
 	if ok and finite(secs) and secs > 0 then return secs end
 	return 0
 end
 
 -- stored on the actor like the run timer mods: per playthrough, kept through saves and level changes
 local REC_VAR = "zbc_rec_secs"
+local rec_str_s, rec_str
 
 local function rec_tick()
 	local actor = db.actor
@@ -278,9 +324,15 @@ local function rec_tick()
 	local now = time_global()
 	local last = rec.last_t
 	rec.last_t = now
+	local seeded = false
 	if not rec.secs then
-		local v = tonumber(load_var(actor, REC_VAR))
-		rec.secs = (v and v >= 0) and v or rec_seed()
+		local v = load_var and tonumber(load_var(actor, REC_VAR))
+		if v and v >= 0 then
+			rec.secs = v
+		else
+			rec.secs = rec_seed()
+			seeded = true
+		end
 	end
 	local before = floor(rec.secs)
 	if last then
@@ -288,15 +340,18 @@ local function rec_tick()
 		if dt > 0 and dt < 1000 then rec.secs = rec.secs + dt / 1000 end   -- skip loading hitches
 	end
 	local whole = floor(rec.secs)
-	if whole ~= before or not last then save_var(actor, REC_VAR, whole) end
+	if save_var and (whole ~= before or seeded) then save_var(actor, REC_VAR, whole) end
 end
 
 local function rec_whole() return floor(rec.secs or 0) end
 local function rec_dot_on() return ((rec.secs or 0) % 1) < 0.5 end   -- 1 Hz, in step with the seconds
 
 local function rec_text(s)
+	if s == rec_str_s and rec_str then return rec_str end
+	rec_str_s = s
 	local h = min(floor(s / 3600), 999)
-	return string.format("REC %02d:%02d:%02d", h, floor(s / 60) % 60, s % 60)
+	rec_str = string.format("REC %02d:%02d:%02d", h, floor(s / 60) % 60, s % 60)
+	return rec_str
 end
 
 -- re-read from the actor after every load, level change or new game
@@ -758,7 +813,11 @@ end
 
 -- stable per character, in the style of a bodycam serial
 local SERIAL_CHARS = "0123456789ABCDEFGHJKLMNPRSTUVWXYZ"
+local cached_raw_name, cached_serial, cached_upper_name
+local cached_dev_in, cached_dev_line
+
 local function serial_for(name)
+	if name == cached_raw_name and cached_serial then return cached_serial end
 	local h = 5381
 	for i = 1, #name do h = (h * 33 + string.byte(name, i)) % 2147483647 end
 	local out = ""
@@ -767,7 +826,21 @@ local function serial_for(name)
 		out = out .. SERIAL_CHARS:sub(k + 1, k + 1)
 		h = floor(h / #SERIAL_CHARS)
 	end
-	return "X6039" .. out
+	cached_raw_name = name
+	cached_serial = "X6039" .. out
+	cached_upper_name = string.upper(name)
+	cached_dev_in = nil
+	return cached_serial
+end
+
+local function actor_ident(dev_label)
+	local name = actor_name()
+	local ser = serial_for(name)
+	if dev_label ~= cached_dev_in or not cached_dev_line then
+		cached_dev_in = dev_label
+		cached_dev_line = dev_label .. " " .. ser
+	end
+	return cached_dev_line, cached_upper_name
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -900,7 +973,9 @@ end
 
 -- the reference layout is in % of effective 16:9 width (eff_w), keeping ultrawide crisp in top-right
 function ZbcHud:Layout()
-	local W, H = device().width, device().height
+	local dev = device()
+	local W, H = dev and dev.width or 0, dev and dev.height or 0
+	if W <= 0 or H <= 0 then return end
 	local fs = cfg.font_size
 	if W == self.last_w and H == self.last_h and fs == self.last_fs then return end
 	self.last_w, self.last_h, self.last_fs = W, H, fs
@@ -1007,11 +1082,15 @@ function ZbcHud:RefreshRec(visible, lens_on)
 	local dot = rec_dot_on()
 	local hud_text, hud_dot = false, false
 	if lens_on then
-		send("osd_layout", 1.0 - 0.050 * self.eff_w_u, 0.026 * self.eff_asp, 0.035 * self.eff_w_u, self.em_v)
-		send("rec", show and 1 or 0, (show and dot) and 1 or 0, secs, clamp01(cfg.text_opacity))
+		if show then
+			send("osd_layout", 1.0 - 0.050 * self.eff_w_u, 0.026 * self.eff_asp, 0.035 * self.eff_w_u, self.em_v)
+			send("rec", 1, dot and 1 or 0, secs, clamp01(cfg.text_opacity))
+		else
+			send("rec", 0, 0, 0, 0)
+		end
 	else
 		if tokens then send("rec", 0, 0, 0, 0) end
-		if show then
+		if show and self.glyph then
 			if self.rec_line.text == nil or secs ~= self.rec_sec then
 				self.rec_sec = secs
 				local G = self.glyph
@@ -1031,7 +1110,9 @@ function ZbcHud:Refresh(visible, lens_on, lens)
 	self:Layout()
 
 	zbc_allies.update(self.allies, cfg, lens, visible)
-	self:RefreshRec(visible, lens_on)
+	if not self.glyph then return end
+	local osd_in_post = lens_on and atlas_uploaded
+	self:RefreshRec(visible, osd_in_post)
 
 	-- the housing follows the lens itself, so it stays while the lens fades out (no exposed edges)
 	local ring_vis = lens_on and not cfg.edge_in_image
@@ -1041,7 +1122,6 @@ function ZbcHud:Refresh(visible, lens_on, lens)
 	end
 
 	local show = cfg.overlay and visible
-	local osd_in_post = lens_on
 	if osd_in_post then
 		if not self.logos_hidden then
 			for _, s in pairs(self.logos) do s:Show(false) end
@@ -1077,8 +1157,8 @@ function ZbcHud:Refresh(visible, lens_on, lens)
 			self.osd_fs = self.last_fs
 			self.osd_dirty = false
 			self.lines[1].text = nil
-			local name = actor_name()
-			upload_osd_chars(date, cfg.device_label .. " " .. serial_for(name), cfg.show_name and string.upper(name) or "")
+			local dev_str, upper_name = actor_ident(cfg.device_label)
+			upload_osd_chars(date, dev_str, cfg.show_name and upper_name or "")
 		end
 		return
 	end
@@ -1101,10 +1181,10 @@ function ZbcHud:Refresh(visible, lens_on, lens)
 	if date ~= self.sec_date or sec ~= self.sec or self.lines[1].text == nil then
 		self.sec = sec
 		self.sec_date = date
-		local name = actor_name()
+		local dev_str, upper_name = actor_ident(cfg.device_label)
 		self:SetLine(1, date)
-		self:SetLine(2, cfg.device_label .. " " .. serial_for(name))
-		self:SetLine(3, string.upper(name))
+		self:SetLine(2, dev_str)
+		self:SetLine(3, upper_name)
 	end
 end
 
@@ -1152,11 +1232,12 @@ end
 local function settings_changed()
 	clear_send_cache()
 	load_settings()
-	push_settings()
+	sync_lens_settings()
 	if not cfg.enabled then
 		hud_remove()
 		lens_off()
 		motion_reset()
+		rec.last_t = nil
 		lens_state.k = 0
 		lens_state.shutter = 0
 		return
@@ -1191,8 +1272,8 @@ function actor_on_first_update()
 	rec_on_first_update()
 	clear_send_cache()
 	load_settings()
-	push_settings()
 	motion_reset()
+	sync_lens_settings()
 	if not (cfg.enabled and cfg.lens_enabled) then lens_off() end
 	hud_add()
 end
@@ -1265,7 +1346,7 @@ end
 
 function on_screen_resolution_changed()
 	if HUD then HUD.last_w = -1 end
-	if db.actor and cfg.enabled ~= nil then push_settings() end   -- the fill zoom depends on the aspect ratio
+	if db.actor and cfg.enabled ~= nil then sync_lens_settings() end   -- the fill zoom depends on the aspect ratio
 end
 
 function on_game_start()

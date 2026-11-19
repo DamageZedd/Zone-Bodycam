@@ -2,8 +2,16 @@
 
 ## Unreleased
 
+### Changed
+- **Shader & Lua performance pass**:
+  - Halved dynamic constant-buffer atlas reads (`4 -> 2` per bilinear glyph/logo sample) in `zbc_osd.h`, reducing `postprocess.ps` and `postprocess_cm.ps` DXBC size (`-660` bytes) and temp registers (`24 -> 23`), plus added square fast-rejects on the recording dot and glyph loop.
+  - Made Shader Bus lane registration and 816-row atlas upload lazy when the mod or lens is disabled.
+  - Stopped `RefreshRec` from sending per-second `bus_zbc_rec` / `osd_layout` updates when the recording timer or HUD is hidden, cached actor serial/name formatting (`actor_ident`), cached `rec_text` per second, skipped redundant initial `save_var` writes, and removed the remaining `pcall(function)` closure in `rec_seed`.
+
 ### Fixed
 - **Crash on start with modded exes older than 2026.10.11** ("R_constant_table::parse: unexpected shader variable type"). Those engines can't read the overlay's `uint` shader constants, so the in-shader overlay now only compiles when the engine reports Shader Bus 7 or newer. On older exes the game starts, the lens stays off and the overlay is drawn as normal HUD text. Regression test: `tools/tests/shader_uint_guard_test.lua`.
+- **Missing overlay and recording timer on Shader Bus <= 6 engines**: `bus_ready()` now gates in-shader OSD mode on `set_array_uint` and Shader Bus `>= 7`, so older Shader Bus engines keep the 2D HUD overlay and recording timer visible instead of hiding both.
+- **Minimized window (`0x0`), nil `ray_pick()`, and out-of-range config safety**: Added `W <= 0`/`H <= 0` guards in `fill_zoom`, `ZbcHud:Layout`, and `zbc_allies.update`; added a fallback to `actor:see` if `ray_pick()` returns `nil`; clamped `bus_zbc_rec.z` in `zbc_osd.h`; cleared `rec.last_t` when disabling the mod; and validated/clamped list & numeric MCM settings (including `NaN` protection).
 
 ## v1.0.1 - 2026-11-18
 

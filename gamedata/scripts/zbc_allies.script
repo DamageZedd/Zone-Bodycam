@@ -97,11 +97,12 @@ local function fill_warp_frame(W, L, a)
 	local get_rs = zbc_bodycam and zbc_bodycam.get_rolling_shutter
 	local rs = (L.shutter ~= nil) and L.shutter or (get_rs and get_rs() or 0)
 	local zoom = max(1 + (L.zoom - 1) * k, 0.25)
-	local uw = min(1, (16 / 9) / max(a, 0.1))
+	local safe_a = max(a, 0.1)
+	local uw = min(1, (16 / 9) / safe_a)
 	local ang = L.roll * k
 	W.k = k
-	W.a = a
-	W.inv_a = 1 / a
+	W.a = safe_a
+	W.inv_a = 1 / safe_a
 	W.rsk = rs * k
 	W.k1 = L.dist * k
 	W.k2 = 0.5 * W.k1 * W.k1
@@ -302,6 +303,7 @@ local function ray_to_point(actor, obj_id, cam_vec, tx, ty, tz)
 	local rem = d - 0.15
 
 	los_ray = los_ray or ray_pick()
+	if not los_ray then return false end
 	los_ray:set_flags(RQ_FLAGS)
 	los_ray:set_ignore_object(actor)
 
@@ -342,6 +344,10 @@ end
 local function has_los(actor, obj, obj_id, check_los, cam_vec)
 	if not check_los then return true end
 	if not (ray_pick and cam_vec) then
+		return actor:see(obj)
+	end
+	los_ray = los_ray or ray_pick()
+	if not los_ray then
 		return actor:see(obj)
 	end
 	local safe_bone = utils_obj and utils_obj.safe_bone_pos
@@ -589,7 +595,11 @@ function update(pool, cfg, L, visible)
 	end
 
 	local dev = device()
-	local sw, sh = dev.width, dev.height
+	local sw, sh = dev and dev.width or 0, dev and dev.height or 0
+	if sw <= 0 or sh <= 0 then
+		hide_all(pool)
+		return
+	end
 	local a = sw / sh
 	local ux, uy = 1024 / sw, 768 / sh
 	local W = fill_warp_frame(frame_W, L, a)

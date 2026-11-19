@@ -38,62 +38,84 @@ uint zbc_osd_char_at(uint line_idx, uint c_idx)
 	return zbc_uint4_comp(bus_zbc_osd_chars[row], c_idx & 3u);
 }
 
-// Decodes one texel from a 16x32 2-bit font glyph as float2(luma, alpha).
-float2 zbc_osd_glyph_texel(uint g, int ix, int iy)
+// Decodes a 2-bit font code to float2(luma, alpha).
+float2 zbc_osd_glyph_decode(uint code)
 {
-	if (ix < 0 || ix >= 16 || iy < 0 || iy >= 32)
-		return float2(0.0, 0.0);
-	uint ux   = (uint)ix;
-	uint uy   = (uint)iy;
-	uint row  = min(g, 93u) * 8u + (uy >> 2u);
-	uint word = zbc_uint4_comp(bus_zbc_osd_atlas[row], uy & 3u);
-	uint code = (word >> (ux * 2u)) & 3u;
 	if (code == 0u) return float2(0.0,  0.0);
 	if (code == 1u) return float2(0.0,  0.82);
 	if (code == 2u) return float2(0.68, 0.95);
 	return float2(1.0, 1.0);
 }
 
+// Reads two horizontally adjacent texels (x0, x0+1) from one 16x32 2-bit font row in a single cbuffer fetch.
+void zbc_osd_glyph_pair(uint g, int x0, int iy, out float2 c0, out float2 c1)
+{
+	c0 = float2(0.0, 0.0);
+	c1 = float2(0.0, 0.0);
+	if (iy < 0 || iy >= 32)
+		return;
+	uint uy   = (uint)iy;
+	uint row  = min(g, 93u) * 8u + (uy >> 2u);
+	uint word = zbc_uint4_comp(bus_zbc_osd_atlas[row], uy & 3u);
+	if (x0 >= 0 && x0 < 16)
+		c0 = zbc_osd_glyph_decode((word >> ((uint)x0 * 2u)) & 3u);
+	int x1 = x0 + 1;
+	if (x1 >= 0 && x1 < 16)
+		c1 = zbc_osd_glyph_decode((word >> ((uint)x1 * 2u)) & 3u);
+}
+
 float2 zbc_osd_glyph_sample(uint ch, float2 guv)
 {
 	if (ch < 33u || ch > 126u)
 		return float2(0.0, 0.0);
-	uint   g   = ch - 33u;
-	float2 fp  = guv * float2(16.0, 32.0) - 0.5;
-	int2   p0  = (int2)floor(fp);
-	float2 f   = fp - (float2)p0;
-	float2 t00 = zbc_osd_glyph_texel(g, p0.x,     p0.y);
-	float2 t10 = zbc_osd_glyph_texel(g, p0.x + 1, p0.y);
-	float2 t01 = zbc_osd_glyph_texel(g, p0.x,     p0.y + 1);
-	float2 t11 = zbc_osd_glyph_texel(g, p0.x + 1, p0.y + 1);
+	uint   g  = ch - 33u;
+	float2 fp = guv * float2(16.0, 32.0) - 0.5;
+	int2   p0 = (int2)floor(fp);
+	float2 f  = fp - (float2)p0;
+	float2 t00, t10, t01, t11;
+	zbc_osd_glyph_pair(g, p0.x, p0.y,     t00, t10);
+	zbc_osd_glyph_pair(g, p0.x, p0.y + 1, t01, t11);
 	return lerp(lerp(t00, t10, f.x), lerp(t01, t11, f.x), f.y);
 }
 
-// Decodes one texel from the 64x64 2-bit official logo alpha atlas.
-float zbc_osd_logo_texel(int ix, int iy)
+// Decodes a 2-bit official logo alpha code.
+float zbc_osd_logo_decode(uint code)
 {
-	if (ix < 0 || ix >= 64 || iy < 0 || iy >= 64)
-		return 0.0;
-	uint ux   = (uint)ix;
-	uint uy   = (uint)iy;
-	uint row  = 752u + uy;
-	uint word = zbc_uint4_comp(bus_zbc_osd_atlas[row], ux >> 4u);
-	uint code = (word >> ((ux & 15u) * 2u)) & 3u;
 	if (code == 0u) return 0.0;
 	if (code == 1u) return 0.33;
 	if (code == 2u) return 0.70;
 	return 1.0;
 }
 
+// Reads two horizontally adjacent texels (x0, x0+1) from one 64x64 2-bit logo row in a single uint4 fetch.
+void zbc_osd_logo_pair(int x0, int iy, out float a0, out float a1)
+{
+	a0 = 0.0;
+	a1 = 0.0;
+	if (iy < 0 || iy >= 64)
+		return;
+	uint4 row_v = bus_zbc_osd_atlas[752u + (uint)iy];
+	if (x0 >= 0 && x0 < 64)
+	{
+		uint ux0 = (uint)x0;
+		a0 = zbc_osd_logo_decode((zbc_uint4_comp(row_v, ux0 >> 4u) >> ((ux0 & 15u) * 2u)) & 3u);
+	}
+	int x1 = x0 + 1;
+	if (x1 >= 0 && x1 < 64)
+	{
+		uint ux1 = (uint)x1;
+		a1 = zbc_osd_logo_decode((zbc_uint4_comp(row_v, ux1 >> 4u) >> ((ux1 & 15u) * 2u)) & 3u);
+	}
+}
+
 float zbc_osd_logo_sample(float2 luv)
 {
-	float2 fp  = luv * 64.0 - 0.5;
-	int2   p0  = (int2)floor(fp);
-	float2 f   = fp - (float2)p0;
-	float  a00 = zbc_osd_logo_texel(p0.x,     p0.y);
-	float  a10 = zbc_osd_logo_texel(p0.x + 1, p0.y);
-	float  a01 = zbc_osd_logo_texel(p0.x,     p0.y + 1);
-	float  a11 = zbc_osd_logo_texel(p0.x + 1, p0.y + 1);
+	float2 fp = luv * 64.0 - 0.5;
+	int2   p0 = (int2)floor(fp);
+	float2 f  = fp - (float2)p0;
+	float  a00, a10, a01, a11;
+	zbc_osd_logo_pair(p0.x, p0.y,     a00, a10);
+	zbc_osd_logo_pair(p0.x, p0.y + 1, a01, a11);
 	return lerp(lerp(a00, a10, f.x), lerp(a01, a11, f.x), f.y);
 }
 
@@ -226,17 +248,21 @@ float4 zbc_rec_eval(float2 uv_s, float text_op, float2 asp)
 	// 1. Dot (blinks at 1 Hz from the script)
 	if (bus_zbc_rec.y > 0.5)
 	{
-		float2 c = float2(left_u + half_v / asp.x, top_v + ZBC_REC_DOT_CY * em_v);
-		float  r = length(float2((uv_s.x - c.x) * asp.x, uv_s.y - c.y)) / half_v;   // 0 centre .. 1 edge of its square
-		if (r < 1.0)
+		float2 c  = float2(left_u + half_v / asp.x, top_v + ZBC_REC_DOT_CY * em_v);
+		float2 dp = float2((uv_s.x - c.x) * asp.x, uv_s.y - c.y);
+		if (abs(dp.x) < half_v && abs(dp.y) < half_v)
 		{
-			float  fw    = max(screen_res.w / half_v, 0.0001);
-			float  a     = saturate((0.95 - r) / fw);
-			float  core  = saturate((0.66 - r) / fw);
-			float  src_a = saturate(max(a * 0.55, core) * text_op);
-			float3 src_p = float3(0.92, 0.12, 0.09) * core * text_op;
-			acc.rgb = src_p + acc.rgb * (1.0 - src_a);
-			acc.a   = src_a + acc.a   * (1.0 - src_a);
+			float r = length(dp) / half_v;                                       // 0 centre .. 1 edge of its square
+			if (r < 1.0)
+			{
+				float  fw    = max(screen_res.w / half_v, 0.0001);
+				float  a     = saturate((0.95 - r) / fw);
+				float  core  = saturate((0.66 - r) / fw);
+				float  src_a = saturate(max(a * 0.55, core) * text_op);
+				float3 src_p = float3(0.92, 0.12, 0.09) * core * text_op;
+				acc.rgb = src_p + acc.rgb * (1.0 - src_a);
+				acc.a   = src_a + acc.a   * (1.0 - src_a);
+			}
 		}
 	}
 
@@ -249,27 +275,31 @@ float4 zbc_rec_eval(float2 uv_s, float text_op, float2 asp)
 	float y0_v     = top_v - pad_v;
 	if (uv_s.y >= y0_v && uv_s.y < y0_v + cell_h_v)
 	{
-		uint  secs = (uint)max(bus_zbc_rec.z, 0.0);
-		uint  nh   = zbc_rec_hdigits(secs);
-		uint  len  = 10u + nh;
-		float x0_u = left_u + 2.0 * half_v / asp.x + ZBC_REC_GAP * em_u - pad_u;
-		float gy   = (uv_s.y - y0_v) / cell_h_v;
-		int   c0   = (int)floor((uv_s.x - x0_u) / adv_u);
-		[loop] for (int dc = -1; dc <= 0; dc++)
+		uint  secs  = (uint)clamp(bus_zbc_rec.z, 0.0, 3599999.0);
+		uint  nh    = zbc_rec_hdigits(secs);
+		uint  len   = 10u + nh;
+		float x0_u  = left_u + 2.0 * half_v / asp.x + ZBC_REC_GAP * em_u - pad_u;
+		float end_u = x0_u + (float)(len - 1u) * adv_u + cell_w_u;
+		if (uv_s.x >= x0_u && uv_s.x < end_u)
 		{
-			int ci = c0 + dc;
-			if (ci >= 0 && ci < (int)len)
+			float gy = (uv_s.y - y0_v) / cell_h_v;
+			int   c0 = (int)floor((uv_s.x - x0_u) / adv_u);
+			[loop] for (int dc = -1; dc <= 0; dc++)
 			{
-				float cx0 = x0_u + (float)ci * adv_u;
-				if (uv_s.x >= cx0 && uv_s.x < cx0 + cell_w_u)
+				int ci = c0 + dc;
+				if (ci >= 0 && ci < (int)len)
 				{
-					uint   ch    = zbc_rec_char((uint)ci, secs, nh);
-					float2 la    = zbc_osd_glyph_sample(ch, float2((uv_s.x - cx0) / cell_w_u, gy));
-					float  src_a = saturate(la.y * text_op);
-					if (src_a > 0.0001)
+					float cx0 = x0_u + (float)ci * adv_u;
+					if (uv_s.x >= cx0 && uv_s.x < cx0 + cell_w_u)
 					{
-						acc.rgb = la.xxx * src_a + acc.rgb * (1.0 - src_a);
-						acc.a   = src_a + acc.a * (1.0 - src_a);
+						uint   ch    = zbc_rec_char((uint)ci, secs, nh);
+						float2 la    = zbc_osd_glyph_sample(ch, float2((uv_s.x - cx0) / cell_w_u, gy));
+						float  src_a = saturate(la.y * text_op);
+						if (src_a > 0.0001)
+						{
+							acc.rgb = la.xxx * src_a + acc.rgb * (1.0 - src_a);
+							acc.a   = src_a + acc.a * (1.0 - src_a);
+						}
 					}
 				}
 			}
@@ -280,8 +310,12 @@ float4 zbc_rec_eval(float2 uv_s, float text_op, float2 asp)
 
 float4 zbc_osd_layer(bool rec, float2 uv_s, float text_op, float logo_op, float logo_style, float2 asp)
 {
-	if (rec) return zbc_rec_eval(uv_s, text_op, asp);
-	return zbc_osd_eval(uv_s, text_op, logo_op, logo_style, asp);
+	float4 acc;
+	if (rec)
+		acc = zbc_rec_eval(uv_s, text_op, asp);
+	else
+		acc = zbc_osd_eval(uv_s, text_op, logo_op, logo_style, asp);
+	return acc;
 }
 
 // 5-tap CMOS look (RGB split + vertical bleed + noise) for one overlay layer, composited onto the image.
@@ -342,7 +376,8 @@ void zbc_rec_composite(inout float3 image, float2 uv, float2 uv_o, float2 asp, f
 	float  em_u    = em_v / asp.x;
 	float  left_u  = 1.0 - bus_zbc_osd_layout.x - max(bus_zbc_osd_layout.z, 0.0001);
 	float  top_v   = bus_zbc_osd_layout.y * (3.0 / 2.6);
-	uint   len     = 10u + zbc_rec_hdigits((uint)max(bus_zbc_rec.z, 0.0));
+	uint   secs    = (uint)clamp(bus_zbc_rec.z, 0.0, 3599999.0);
+	uint   len     = 10u + zbc_rec_hdigits(secs);
 	float2 r_min   = float2(left_u, top_v - (5.0 / 64.0) * em_v);
 	float2 r_max   = float2(left_u + (ZBC_REC_DOT_D + ZBC_REC_GAP) * em_u + (float)len * (33.0 / 64.0) * em_u + (10.0 / 64.0) * em_u,
 	                        r_min.y + (81.0 / 64.0) * em_v);
@@ -361,11 +396,11 @@ void zbc_osd_right(inout float3 image, float2 uv, float2 uv_o, float2 asp, float
 	float  logo_style = bus_zbc_osd_info.y;
 
 	// Tight active OSD bounding rect (logo + max active lines + filter pad) to skip empty quadrant pixels
-	float  logo_x   = bus_zbc_osd_layout.x;
-	float  logo_y   = bus_zbc_osd_layout.y;
-	float  logo_w   = max(bus_zbc_osd_layout.z, 0.0001);
-	float2 osd_min  = float2(10.0, 10.0);
-	float2 osd_max  = float2(-10.0, -10.0);
+	float  logo_x  = bus_zbc_osd_layout.x;
+	float  logo_y  = bus_zbc_osd_layout.y;
+	float  logo_w  = max(bus_zbc_osd_layout.z, 0.0001);
+	float2 osd_min = float2(10.0, 10.0);
+	float2 osd_max = float2(-10.0, -10.0);
 	if (logo_op > 0.001 && logo_style < 2.5)
 	{
 		osd_min = float2(logo_x, logo_y);
