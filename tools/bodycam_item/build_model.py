@@ -481,14 +481,55 @@ for s in (-1, 1):
 Y_BLOCK = Y0 - H_BLOCK
 
 # ------------------------------------------------------------------------------------------------
-# lens: knurled bezel, lugged ring, black groove, face, glass
+# recesses: the lens and the main button sit sunk into their blocks, not on top of them
 # ------------------------------------------------------------------------------------------------
 
+def funnel(name, cx, cz, r_top, y_top, r_bot, y_bot, seg=128):
+    """Sloped ring wall from radius r_top at depth y_top down to r_bot at y_bot, facing the viewer."""
+    bm = bmesh.new()
+    top, bot = [], []
+    for i in range(seg):
+        a = 2 * math.pi * i / seg
+        top.append(bm.verts.new(v3(cx + r_top * math.cos(a), y_top, cz + r_top * math.sin(a))))
+        bot.append(bm.verts.new(v3(cx + r_bot * math.cos(a), y_bot, cz + r_bot * math.sin(a))))
+    for i in range(seg):
+        j = (i + 1) % seg
+        bm.faces.new([top[i], bot[i], bot[j], top[j]])
+    bm.normal_update()
+    bm.faces.ensure_lookup_table()
+    if bm.faces[0].normal.y > 0:
+        for f in bm.faces:
+            f.normal_flip()
+    me = bpy.data.meshes.new(name)
+    bm.to_mesh(me)
+    bm.free()
+    return link(name, me)
+
+
+def recess(name, r, cx, cz, y_floor, targets, ridges=False):
+    """Sink a round pocket down to y_floor into each target object (deeper ones get +0.05 mm)."""
+    for k, tname in enumerate(targets):
+        o = sc.objects.get(tname)
+        if not o:
+            continue
+        yf = y_floor + (0.0 if k == 0 else 0.05)
+        cut = disc(name + "_cut", r, cx, cz, yf, Y0 - 12.0, seg=120 if ridges else 96, ridges=ridges, ridge_depth=0.22)
+        boolean(o, cut)
+
+
 lx, lz = LENS
-yb = Y_BLOCK - 3.6
-assign(disc("lens_bezel", 10.2, lx, lz, Y_BLOCK + 0.3, yb, seg=120, chamfer=0.35, ridges=True, ridge_depth=0.22), M_BEZEL)
-yl = yb - 0.4
-assign(disc("lens_ring", 8.6, lx, lz, yb + 0.2, yl, seg=96, chamfer=0.3, cseg=2), M_BEZEL)
+bx, bz = BTN
+Y_LENS_FLOOR = Y0 - 1.5                          # 2.5 mm deep pocket, knurled wall
+Y_WELL_FLOOR = Y0 - 1.8                          # 2.2 mm deep well with a glossy sloped wall
+recess("lens_pocket", 10.2, lx, lz, Y_LENS_FLOOR, ["lens_block", "spine"], ridges=True)
+recess("button_well", 21.7, bx, bz, Y_WELL_FLOOR, ["button_block", "column_l", "column_r", "spine"])
+
+# ------------------------------------------------------------------------------------------------
+# lens (on the pocket floor): dark ring with four light tabs, black groove, face, glass
+# ------------------------------------------------------------------------------------------------
+
+yl = Y_LENS_FLOOR - 0.5
+assign(disc("lens_ring", 8.6, lx, lz, Y_LENS_FLOOR + 0.2, yl, seg=96, chamfer=0.3, cseg=2), M_BEZEL)
 for a in (45, 135, 225, 315):
     r = math.radians(a)
     ur, ut = (math.cos(r), math.sin(r)), (-math.sin(r), math.cos(r))
@@ -505,23 +546,21 @@ assign(annulus("lens_inner_ring", lx, lz, 3.6, 4.5, yl - 0.77), M_HOLE)
 bm = bmesh.new()
 bmesh.ops.create_uvsphere(bm, u_segments=32, v_segments=16, radius=3.7 * MM)
 for v in bm.verts:
-    v.co.y *= 0.42
+    v.co.y *= 0.3                                # shallow dome: stays below the block face
 bmesh.ops.delete(bm, geom=[v for v in bm.verts if v.co.y > 1e-7], context="VERTS")
 glass = assign(finish(bm, "lens_glass"), M_GLASS)
 glass.location = v3(lx, yl - 0.7, lz)
-glass.rotation_euler = (0, 0, 0)
 
 # ------------------------------------------------------------------------------------------------
-# button: glossy outer ring, groove, knurled face, smooth centre disc, logo, light pipes
+# button (in the well): glossy sloped wall, groove, knurled face, smooth centre disc, light pipes
 # ------------------------------------------------------------------------------------------------
 
-bx, bz = BTN
-assign(disc("button_ring", 21.7, bx, bz, Y_BLOCK + 0.3, Y_BLOCK - 1.2, seg=128, chamfer=0.7, cseg=3), M_GLOSS)
-assign(annulus("button_groove", bx, bz, 19.9, 20.5, Y_BLOCK - 1.22), M_HOLE)
-yface = Y_BLOCK - 2.0
-assign(disc("button", 19.9, bx, bz, Y_BLOCK - 0.5, yface, seg=128, chamfer=0.45, cseg=2), M_BUTTON)
-ydisc = yface - 0.35
-assign(disc("button_disc", 13.3, bx, bz, yface + 0.1, ydisc, seg=96, chamfer=0.3, cseg=2), M_DISC)
+assign(funnel("button_ring", bx, bz, 21.7, Y_BLOCK + 0.02, 20.4, Y_WELL_FLOOR - 0.01), M_GLOSS)
+assign(annulus("button_groove", bx, bz, 19.9, 20.45, Y_WELL_FLOOR - 0.02), M_HOLE)
+yface = Y_WELL_FLOOR - 0.8
+assign(disc("button", 19.9, bx, bz, Y_WELL_FLOOR + 0.1, yface, seg=128, chamfer=0.45, cseg=2), M_BUTTON)
+ydisc = yface - 0.3
+assign(disc("button_disc", 13.3, bx, bz, yface + 0.1, ydisc, seg=96, chamfer=0.25, cseg=2), M_DISC)
 assign(annulus("lightpipe_top", bx, bz, 16.4, 16.9, yface - 0.03, 72, 110, seg=128), M_LIGHTPIPE)
 assign(annulus("lightpipe_left", bx, bz, 16.4, 16.9, yface - 0.03, 203, 240, seg=128), M_LIGHTPIPE)
 for i in range(9):                              # speaker/indicator ticks on the right
