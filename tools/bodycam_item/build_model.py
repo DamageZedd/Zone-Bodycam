@@ -437,7 +437,7 @@ for s_ in (-1, 1):
 # ------------------------------------------------------------------------------------------------
 
 Z_END_T, Z_END_B = Z_TOP - FRONT_CHAMFER, Z_BOT + FRONT_CHAMFER   # the rim chamfer starts here
-TOP_IN_T, TOP_IN_B = Z_END_T - H_SPINE, Z_END_B + H_SPINE         # the spine ramps down beyond these
+TOP_IN_T, TOP_IN_B = Z_END_T - 0.5, Z_END_B + 0.5                 # short end walls of the sunk spine
 X_FRAME = 25.8                           # outer flat frame (with the screws) ends here
 
 # central spine, top to bottom, with the chin under the button block
@@ -479,7 +479,36 @@ for s in (-1, 1):
     assign(slab("top_facet_%s" % ("r" if s > 0 else "l"), top_pts), M_FACE)
     assign(slab("bottom_facet_%s" % ("r" if s > 0 else "l"), bot_pts), M_FACE)
 
-Y_BLOCK = Y0 - H_BLOCK
+# The relief is sunk, not raised: each part above becomes a pocket of the same outline whose depth
+# equals the height it was built with. The flat outer frame (with the screws) stays the top surface.
+RELIEF = ["spine", "spine_ramp_top", "spine_ramp_bottom", "lens_block", "button_block"] + [
+    "%s_%s" % (n, side) for n in ("top_end", "bottom_end", "column", "top_facet", "bottom_facet") for side in ("l", "r")]
+
+
+def sink(target, name):
+    """Mirror a relief solid through the front plane and cut it out of the target as a pocket."""
+    o = sc.objects.get(name)
+    if not o:
+        return
+    bm = bmesh.new()
+    bm.from_mesh(o.data)
+    for v in bm.verts:
+        if abs(v.co.y - (Y0 + EMBED) * MM) < 1e-9:
+            v.co.y = (Y0 - 6.0) * MM                  # the back becomes the open side, well in front
+        else:
+            v.co.y = (2 * Y0) * MM - v.co.y - 0.01 * MM   # front at Y0 + h (zero-height edges stay outside)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    if bm.calc_volume(signed=True) < 0:               # mirrored: make sure the cutter is not inside out
+        bmesh.ops.reverse_faces(bm, faces=bm.faces[:])
+    bm.to_mesh(o.data)
+    bm.free()
+    boolean(target, o)
+
+
+for name in RELIEF:
+    sink(body, name)
+
+Y_BLOCK = Y0 + H_BLOCK                           # floor of the lens and button block pockets
 
 # ------------------------------------------------------------------------------------------------
 # recesses: the lens and the main button sit sunk into their blocks, not on top of them
@@ -520,14 +549,11 @@ def recess(name, r, cx, cz, y_floor, targets, ridges=False):
 
 lx, lz = LENS
 bx, bz = BTN
-# both are pressed into the body itself: the pocket floors lie behind the front plane, so the lens
-# and the button sit below the frame around them (the raised blocks only form the pocket rims)
-Y_LENS_FLOOR = Y0 + 2.5                          # 6.5 mm deep pocket, knurled wall
-Y_WELL_FLOOR = Y0 + 1.5                          # 5.5 mm deep well with a glossy sloped wall
-recess("lens_pocket", 10.2, lx, lz, Y_LENS_FLOOR,
-       ["body", "lens_block", "spine", "top_facet_l", "top_facet_r"], ridges=True)
-recess("button_well", 21.7, bx, bz, Y_WELL_FLOOR,
-       ["body", "button_block", "column_l", "column_r", "spine", "bottom_facet_l", "bottom_facet_r"])
+# both are pressed further in, below the floor of their block pockets
+Y_LENS_FLOOR = Y_BLOCK + 2.5                     # knurled lens pocket, 2.5 mm into the block floor
+Y_WELL_FLOOR = Y_BLOCK + 2.2                     # button well with a glossy sloped wall
+recess("lens_pocket", 10.2, lx, lz, Y_LENS_FLOOR, ["body"], ridges=True)
+recess("button_well", 21.7, bx, bz, Y_WELL_FLOOR, ["body"])
 
 # ------------------------------------------------------------------------------------------------
 # lens (on the pocket floor): dark ring with four light tabs, black groove, face, glass
@@ -560,7 +586,7 @@ glass.location = v3(lx, yl - 0.7, lz)
 # button (in the well): glossy sloped wall, groove, knurled face, smooth centre disc, light pipes
 # ------------------------------------------------------------------------------------------------
 
-assign(funnel("button_ring", bx, bz, 21.7, Y_BLOCK + 0.02, 20.4, Y_WELL_FLOOR - 0.01), M_GLOSS)
+assign(funnel("button_ring", bx, bz, 21.7, Y_BLOCK - 0.02, 20.4, Y_WELL_FLOOR - 0.01), M_GLOSS)
 assign(annulus("button_groove", bx, bz, 19.9, 20.45, Y_WELL_FLOOR - 0.02), M_HOLE)
 yface = Y_WELL_FLOOR - 0.8
 assign(disc("button", 19.9, bx, bz, Y_WELL_FLOOR + 0.1, yface, seg=128, chamfer=0.45, cseg=2), M_BUTTON)
@@ -628,8 +654,8 @@ for i, (x, z) in enumerate([(-27.1, 36.8), (27.1, 36.8), (-27.1, 1.6), (27.1, 1.
 def hole(name, x, z, r, h=0.0, dhdx=0.0):
     """Dark hole on a facet whose height changes by dhdx per mm across X (disc tilted to lie on it)."""
     o = assign(disc(name, r, 0, 0, 0.3, -0.04, seg=16), M_HOLE)
-    o.location = v3(x, Y0 - h, z)
-    o.rotation_euler = (0, 0, -math.atan(dhdx))
+    o.location = v3(x, Y0 + h, z)                    # facets are sunk: h is the depth
+    o.rotation_euler = (0, 0, math.atan(dhdx))
 
 
 COL_SLOPE = H_COLUMN / (X_FRAME - X_COL_IN)          # left column rises towards +X
@@ -653,7 +679,7 @@ cu.space_character = 1.08
 txt = bpy.data.objects.new("axon_txt", cu)
 col.objects.link(txt)
 txt.rotation_euler = (math.radians(90), 0, 0)
-txt.location = v3(0, Y0 - H_SPINE - 0.08, -43.1)
+txt.location = v3(0, Y0 + H_SPINE - 0.1, -42.6)    # on the floor of the sunk chin
 bpy.context.view_layer.update()
 with bpy.context.temp_override(object=txt, active_object=txt, selected_objects=[txt], selected_editable_objects=[txt]):
     bpy.ops.object.convert(target="MESH")
