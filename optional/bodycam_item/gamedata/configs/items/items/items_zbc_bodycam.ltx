@@ -24,3 +24,15 @@ tier                 = 2
 power_critical       = 0.05
 use6_functor         = item_device.menu_battery
 use6_action_functor  = item_device.func_battery
+
+; First-person hand animations (scripts\zbc_item_anim.script): battery dead / new battery.
+; Hand motions: meshes\anomaly_weapons\hud_hands_animation\zbc_bodycam_hud_animation.omf.
+; anm_* = hand motion, item motion (the in-hand model's own motion: its battery bone).
+[zbc_bodycam_anim_hud]
+hands_position         = 0, 0, 0
+hands_orientation      = 0, 0, 0
+hands_position_16x9    = 0, 0, 0
+hands_orientation_16x9 = 0, 0, 0
+item_visual            = dynamics\devices\zbc_bodycam\zbc_bodycam_hud.ogf
+anm_zbc_dead           = zbc_bodycam_dead, zbc_bodycam_dead_item
+anm_zbc_insert         = zbc_bodycam_insert, zbc_bodycam_insert_item

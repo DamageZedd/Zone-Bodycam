@@ -72,6 +72,8 @@ local next_scan = 0
 local last_t = nil
 local hours = DEFAULT_HOURS
 local warned_dead = false
+local last_charge = nil      -- charge of cam_id at the previous look, to spot a new battery
+local last_charge_id = nil
 
 local function mcm(id, def)
 	if ui_mcm and ui_mcm.get then
@@ -131,20 +133,36 @@ local function refresh(now)
 	end
 	local was = cam_charged
 	cam_charged = obj and is_charged(obj:condition(), critical()) or false
+	local anim = zbc_item_anim
 	if was and not cam_charged and obj then
 		if not warned_dead and actor_menu and actor_menu.set_msg then
 			actor_menu.set_msg(1, game.translate_string("st_zbc_bodycam_item_dead"), 4)
 		end
 		warned_dead = true
+		if anim then anim.request("dead", now) end
 	elseif cam_charged then
 		warned_dead = false
 	end
+	-- a battery put on the camera (in the inventory) shows up as a jump in its charge
+	local charge = obj and obj:condition()
+	if anim and charge and last_charge_id == cam_id and anim.is_insert(last_charge, charge) then
+		anim.request("insert", now)
+	end
+	last_charge, last_charge_id = charge, cam_id
 	return obj
 end
 
--- the power gate for zbc_bodycam.script
+-- the power gate for zbc_bodycam.script: off while a battery-insert animation has not yet put the
+-- camera back on the chest
 function has_power()
+	if cam_charged and zbc_item_anim and zbc_item_anim.holding_power() then return false end
 	return cam_charged
+end
+
+-- the overlay's battery gauge (zbc_bodycam.script): charge 0..1 of the carried camera, nil without one
+function battery_level()
+	local obj = cam_id and level.object_by_id(cam_id)
+	return obj and obj:condition() or nil
 end
 
 local function actor_on_update()
@@ -153,8 +171,11 @@ local function actor_on_update()
 	last_t = now
 	local obj = refresh(now)
 	if obj and cam_charged and last and bodycam_enabled() then
-		obj:set_condition(drain_step(obj:condition(), now - last, hours, eco_factor()))
+		local c = drain_step(obj:condition(), now - last, hours, eco_factor())
+		obj:set_condition(c)
+		last_charge = c                  -- our own drain is never mistaken for a new battery
 	end
+	if zbc_item_anim then zbc_item_anim.update(now, obj ~= nil) end
 end
 
 local function actor_on_first_update()
@@ -162,6 +183,8 @@ local function actor_on_first_update()
 	last_t = nil
 	next_scan = 0
 	cam_charged = false
+	last_charge, last_charge_id = nil, nil
+	if zbc_item_anim then zbc_item_anim.reset() end
 	refresh(time_global())
 	warned_dead = not cam_charged    -- no "battery dead" message for a camera that was already dead
 end
@@ -178,6 +201,7 @@ function on_game_start()
 	load_settings()
 	if zbc_bodycam and zbc_bodycam.set_power_gate then
 		zbc_bodycam.set_power_gate(has_power)
+		if zbc_bodycam.set_battery_source then zbc_bodycam.set_battery_source(battery_level) end
 	else
 		printf("! [Zone Bodycam] bodycam item: zbc_bodycam.script not found, the item component needs the base mod")
 	end

@@ -8,6 +8,12 @@
   - Swap batteries like vanilla devices: drag a battery onto the camera, or use **Unpack battery**.
   - With no camera or a dead battery, the lens, overlay, REC timer display and ally markers are all off. The REC timer keeps counting in the background.
   - The Body Camera has its own model (an Axon Body 4, measured from Axon's product render), texture and inventory icon. Build scripts: `tools/bodycam_item/`.
+  - **First-person hand animations** (MCM **Hand animations**, on by default):
+    - When the battery dies: you tap the camera on your chest, unclip it, turn it round in your hand to look at the front, give it a little shake and put it away.
+    - When you put a battery on the camera in the inventory (after you close the menu): you slide the new battery into the bottom of the camera and clip it back on your chest. The camera turns back on at that moment.
+    - The weapon and detector are put away first and come back afterwards; you can keep moving. The chest itself stays just below the screen.
+    - New hand motions are their own file in the shared `hud_hands_animation` folder, so they work with every outfit's hands and don't replace any other mod's files.
+  - **Battery gauge**: a VHS-style battery icon (4 bars) just above the red REC dot, blinking when the charge is low. Drawn with the overlay (inside the image with the lens on, as HUD with it off) and shown with the recording timer.
   - Without the optional component the mod is unchanged: the bodycam is always on.
   - Tests: `tools/tests/zbc_item_test.lua`.
 

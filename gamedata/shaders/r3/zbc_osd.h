@@ -4,6 +4,7 @@
 
 #include "zbc_lens.h"
 #include "zbc_logo.h"
+#include "zbc_batt.h"
 
 // The overlay reads uint4 constants. Exes older than modded exes 2026.10.11 (Shader Bus 7) stop with
 // "R_constant_table::parse: unexpected shader variable type" on any uint constant, so the in-shader
@@ -16,6 +17,7 @@ uniform float4 bus_zbc_osd_layout;       // x: logo_x (0.950), y: logo_y (0.026*
 uniform uint4  bus_zbc_osd_chars[31];    // row 0: (len0, len1, len2, 0); row 1+i*10+(c>>2) comp (c&3) = ASCII byte
 uniform uint4  bus_zbc_osd_atlas[816];   // rows 0..751: ASCII 33..126 16x32 2-bit (8 uint4s/glyph); rows 752..815: 64x64 2-bit logo
 uniform float4 bus_zbc_rec;              // top-left recording timer. x: active (>0.5), y: dot lit (>0.5), z: whole seconds recorded, w: text_opacity
+uniform float4 bus_zbc_batt;             // VHS battery gauge above the red dot. x: active (>0.5), y: lit bars (0..4), z: drawn (>0.5; blinks when low), w: opacity
 
 // recording timer geometry in em (keep in step with REC_* in scripts\zbc_bodycam.script)
 #define ZBC_REC_DOT_D  1.06
@@ -223,6 +225,20 @@ float4 zbc_rec_eval(float2 uv_s, float text_op, float2 asp)
 	float  top_v  = bus_zbc_osd_layout.y * (3.0 / 2.6);
 	float  half_v = 0.5 * ZBC_REC_DOT_D * em_v;
 
+	// 0. Battery gauge, just above the dot (left edges aligned)
+	if (bus_zbc_batt.x > 0.5 && bus_zbc_batt.z > 0.5)
+	{
+		float  bot_v = top_v + (ZBC_REC_DOT_CY - 0.5 * ZBC_REC_DOT_D - ZBC_BATT_ABOVE) * em_v;
+		float2 p     = float2((uv_s.x - left_u) / em_u, (uv_s.y - (bot_v - ZBC_BATT_H * em_v)) / em_v);
+		if (p.x > -0.1 && p.x < ZBC_BATT_W + 0.1 && p.y > -0.1 && p.y < ZBC_BATT_H + 0.1)
+		{
+			float c     = zbc_batt_cov(p, bus_zbc_batt.y, max(screen_res.w / em_v, 0.0001));
+			float src_a = saturate(c * bus_zbc_batt.w);
+			acc.rgb = src_a.xxx + acc.rgb * (1.0 - src_a);
+			acc.a   = src_a + acc.a * (1.0 - src_a);
+		}
+	}
+
 	// 1. Dot (blinks at 1 Hz from the script)
 	if (bus_zbc_rec.y > 0.5)
 	{
@@ -247,7 +263,7 @@ float4 zbc_rec_eval(float2 uv_s, float text_op, float2 asp)
 	float pad_u    = (5.0 / 64.0) * em_u;
 	float pad_v    = (5.0 / 64.0) * em_v;
 	float y0_v     = top_v - pad_v;
-	if (uv_s.y >= y0_v && uv_s.y < y0_v + cell_h_v)
+	if (bus_zbc_rec.x > 0.5 && uv_s.y >= y0_v && uv_s.y < y0_v + cell_h_v)
 	{
 		uint  secs = (uint)max(bus_zbc_rec.z, 0.0);
 		uint  nh   = zbc_rec_hdigits(secs);
@@ -336,7 +352,8 @@ void zbc_osd_filter(inout float3 image, float2 uv, float2 uv_o, bool rec, float 
 void zbc_rec_composite(inout float3 image, float2 uv, float2 uv_o, float2 asp, float ca_px, float dy_px, inout float osd_mask)
 {
 	float text_op = saturate(bus_zbc_rec.w);
-	if (text_op <= 0.001)
+	float batt_on = (bus_zbc_batt.x > 0.5) ? saturate(bus_zbc_batt.w) : 0.0;
+	if (max(text_op, batt_on) <= 0.001)
 		return;
 	float  em_v    = max(bus_zbc_osd_layout.w, 0.001);
 	float  em_u    = em_v / asp.x;
@@ -346,6 +363,12 @@ void zbc_rec_composite(inout float3 image, float2 uv, float2 uv_o, float2 asp, f
 	float2 r_min   = float2(left_u, top_v - (5.0 / 64.0) * em_v);
 	float2 r_max   = float2(left_u + (ZBC_REC_DOT_D + ZBC_REC_GAP) * em_u + (float)len * (33.0 / 64.0) * em_u + (10.0 / 64.0) * em_u,
 	                        r_min.y + (81.0 / 64.0) * em_v);
+	if (batt_on > 0.0)
+	{
+		float b_top = top_v + (ZBC_REC_DOT_CY - 0.5 * ZBC_REC_DOT_D - ZBC_BATT_ABOVE - ZBC_BATT_H) * em_v;
+		r_min.y = min(r_min.y, b_top - 0.1 * em_v);
+		r_max.x = max(r_max.x, left_u + (ZBC_BATT_W + 0.1) * em_u);
+	}
 	float2 pad_roi = float2(ca_px + screen_res.z, dy_px + screen_res.w);
 	if (uv_o.x < r_min.x - pad_roi.x || uv_o.x > r_max.x + pad_roi.x
 	 || uv_o.y < r_min.y - pad_roi.y || uv_o.y > r_max.y + pad_roi.y)
@@ -411,7 +434,7 @@ void zbc_osd_right(inout float3 image, float2 uv, float2 uv_o, float2 asp, float
 void zbc_osd_composite(inout float3 image, float2 uv, inout float osd_mask)
 {
 	osd_mask = 0.0;
-	bool rec_on   = bus_zbc_rec.x > 0.5 && uv.x <= 0.45 && uv.y <= 0.22;
+	bool rec_on   = (bus_zbc_rec.x > 0.5 || bus_zbc_batt.x > 0.5) && uv.x <= 0.45 && uv.y <= 0.22;
 	bool right_on = bus_zbc_osd_info.x > 0.5 && uv.x >= 0.55 && uv.y <= 0.22;
 	[branch] if (rec_on || right_on)
 	{

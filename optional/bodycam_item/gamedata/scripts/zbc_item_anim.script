@@ -1,0 +1,168 @@
+--[[
+	Zone Bodycam - bodycam item hand animations (optional FOMOD component). Driven by zbc_item.script.
+
+	"dead":   plays the moment the battery dies (tap the chest, unclip, turn it round, look, shake, stow).
+	"insert": plays when a battery is put on the camera in the inventory, once the menu is closed (battery
+	          slid into the bottom, camera put back on the chest). The camera only powers back on at the
+	          moment it reaches the chest (POWER_AT_MS), not when the battery is dropped on it.
+
+	Files: hand motions meshes\anomaly_weapons\hud_hands_animation\zbc_bodycam_hud_animation.omf (every hands
+	model loads that folder), in-hand model meshes\dynamics\devices\zbc_bodycam\zbc_bodycam_hud.ogf, view
+	pitch anims\camera_effects\zbc\*.anm, section [zbc_bodycam_anim_hud] in items_zbc_bodycam.ltx.
+	Like the vanilla headlamp and FDDA animations: the weapon and detector are put away first and come back
+	afterwards; only movement keys work while it plays. Nothing here is saved.
+]]
+
+HUD_SECTION = "zbc_bodycam_anim_hud"
+
+local ANIMS = {
+	dead   = { anm = "anm_zbc_dead",   cam = "camera_effects\\zbc\\zbc_bodycam_dead.anm",   cam_id = 8461 },
+	insert = { anm = "anm_zbc_insert", cam = "camera_effects\\zbc\\zbc_bodycam_insert.anm", cam_id = 8462 },
+}
+POWER_AT_MS          = 3070    -- insert: frame 92 of 30 fps, the camera is on the chest
+local HOLSTER_MAX_MS = 2500    -- give up waiting for the weapon to go away after this
+HOLD_MAX_MS          = 120000  -- a power hold that never got its animation (menu open for long) ends here
+INSERT_JUMP          = 0.02    -- a charge rise bigger than this between two looks is a new battery
+local HUD_FOV        = 0.45    -- the HUD field of view the motions were made for (FDDA uses the same)
+
+---------------------------------------------------------------------------------------------------
+-- Pure logic (tested by tools\tests\zbc_item_test.lua)
+---------------------------------------------------------------------------------------------------
+
+-- a new battery: the charge went up by more than a step of normal noise (it only ever drains otherwise)
+function is_insert(prev, now)
+	prev, now = tonumber(prev), tonumber(now)
+	if not (prev and now) then return false end
+	return now - prev > INSERT_JUMP
+end
+
+-- what is queued after asking for `what`: a new battery replaces a pending "dead" (no point showing a
+-- dead camera that already has a fresh battery); "dead" never replaces a pending "insert"
+function next_queue(queued, what)
+	if what == "insert" then return "insert" end
+	if what == "dead" and queued ~= "insert" then return "dead" end
+	return queued
+end
+
+-- while an insert is pending or playing, the camera stays off until the animation puts it on the chest
+function power_held(hold_since, now, playing_since)
+	if not hold_since then return false end
+	if now - hold_since > HOLD_MAX_MS then return false end
+	if playing_since and now - playing_since >= POWER_AT_MS then return false end
+	return true
+end
+
+---------------------------------------------------------------------------------------------------
+-- Runtime
+---------------------------------------------------------------------------------------------------
+
+local queued = nil         -- "dead" | "insert" | nil
+local phase = nil          -- nil | "holster" | "playing"
+local kind = nil
+local t_phase = 0
+local t_end = 0
+local prev_slot = nil
+local det = nil
+local hold_since = nil     -- power hold for "insert"
+local playing_since = nil
+local fov_changed = false
+
+local function enabled()
+	if ui_mcm and ui_mcm.get then
+		local ok, v = pcall(ui_mcm.get, "zone_bodycam_item/animations")
+		if ok and v ~= nil then return v == true end
+	end
+	return true
+end
+
+-- the camera may not power on yet (zbc_item.has_power asks)
+function holding_power()
+	return power_held(hold_since, time_global(), playing_since)
+end
+
+function request(what, now)
+	if not enabled() or not ANIMS[what] then return end
+	if phase and kind == "insert" and what == "dead" then return end
+	queued = next_queue(queued, what)
+	if what == "insert" then
+		hold_since = now or time_global()
+		playing_since = nil
+	end
+end
+
+local function allowed()
+	local actor = db.actor
+	if not (actor and actor:alive()) then return false end
+	if actor_menu and actor_menu.get_last_mode and actor_menu.get_last_mode() ~= 0 then return false end
+	if game.hud_motion_allowed and not game.hud_motion_allowed() then return false end
+	if game.only_movekeys_allowed and game.only_movekeys_allowed() then return false end   -- another animation runs
+	if IsMoveState and IsMoveState("mcClimb") then return false end
+	if actor.is_talking and actor:is_talking() then return false end
+	if actor_effects and actor_effects.allow_animation then
+		local ok, yes = pcall(actor_effects.allow_animation)
+		if ok and yes == false then return false end
+	end
+	return true
+end
+
+local function begin(now)
+	local actor = db.actor
+	kind = queued
+	queued = nil
+	prev_slot = actor:active_slot()
+	det = actor:active_detector()
+	if det then det:switch_state(2) end
+	actor:activate_slot(0)
+	game.only_allow_movekeys(true)
+	if game.set_actor_allow_ladder then game.set_actor_allow_ladder(false) end
+	phase, t_phase = "holster", now
+end
+
+local function play(now)
+	local a = ANIMS[kind]
+	local len = game.get_motion_length and game.get_motion_length(HUD_SECTION, a.anm, 1) or 0
+	if fov_anim_manager and fov_anim_manager.change_fov then
+		fov_changed = pcall(fov_anim_manager.change_fov, HUD_FOV)
+	end
+	game.play_hud_motion(2, HUD_SECTION, a.anm, false, 1)
+	if level.add_cam_effector then level.add_cam_effector(a.cam, a.cam_id, false, "") end
+	phase, t_phase = "playing", now
+	t_end = now + ((tonumber(len) and len > 0) and len or 5000)
+	if kind == "insert" then playing_since = now end
+end
+
+local function finish()
+	local actor = db.actor
+	game.only_allow_movekeys(false)
+	if game.set_actor_allow_ladder then game.set_actor_allow_ladder(true) end
+	if fov_changed and fov_anim_manager and fov_anim_manager.restore_fov then pcall(fov_anim_manager.restore_fov) end
+	fov_changed = false
+	if actor then
+		actor:activate_slot(prev_slot or 0)
+		if det and actor:active_detector() == nil then pcall(det.switch_state, det, 1) end
+	end
+	if kind == "insert" then hold_since, playing_since = nil, nil end
+	phase, kind, det, prev_slot = nil, nil, nil, nil
+end
+
+-- called every frame by zbc_item.script; carried = the actor still has a bodycam
+function update(now, carried)
+	if not phase then
+		if hold_since and not power_held(hold_since, now, playing_since) then hold_since = nil end
+		if queued and not carried then queued, hold_since = nil, nil end
+		if queued and allowed() then begin(now) end
+		return
+	end
+	if phase == "holster" then
+		local actor = db.actor
+		if (actor and actor:active_item() == nil) or now - t_phase > HOLSTER_MAX_MS then play(now) end
+	elseif phase == "playing" then
+		if now >= t_end + 50 then finish() end
+	end
+end
+
+-- a load or a death in the middle: hands back, nothing pending
+function reset()
+	if phase then finish() end
+	queued, hold_since, playing_since = nil, nil, nil
+end

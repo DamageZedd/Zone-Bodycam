@@ -28,6 +28,11 @@
 		<texture shader="hud\zbc_dot">fx\fx_noise2</texture>
 	</zbc_dot>
 
+	<!-- VHS battery gauge above the recording dot (bodycam item component); procedural like the dot -->
+	<zbc_batt x="0" y="0" width="19" height="9" stretch="1">
+		<texture shader="hud\zbc_batt">fx\fx_noise2</texture>
+	</zbc_batt>
+
 	<!-- the official logo, a normal texture (textures\ui\zbc_logo.dds) -->
 	<zbc_logo_tex x="0" y="0" width="36" height="48" stretch="1">
 		<texture>ui\zbc_logo</texture>

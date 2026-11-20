@@ -152,6 +152,7 @@ local LANES = {
 	osd_chars  = "zbc_osd_chars",
 	osd_atlas  = "zbc_osd_atlas",
 	rec        = "zbc_rec",
+	batt       = "zbc_batt",
 }
 local tokens = nil          -- nil: not tried yet, false: bus unavailable
 local bus_warned = false
@@ -253,6 +254,7 @@ local function lens_off()
 	send("sensor",   cfg.highlight_blowout or defaults.highlight_blowout, cfg.compression or defaults.compression, 0, cfg.sensor_grade or defaults.sensor_grade)
 	send("osd_info", 0, cfg.logo_style or defaults.logo_style or 0, 0, 0)
 	send("rec",      0, 0, 0, 0)
+	send("batt",     0, 0, 0, 0)
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -270,6 +272,31 @@ local function powered()
 	if not power_gate then return true end
 	local ok, on = pcall(power_gate)
 	return (not ok) or (on and true or false)   -- a broken gate never hides the camera
+end
+
+-- Battery gauge: the item component also registers a function giving the carried camera's charge (0..1).
+-- Without it there is no battery, so no gauge.
+local battery_source = nil
+
+function set_battery_source(fn)
+	battery_source = (type(fn) == "function") and fn or nil
+end
+
+local function battery_level()
+	if not battery_source then return nil end
+	local ok, v = pcall(battery_source)
+	v = ok and tonumber(v) or nil
+	if not v or v ~= v then return nil end
+	return clamp01(v)
+end
+
+local BATT_LOW = 0.15                        -- below this the gauge blinks (one bar left)
+
+-- lit bars (0..4) for a charge: any charge left shows at least one bar
+function battery_bars(level)
+	level = tonumber(level)
+	if not level or level <= 0 then return 0 end
+	return min(4, max(1, math.ceil(level * 4 - 1e-6)))
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -801,6 +828,10 @@ local REC_CHARS = 16                                    -- "REC 999:59:59"
 local REC_DOT_D   = 1.06   -- dot square (the red core is 66% of it: about the capital height)
 local REC_DOT_CY  = 0.56   -- dot centre below the line top (middle of the capitals)
 local REC_GAP     = 0.15   -- space between the dot square and the text
+-- VHS battery gauge above the dot, in em (shaders\r3\zbc_batt.h, keep in step)
+local BATT_W      = 1.90   -- body 1.75 + terminal nub 0.15
+local BATT_H      = 0.90
+local BATT_ABOVE  = 0.22   -- gap between the gauge and the top of the dot square
 
 local osd_char_rows = nil
 
@@ -867,6 +898,10 @@ function ZbcHud:__init() super()
 	self.rec_dot = xml:InitStatic("zbc_dot", self)
 	self.rec_dot:Show(false)
 	self.rec_dot_shown = false
+	self.batt = xml:InitStatic("zbc_batt", self)
+	self.batt:Show(false)
+	self.batt_shown = false
+	self.batt_color = nil
 	self.rec_line = new_line(REC_CHARS)
 	self.rec_sec = nil
 	self.last_w = -1
@@ -959,6 +994,9 @@ function ZbcHud:Layout()
 	local dot_top = 0.030 * eff_w + REC_DOT_CY * em_px - dot_d / 2
 	self.rec_dot:SetWndPos(tmp_v2:set(rec_left * ux, dot_top * uy))
 	self.rec_dot:SetWndSize(tmp_v2:set(dot_d * ux, dot_d * uy))
+	local batt_top = dot_top - (BATT_ABOVE + BATT_H) * em_px
+	self.batt:SetWndPos(tmp_v2:set(rec_left * ux, batt_top * uy))
+	self.batt:SetWndSize(tmp_v2:set(BATT_W * em_px * ux, BATT_H * em_px * uy))
 	self.glyph.rec_x = rec_left + dot_d + REC_GAP * em_px
 	self.rec_left_u = rec_left / W
 	self.rec_line.text = nil
@@ -1041,6 +1079,30 @@ function ZbcHud:RefreshRec(visible, lens_on)
 	if self.rec_dot_shown ~= hud_dot then
 		self.rec_dot:Show(hud_dot)
 		self.rec_dot_shown = hud_dot
+	end
+
+	-- VHS battery gauge, just above the dot (only with the bodycam item component)
+	local level = (cfg.rec_timer and visible) and battery_level() or nil
+	local bars = level and battery_bars(level) or 0
+	local lit = level ~= nil and (level >= BATT_LOW or (time_global() % 1000) < 500)
+	local op = clamp01(cfg.text_opacity)
+	local hud_batt = false
+	if lens_on then
+		send("batt", level and 1 or 0, bars, lit and 1 or 0, op)
+	else
+		if tokens then send("batt", 0, 0, 0, 0) end
+		if level then
+			hud_batt = true
+			local col = GetARGB(lit and floor(255 * op) or 0, floor(255 * bars / 4 + 0.5), 255, 255)
+			if col ~= self.batt_color then
+				self.batt:SetTextureColor(col)
+				self.batt_color = col
+			end
+		end
+	end
+	if self.batt_shown ~= hud_batt then
+		self.batt:Show(hud_batt)
+		self.batt_shown = hud_batt
 	end
 end
 
