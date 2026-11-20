@@ -138,6 +138,40 @@ do
 	check(A.power_held(1000, 4000 + A.POWER_AT_MS, 4000) == false, "camera on the chest: power back")
 end
 
+-- an engine call that fails mid-animation releases the movement lock and gives the weapon back
+do
+	local chunk = assert(loadfile("optional/bodycam_item/gamedata/scripts/zbc_item_anim.script"))
+	local locked, slot_back, logged = nil, nil, false
+	local actor = {
+		alive = function() return true end,
+		active_slot = function() return 2 end,
+		active_detector = function() return nil end,
+		active_item = function() return nil end,
+		activate_slot = function(_, s) slot_back = s end,
+	}
+	local A = setmetatable({
+		db = { actor = actor },
+		game = {
+			only_allow_movekeys = function(v) locked = v end,
+			play_hud_motion = function() error("no such motion") end,
+		},
+		level = {},
+		printf = function() logged = true end,
+		time_global = function() return 0 end,
+	}, { __index = _G })
+	setfenv(chunk, A)
+	chunk()
+	A.request("dead", 0)
+	A.update(0, true)          -- puts the weapon away, locks to movement keys
+	check(locked == true, "animation start locks to movement keys")
+	A.update(10, true)         -- weapon gone: plays, the engine call fails
+	check(locked == false, "a failing animation releases the movement lock")
+	check(slot_back == 2, "a failing animation gives the weapon back")
+	check(logged, "a failing animation is logged")
+	A.update(20, true)
+	check(locked == false, "nothing is retried after a failure")
+end
+
 if failures > 0 then
 	print(failures .. " check(s) failed")
 	os.exit(1)

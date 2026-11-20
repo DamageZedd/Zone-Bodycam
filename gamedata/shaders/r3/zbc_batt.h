@@ -2,8 +2,8 @@
 // Shared by the in-lens overlay (zbc_osd.h) and the HUD static (zbc_batt.ps) so both draw the same thing.
 // Units are em (the overlay text height); p = (0,0) at the icon's top-left, y down.
 // Geometry in em: keep in step with BATT_* in scripts\zbc_bodycam.script.
-#ifndef ZBC_BATT_H
-#define ZBC_BATT_H
+#ifndef ZBC_BATT_INCLUDED
+#define ZBC_BATT_INCLUDED
 
 #define ZBC_BATT_BODY_W 1.75
 #define ZBC_BATT_H      0.90

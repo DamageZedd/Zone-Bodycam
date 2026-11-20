@@ -109,13 +109,13 @@ local function begin(now)
 	local actor = db.actor
 	kind = queued
 	queued = nil
+	phase, t_phase = "holster", now
 	prev_slot = actor:active_slot()
 	det = actor:active_detector()
 	if det then det:switch_state(2) end
 	actor:activate_slot(0)
 	game.only_allow_movekeys(true)
 	if game.set_actor_allow_ladder then game.set_actor_allow_ladder(false) end
-	phase, t_phase = "holster", now
 end
 
 local function play(now)
@@ -124,9 +124,9 @@ local function play(now)
 	if fov_anim_manager and fov_anim_manager.change_fov then
 		fov_changed = pcall(fov_anim_manager.change_fov, HUD_FOV)
 	end
+	phase, t_phase = "playing", now
 	game.play_hud_motion(2, HUD_SECTION, a.anm, false, 1)
 	if level.add_cam_effector then level.add_cam_effector(a.cam, a.cam_id, false, "") end
-	phase, t_phase = "playing", now
 	t_end = now + ((tonumber(len) and len > 0) and len or 5000)
 	if kind == "insert" then playing_since = now end
 end
@@ -145,19 +145,35 @@ local function finish()
 	phase, kind, det, prev_slot = nil, nil, nil, nil
 end
 
+-- an engine call that fails must never leave the player locked to movement keys: log it, give the hands back
+local function guarded(fn, now)
+	local ok, err = pcall(fn, now)
+	if ok then return end
+	printf("! [Zone Bodycam] bodycam animation stopped: %s", tostring(err))
+	queued, hold_since, playing_since = nil, nil, nil
+	if phase then
+		local ok2, err2 = pcall(finish)
+		if not ok2 then
+			printf("! [Zone Bodycam] bodycam animation cleanup: %s", tostring(err2))
+			pcall(game.only_allow_movekeys, false)
+			phase, kind, det, prev_slot = nil, nil, nil, nil
+		end
+	end
+end
+
 -- called every frame by zbc_item.script; carried = the actor still has a bodycam
 function update(now, carried)
 	if not phase then
 		if hold_since and not power_held(hold_since, now, playing_since) then hold_since = nil end
 		if queued and not carried then queued, hold_since = nil, nil end
-		if queued and allowed() then begin(now) end
+		if queued and allowed() then guarded(begin, now) end
 		return
 	end
 	if phase == "holster" then
 		local actor = db.actor
-		if (actor and actor:active_item() == nil) or now - t_phase > HOLSTER_MAX_MS then play(now) end
+		if (actor and actor:active_item() == nil) or now - t_phase > HOLSTER_MAX_MS then guarded(play, now) end
 	elseif phase == "playing" then
-		if now >= t_end + 50 then finish() end
+		if now >= t_end + 50 then guarded(finish, now) end
 	end
 end
 

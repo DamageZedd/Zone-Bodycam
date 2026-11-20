@@ -18,3 +18,7 @@ Thumbs.db
 releases/
 *.zip
 *.7z
+
+# Blender work file for the HUD animations: contains third-party GAMMA hands (THAP/FDDA), never commit
+tools/bodycam_item/hud/*.blend
+tools/bodycam_item/hud/*.blend1
