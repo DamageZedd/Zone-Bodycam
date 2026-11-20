@@ -381,7 +381,7 @@ M_HOLE = material("zbc_hole", (0.002, 0.002, 0.002), 0.9)
 M_SCREW = material("zbc_screw", (0.035, 0.035, 0.038), 0.40, metal=1.0)
 M_TEXT = material("zbc_text", (0.72, 0.72, 0.72), 0.45)
 M_LOGO = material("zbc_logo", (0.006, 0.006, 0.007), 0.30)
-M_LIGHTPIPE = material("zbc_lightpipe", (0.22, 0.23, 0.24), 0.25)
+M_LIGHTPIPE = material("zbc_lightpipe", (0.62, 0.63, 0.65), 0.25)
 M_BUTTON = material("zbc_button", (0.045, 0.046, 0.050), 0.70)
 M_DISC = material("zbc_disc", (0.056, 0.057, 0.062), 0.50)
 M_GRIP = material("zbc_grip", (0.020, 0.020, 0.022), 0.80)
@@ -393,7 +393,7 @@ M_MAGNET = material("zbc_magnet", (0.05, 0.05, 0.055), 0.35, metal=1.0)
 for m in (M_BODY, M_FACE, M_DISC, M_MOUNT):
     surface_noise(m)
 knurl(M_BUTTON, BTN[0], BTN[1], 13.3, 19.6, 0.85, (0.040, 0.041, 0.045), (0.050, 0.051, 0.056), (0.010, 0.010, 0.011))
-dots(M_GRIP, 1, 2, 1.1, 0.33, (0.018, 0.018, 0.020), (0.032, 0.032, 0.035))
+dots(M_GRIP, 1, 2, 1.35, 0.42, (0.016, 0.016, 0.018), (0.034, 0.034, 0.037))
 
 # ------------------------------------------------------------------------------------------------
 # shell
@@ -561,61 +561,49 @@ lx, lz = LENS
 bx, bz = BTN
 
 # ------------------------------------------------------------------------------------------------
-# lens: raised knurled bezel (outer cone faces outwards), crest, inner cone down to the black groove,
-# light lens face and the glass sunk inside
+# lens: sunk into the lens block (second reference photo): a dark round pocket, a ring with four
+# dark notches at the diagonals, a black groove and the glass deep inside
 # ------------------------------------------------------------------------------------------------
 
-assign(disc("lens_bezel_base", 10.2, lx, lz, Y_LENS + 0.3, Y_LENS - 0.05, seg=120, ridges=True, ridge_depth=0.22), M_BEZEL)
-assign(lathe("lens_bezel", lx, lz, [(10.2, -0.05), (9.75, -2.4), (9.35, -2.65), (8.7, -2.65), (7.15, -1.45)], Y_LENS,
-             seg=120, ridged=(0, 1)), M_BEZEL)
-assign(annulus("lens_groove", lx, lz, 6.8, 7.2, Y_LENS - 1.47), M_HOLE)
-assign(lathe("lens_face", lx, lz, [(6.8, -1.45), (5.1, -1.1)], Y_LENS), M_LENSFACE)
-assign(lathe("lens_step", lx, lz, [(5.1, -1.1), (4.6, -1.0), (0.0, -1.0)], Y_LENS, seg=64), M_HOLE)
+Y_LENS_FLOOR = Y_LENS + 3.0
+cut(["lens_block", "spine_top", "top_facet_l", "top_facet_r"],
+    lambda: disc("lens_pocket_cut", 10.2, lx, lz, Y_LENS_FLOOR, Y0 - 12.0, seg=120))
+assign(funnel("lens_wall", lx, lz, 10.2, Y_LENS - 0.01, 9.5, Y_LENS_FLOOR - 0.01, seg=120), M_GLOSS)
+yl = Y_LENS_FLOOR - 0.7
+assign(disc("lens_ring", 9.5, lx, lz, Y_LENS_FLOOR + 0.2, yl, seg=120, chamfer=0.25, cseg=2), M_TAB)
 for a in (45, 135, 225, 315):
     r = math.radians(a)
-    ur, ut = (math.cos(r), math.sin(r)), (-math.sin(r), math.cos(r))
-
-    def q(rad, t):
-        return (lx + ur[0] * rad + ut[0] * t, lz + ur[1] * rad + ut[1] * t)
-
-    tab = [q(7.3, -1.0), q(7.3, 1.0), q(8.55, 1.55), q(8.55, -1.55)]
-    assign(prism("lens_tab", tab, Y_LENS - 1.3, 1.25, chamfer=0.12), M_TAB)
+    assign(box("lens_notch", 2.2, 0.3, 1.3, (lx + 8.3 * math.cos(r), yl - 0.05, lz + 8.3 * math.sin(r)), rot=(0, -r, 0)), M_HOLE)
+assign(annulus("lens_groove", lx, lz, 6.6, 7.1, yl - 0.02), M_HOLE)
+assign(disc("lens_face", 6.6, lx, lz, yl + 0.2, yl - 0.2, seg=96, chamfer=0.2, cseg=2), M_BEZEL)
 bm = bmesh.new()
-bmesh.ops.create_uvsphere(bm, u_segments=32, v_segments=16, radius=4.6 * MM)
+bmesh.ops.create_uvsphere(bm, u_segments=32, v_segments=16, radius=5.0 * MM)
 for v in bm.verts:
-    v.co.y *= 0.18                               # low dome, well below the bezel crest
+    v.co.y *= 0.25
 bmesh.ops.delete(bm, geom=[v for v in bm.verts if v.co.y > 1e-7], context="VERTS")
 glass = assign(finish(bm, "lens_glass"), M_GLASS)
-glass.location = v3(lx, Y_LENS - 1.0, lz)
+glass.location = v3(lx, yl - 0.2, lz)
 
 # ------------------------------------------------------------------------------------------------
-# button: flat seat at the button block top (pressed into the strip and columns where the ring runs
-# over them), glossy outer ring, crest ring between two grooves, knurled dish down to the centre disc
+# button: sunk in a well in the button block: dark glossy wall, groove, knurled face, smooth centre
+# disc, raised beveled logo; white light pipes top and left, a row of white dots on the right
 # ------------------------------------------------------------------------------------------------
 
-DISH = 0.9                                       # the knurled face sinks this far towards the centre
+Y_WELL = Y_BTN + 1.8
 around = ["neck", "neck_side_l", "neck_side_r", "column_l", "column_r", "column_low_l", "column_low_r",
           "chin", "bottom_facet_l", "bottom_facet_r", "button_block"]
-cut(around, lambda: disc("button_seat_cut", 21.7, bx, bz, Y_BTN, Y0 - 12.0, seg=128))
-cut(around, lambda: disc("button_dish_cut", 13.3, bx, bz, Y_BTN + DISH, Y_BTN - 0.01, seg=128, r_front=18.85))
-assign(annulus("button_ring", bx, bz, 20.5, 21.7, Y_BTN - 0.03, seg=128), M_GLOSS)
-assign(annulus("button_groove_out", bx, bz, 19.95, 20.5, Y_BTN - 0.02, seg=128), M_HOLE)
-assign(annulus("button_crest", bx, bz, 19.3, 19.95, Y_BTN - 0.22, seg=128, thick=0.27), M_GLOSS)
-assign(annulus("button_groove_in", bx, bz, 18.8, 19.3, Y_BTN - 0.24, seg=128), M_HOLE)
-assign(funnel("button", bx, bz, 18.85, Y_BTN - 0.02, 13.3, Y_BTN + DISH - 0.02), M_BUTTON)
-ydisc = Y_BTN + DISH - 0.03
-assign(disc("button_disc", 13.3, bx, bz, ydisc + 0.1, ydisc, seg=96), M_DISC)
-
-
-def dish_y(r):                                   # depth of the knurled dish at radius r
-    return Y_BTN - 0.04 + DISH * (18.85 - r) / (18.85 - 13.3)
-
-
-assign(funnel("lightpipe_top", bx, bz, 16.9, dish_y(16.9), 16.4, dish_y(16.4), seg=128, a0=72, a1=110), M_LIGHTPIPE)
-assign(funnel("lightpipe_left", bx, bz, 16.9, dish_y(16.9), 16.4, dish_y(16.4), seg=128, a0=203, a1=240), M_LIGHTPIPE)
-for i in range(9):                              # speaker/indicator ticks on the right
-    a = 302 + i * 3.9
-    assign(funnel("tick_%d" % i, bx, bz, 18.4, dish_y(18.4), 16.0, dish_y(16.0), seg=360, a0=a, a1=a + 1.4), M_HOLE)
+cut(around, lambda: disc("button_well_cut", 21.7, bx, bz, Y_WELL, Y0 - 12.0, seg=128))
+assign(funnel("button_wall", bx, bz, 21.7, Y_BTN - 0.01, 20.6, Y_WELL - 0.01), M_GLOSS)
+assign(annulus("button_groove", bx, bz, 19.9, 20.6, Y_WELL - 0.02, seg=128), M_HOLE)
+yface = Y_WELL - 0.7
+assign(disc("button", 19.9, bx, bz, Y_WELL + 0.1, yface, seg=128, chamfer=0.4, cseg=2), M_BUTTON)
+ydisc = yface - 0.25
+assign(disc("button_disc", 13.3, bx, bz, yface + 0.1, ydisc, seg=96, chamfer=0.2, cseg=2), M_DISC)
+assign(annulus("lightpipe_top", bx, bz, 16.6, 17.2, yface - 0.03, 80, 100, seg=128), M_LIGHTPIPE)
+assign(annulus("lightpipe_left", bx, bz, 16.6, 17.2, yface - 0.03, 196, 232, seg=128), M_LIGHTPIPE)
+for i in range(9):                              # indicator dots on the right
+    a = math.radians(298 + i * 4.6)
+    assign(disc("dot_%d" % i, 0.38, bx + 17.6 * math.cos(a), bz + 17.6 * math.sin(a), yface + 0.05, yface - 0.06, seg=12), M_LIGHTPIPE)
 
 # logo: Axon delta with a three-blade swirl
 ylogo = ydisc - 0.45
@@ -651,7 +639,7 @@ for i in range(3):
     # open a gap along both cuts: push each point away from the cut lines towards the blade's vertex
     vx, vz = polar(R, th)
     poly = [(x + (vx - x) * 0.055, z + (vz - z) * 0.055) for x, z in poly]
-    assign(prism("logo_%d" % i, poly, ydisc + 0.1, 0.55), M_LOGO)
+    assign(prism("logo_%d" % i, poly, ydisc + 0.1, 1.2, chamfer=0.22), M_LOGO)
 
 # ------------------------------------------------------------------------------------------------
 # screws (Torx, in dark counterbores), holes, wordmark
@@ -713,15 +701,35 @@ assign(txt, M_TEXT)
 # sides, top, bottom, back
 # ------------------------------------------------------------------------------------------------
 
-# left side (manual: programmable 1 and 2, volume up, select, volume down, power) on a rubber strip
-assign(box("side_strip_l", 1.4, 11.0, 58.0, (-hw - 0.1, -1.0, 3.0), bevel=0.6, seg=2), M_RUBBER)
-for i, (z0, z1) in enumerate([(31.6, 25.9), (20.8, 14.6), (13.2, 6.7), (3.5, -2.5), (-4.5, -10.5), (-13.0, -19.5)]):
-    assign(box("btn_side_%d" % i, 2.4, 8.0, z0 - z1, (-hw - 0.5, -1.0, (z0 + z1) / 2), bevel=1.0, seg=3), M_RUBBER)
-assign(box("grip_left", 1.0, 16.0, 14.0, (-hw + 0.1, 0.0, -33.0), bevel=0.4, seg=2), M_GRIP)
+# left side (second reference photo): a rubber strip of six chunky pads, top to bottom programmable 1
+# and 2, volume up, select, volume down, power, each with a raised tactile mark
+assign(box("side_strip_l", 1.4, 18.0, 82.0, (-hw - 0.3, 0.0, -0.5), bevel=0.6, seg=2), M_RUBBER)
+SIDE_PADS = [(39.0, 27.6, "c1"), (27.0, 12.6, "c2"), (12.0, 4.6, ""), (4.0, -9.8, "bs"), (-10.4, -24.0, "lines"), (-24.6, -38.6, "fs")]
+X_PAD = -hw - 1.0
+for i, (z0, z1, icon) in enumerate(SIDE_PADS):
+    zc = (z0 + z1) / 2
+    assign(box("side_pad_%d" % i, 2.6, 16.5, z0 - z1, (X_PAD, 0.0, zc), bevel=1.0, seg=3), M_RUBBER)
+    xf = X_PAD - 1.3                           # outer face of the pad
+    marks = []
+    if icon in ("c1", "c2"):                    # ")" marks: two short strokes forming a curve
+        for dz in ((0.0,) if icon == "c1" else (2.3, -2.3)):
+            marks += [(0.0, zc + dz + 0.7, 30), (0.0, zc + dz - 0.7, -30)]
+    elif icon == "bs":
+        marks = [(0.0, zc, 35)]
+    elif icon == "fs":
+        marks = [(0.0, zc, -35)]
+    elif icon == "lines":
+        for dz in (-1.6, 0.0, 1.6):
+            marks.append((0.0, zc + dz, 90))
+    for k, (y, z, ang) in enumerate(marks):
+        length = 1.6 if icon in ("c1", "c2") else (4.0 if icon == "lines" else 4.2)
+        assign(box("side_mark_%d_%d" % (i, k), 0.5, 0.7, length, (xf, y, z), bevel=0.2, seg=1,
+                   rot=(math.radians(ang), 0, 0)), M_RUBBER)
 # right side: POV connector port cover at lens height, dotted grip below
-assign(box("pov_cover", 1.6, 7.5, 19.0, (hw + 0.2, -2.0, 26.5), bevel=0.7, seg=3), M_RUBBER)
-assign(box("pov_slot", 0.6, 1.2, 12.0, (hw + 1.0, -2.0, 26.5), bevel=0.25, seg=2), M_HOLE)
-assign(box("grip_right", 1.0, 18.0, 50.0, (hw + 0.1, 0.0, -14.0), bevel=0.4, seg=2), M_GRIP)
+# right side (third reference photo): tall raised POV port cover at the top, dotted grip panel below
+assign(box("pov_cover", 2.4, 9.5, 22.0, (hw + 0.5, -3.0, 28.0), bevel=1.0, seg=3), M_RUBBER)
+assign(box("pov_seam", 0.4, 10.3, 22.8, (hw + 0.1, -3.0, 28.0), bevel=0.3, seg=1), M_HOLE)
+assign(box("grip_right", 1.2, 20.0, 56.0, (hw + 0.2, 0.5, -16.5), bevel=0.5, seg=2), M_GRIP)
 # top: status display in a rubber bezel, operation LED
 assign(box("display_bezel", 40.0, 16.0, 1.6, (1.5, -2.5, Z_TOP + 0.2), bevel=1.2, seg=3), M_RUBBER)
 assign(box("display", 34.0, 11.5, 1.6, (1.5, -2.5, Z_TOP + 0.35), bevel=0.8, seg=3), M_DISPLAY)
