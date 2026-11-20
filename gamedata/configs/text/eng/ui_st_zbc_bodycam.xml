@@ -270,4 +270,124 @@
   <string id="ui_mcm_lst_zbc_col_none">
     <text>None (hide)</text>
   </string>
+  <string id="ui_mcm_zone_bodycam_allies_mutants">
+    <text>Mark mutants</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_mutants_desc">
+    <text>Mutants get a box too, labelled with their species, decoding from white to the enemy colour like stalkers.</text>
+  </string>
+  <string id="st_zbc_mutant">
+    <text>Mutant</text>
+  </string>
+  <string id="st_zbc_mutant_bloodsucker">
+    <text>Bloodsucker</text>
+  </string>
+  <string id="st_zbc_mutant_boar">
+    <text>Boar</text>
+  </string>
+  <string id="st_zbc_mutant_burer">
+    <text>Burer</text>
+  </string>
+  <string id="st_zbc_mutant_cat">
+    <text>Cat</text>
+  </string>
+  <string id="st_zbc_mutant_chimera">
+    <text>Chimera</text>
+  </string>
+  <string id="st_zbc_mutant_controller">
+    <text>Controller</text>
+  </string>
+  <string id="st_zbc_mutant_dog">
+    <text>Blind dog</text>
+  </string>
+  <string id="st_zbc_mutant_flesh">
+    <text>Flesh</text>
+  </string>
+  <string id="st_zbc_mutant_fracture">
+    <text>Fracture</text>
+  </string>
+  <string id="st_zbc_mutant_gigant">
+    <text>Pseudogiant</text>
+  </string>
+  <string id="st_zbc_mutant_poltergeist">
+    <text>Poltergeist</text>
+  </string>
+  <string id="st_zbc_mutant_pseudodog">
+    <text>Pseudodog</text>
+  </string>
+  <string id="st_zbc_mutant_psy_dog_phantom">
+    <text>Psy phantom</text>
+  </string>
+  <string id="st_zbc_mutant_psy_dog">
+    <text>Psy dog</text>
+  </string>
+  <string id="st_zbc_mutant_rat">
+    <text>Rat</text>
+  </string>
+  <string id="st_zbc_mutant_snork">
+    <text>Snork</text>
+  </string>
+  <string id="st_zbc_mutant_tushkano">
+    <text>Tushkano</text>
+  </string>
+  <string id="st_zbc_mutant_zombie">
+    <text>Zombie</text>
+  </string>
+  <string id="st_zbc_mutant_karlik">
+    <text>Karlik</text>
+  </string>
+  <string id="st_zbc_mutant_psysucker">
+    <text>Psysucker</text>
+  </string>
+  <string id="st_zbc_mutant_lurker">
+    <text>Lurker</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_fx_glitch">
+    <text>Interference</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_fx_glitch_desc">
+    <text>The picture tears and breaks up during emissions and psy storms, in psy fields, in strong radiation, next to anomalies, and briefly when you are hit hard.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_signal_lost">
+    <text>Signal lost on death</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_signal_lost_desc">
+    <text>When you die the feed glitches, cuts to black and shows SIGNAL LOST with the last timestamp.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_night_mode">
+    <text>Low-light mode</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_night_mode_desc">
+    <text>A grainy, nearly black-and-white infrared look, like a real bodycam in the dark. Auto: at night and underground.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_lens_dirt">
+    <text>Lens dirt</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_lens_dirt_desc">
+    <text>Rain drops bead on the lens while it rains, and blood splatters it when someone is shot right in front of you. Both clear over time.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_event_marker">
+    <text>Event marker</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_event_marker_desc">
+    <text>EVENT appears after the recording timer for a few seconds when you fire or take a big hit, like the event button on a real bodycam.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_gps_line">
+    <text>GPS line</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_gps_line_desc">
+    <text>Coordinates under the name in the overlay, updated as you move.</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_night_auto">
+    <text>Auto (night, underground)</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_night_always">
+    <text>Always</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_night_off">
+    <text>Off</text>
+  </string>
+  <string id="st_zbc_signal_lost">
+    <text>Signal lost</text>
+  </string>
 </string_table>

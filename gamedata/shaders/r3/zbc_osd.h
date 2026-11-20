@@ -14,7 +14,8 @@
 
 uniform float4 bus_zbc_osd_info;        // x: active (>0.5), y: logo_style (0=official, 1=swirl, 2=plain, 3=none), z: text_opacity, w: logo_opacity
 uniform float4 bus_zbc_osd_layout;       // x: logo_x (0.950), y: logo_y (0.026*asp.x), z: logo_w (0.035), w: em_v (em_px / H)
-uniform uint4  bus_zbc_osd_chars[31];    // row 0: (len0, len1, len2, 0); row 1+i*10+(c>>2) comp (c&3) = ASCII byte
+uniform uint4  bus_zbc_osd_chars[41];    // row 0: (len0, len1, len2, len3); row 1+i*10+(c>>2) comp (c&3) = Windows-1251 byte
+uniform float4 bus_zbc_event;            // x: "EVENT" shown after the recording timer (>0.5)
 uniform uint4  bus_zbc_osd_atlas[1344];  // rows 0..751: ASCII 33..126 16x32 2-bit (8 uint4s/glyph); rows 752..815: 64x64 2-bit logo;
                                          // rows 816..1343: Russian letters, Windows-1251 168, 184, 192..255 (scripts\zbc_osd_atlas_cyr.script)
 uniform float4 bus_zbc_rec;              // top-left recording timer. x: active (>0.5), y: dot lit (>0.5), z: whole seconds recorded, w: text_opacity
@@ -30,14 +31,16 @@ uint zbc_uint4_comp(uint4 v, uint comp)
 	return (comp < 2u) ? ((comp == 0u) ? v.x : v.y) : ((comp == 2u) ? v.z : v.w);
 }
 
+#define ZBC_OSD_LINES 4u
+
 uint zbc_osd_len(uint line_idx)
 {
-	return min(zbc_uint4_comp(bus_zbc_osd_chars[0], min(line_idx, 2u)), 40u);
+	return min(zbc_uint4_comp(bus_zbc_osd_chars[0], min(line_idx, ZBC_OSD_LINES - 1u)), 40u);
 }
 
 uint zbc_osd_char_at(uint line_idx, uint c_idx)
 {
-	uint row = min(1u + min(line_idx, 2u) * 10u + (min(c_idx, 39u) >> 2u), 30u);
+	uint row = min(1u + min(line_idx, ZBC_OSD_LINES - 1u) * 10u + (min(c_idx, 39u) >> 2u), 40u);
 	return zbc_uint4_comp(bus_zbc_osd_chars[row], c_idx & 3u);
 }
 
@@ -178,7 +181,7 @@ float4 zbc_osd_eval(float2 uv_s, float text_op, float logo_op, float logo_style,
 		float pad_u    = (5.0 / 64.0) * em_u;
 		float pad_v    = (5.0 / 64.0) * em_v;
 
-		[loop] for (uint i = 0u; i < 3u; i++)
+		[loop] for (uint i = 0u; i < ZBC_OSD_LINES; i++)
 		{
 			float y0_v = top_v + (float)i * em_v - pad_v;
 			if (uv_s.y >= y0_v && uv_s.y < y0_v + cell_h_v)
@@ -226,10 +229,18 @@ float4 zbc_osd_eval(float2 uv_s, float text_op, float logo_op, float logo_style,
 uint zbc_rec_hours(uint secs)  { return min(secs / 3600u, 999u); }
 uint zbc_rec_hdigits(uint secs) { return (zbc_rec_hours(secs) >= 100u) ? 3u : 2u; }
 
+// " EVENT" after the time while an event is flagged
+uint zbc_rec_len(uint nh) { return 10u + nh + ((bus_zbc_event.x > 0.5) ? 6u : 0u); }
+
 uint zbc_rec_char(uint i, uint secs, uint nh)
 {
 	if (i < 4u)
 		return (i == 0u) ? 82u : ((i == 1u) ? 69u : ((i == 2u) ? 67u : 32u));   // "REC "
+	if (i >= 10u + nh)
+	{
+		uint k = i - 10u - nh;                                                   // " EVENT"
+		return (k == 0u) ? 32u : ((k == 1u || k == 3u) ? 69u : ((k == 2u) ? 86u : ((k == 4u) ? 78u : 84u)));
+	}
 	uint j = i - 4u;
 	if (j < nh)
 	{
@@ -304,7 +315,7 @@ float4 zbc_rec_eval(float2 uv_s, float text_op, float2 asp)
 	{
 		uint  secs  = (uint)clamp(bus_zbc_rec.z, 0.0, 3599999.0);
 		uint  nh    = zbc_rec_hdigits(secs);
-		uint  len   = 10u + nh;
+		uint  len   = zbc_rec_len(nh);
 		float x0_u  = left_u + 2.0 * half_v / asp.x + ZBC_REC_GAP * em_u - pad_u;
 		float end_u = x0_u + (float)(len - 1u) * adv_u + cell_w_u;
 		if (uv_s.x >= x0_u && uv_s.x < end_u)
@@ -405,7 +416,7 @@ void zbc_rec_composite(inout float3 image, float2 uv, float2 uv_o, float2 asp, f
 	float  left_u  = 1.0 - bus_zbc_osd_layout.x - max(bus_zbc_osd_layout.z, 0.0001);
 	float  top_v   = bus_zbc_osd_layout.y * (3.0 / 2.6);
 	uint   secs    = (uint)clamp(bus_zbc_rec.z, 0.0, 3599999.0);
-	uint   len     = 10u + zbc_rec_hdigits(secs);
+	uint   len     = zbc_rec_len(zbc_rec_hdigits(secs));
 	float2 r_min   = float2(left_u, top_v - (5.0 / 64.0) * em_v);
 	float2 r_max   = float2(left_u + (ZBC_REC_DOT_D + ZBC_REC_GAP) * em_u + (float)len * (33.0 / 64.0) * em_u + (10.0 / 64.0) * em_u,
 	                        r_min.y + (81.0 / 64.0) * em_v);
@@ -445,7 +456,8 @@ void zbc_osd_right(inout float3 image, float2 uv, float2 uv_o, float2 asp, float
 		uint len0    = zbc_osd_len(0u);
 		uint len1    = zbc_osd_len(1u);
 		uint len2    = zbc_osd_len(2u);
-		uint max_len = max(len0, max(len1, len2));
+		uint len3    = zbc_osd_len(3u);
+		uint max_len = max(max(len0, len1), max(len2, len3));
 		if (max_len > 0u)
 		{
 			float em_v     = max(bus_zbc_osd_layout.w, 0.001);
@@ -457,8 +469,8 @@ void zbc_osd_right(inout float3 image, float2 uv, float2 uv_o, float2 asp, float
 			float cell_h_v = (81.0 / 64.0) * em_v;
 			float pad_u    = (5.0 / 64.0) * em_u;
 			float pad_v    = (5.0 / 64.0) * em_v;
-			uint  first_i  = (len0 > 0u) ? 0u : ((len1 > 0u) ? 1u : 2u);
-			uint  last_i   = (len2 > 0u) ? 2u : ((len1 > 0u) ? 1u : 0u);
+			uint  first_i  = (len0 > 0u) ? 0u : ((len1 > 0u) ? 1u : ((len2 > 0u) ? 2u : 3u));
+			uint  last_i   = (len3 > 0u) ? 3u : ((len2 > 0u) ? 2u : ((len1 > 0u) ? 1u : 0u));
 			float tx0      = right_u - (float)max_len * adv_u - pad_u;
 			float tx1      = right_u - adv_u - pad_u + cell_w_u;
 			float ty0      = top_v + (float)first_i * em_v - pad_v;
@@ -500,12 +512,73 @@ void zbc_osd_composite(inout float3 image, float2 uv, inout float osd_mask)
 	}
 }
 
+// One overlay line (uploaded by the script) centred on the screen, glyph top at top_v, em_v tall.
+// Returns float2(luma, alpha).
+float2 zbc_center_line(float2 uv, uint line_idx, float top_v, float em_v, float2 asp)
+{
+	uint len = zbc_osd_len(line_idx);
+	if (len == 0u)
+		return float2(0.0, 0.0);
+	float em_u     = em_v / asp.x;
+	float adv_u    = (33.0 / 64.0) * em_u;
+	float cell_w_u = (43.0 / 64.0) * em_u;
+	float cell_h_v = (81.0 / 64.0) * em_v;
+	float pad_u    = (5.0 / 64.0) * em_u;
+	float pad_v    = (5.0 / 64.0) * em_v;
+	float x0_u     = 0.5 - 0.5 * (float)len * adv_u - pad_u;
+	float y0_v     = top_v - pad_v;
+	if (uv.y < y0_v || uv.y >= y0_v + cell_h_v || uv.x < x0_u || uv.x >= x0_u + (float)(len - 1u) * adv_u + cell_w_u)
+		return float2(0.0, 0.0);
+	float  gy  = (uv.y - y0_v) / cell_h_v;
+	int    c0  = (int)floor((uv.x - x0_u) / adv_u);
+	float2 out_la = float2(0.0, 0.0);
+	[loop] for (int dc = -1; dc <= 0; dc++)
+	{
+		int ci = c0 + dc;
+		if (ci >= 0 && ci < (int)len)
+		{
+			float cx0 = x0_u + (float)ci * adv_u;
+			if (uv.x >= cx0 && uv.x < cx0 + cell_w_u)
+			{
+				float2 la = zbc_osd_glyph_sample(zbc_osd_char_at(line_idx, (uint)ci), float2((uv.x - cx0) / cell_w_u, gy));
+				if (la.y > out_la.y)
+					out_la = la;
+			}
+		}
+	}
+	return out_la;
+}
+
+// After death: the picture cuts to black, then "SIGNAL LOST" (overlay line 4, in the game's language)
+// and the last timestamp (line 1) appear in the middle, with a faint flicker.
+float3 zbc_signal_lost(float3 image, float2 uv)
+{
+	image *= 1.0 - zbc_death_black();
+	float e = zbc_death_age();
+	float show = smoothstep(1.4, 1.6, e);
+	if (show <= 0.0)
+		return image;
+	float  flick = 0.85 + 0.15 * zbc_hash(float2(floor(timers.x * 12.0), 9.0));
+	float2 asp   = zbc_aspect();
+	float2 a     = zbc_center_line(uv, 3u, 0.44, 0.060, asp);
+	float2 b     = zbc_center_line(uv, 0u, 0.53, 0.026, asp);
+	float2 la    = (a.y >= b.y) ? a : b;
+	float  src_a = saturate(la.y * show);
+	return image * (1.0 - src_a) + la.x * src_a * flick;
+}
+
 #else
 
 // Old exes: no in-shader overlay (see the note at the top of this file).
 void zbc_osd_composite(inout float3 image, float2 uv, inout float osd_mask)
 {
 	osd_mask = 0.0;
+}
+
+// Old exes: the feed still cuts to black on death, without the text.
+float3 zbc_signal_lost(float3 image, float2 uv)
+{
+	return image * (1.0 - zbc_death_black());
 }
 
 #endif // SHADER_BUS >= 7

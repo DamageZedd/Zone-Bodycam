@@ -52,6 +52,22 @@ function is_charged(charge, critical)
 	return charge > (tonumber(critical) or DEFAULT_CRIT)
 end
 
+-- Low-battery warning: a message and a beep at 10% and again at 6%; re-armed once the charge is
+-- back above 15% (a new battery). given: warnings already given (0..2). Returns the new count and
+-- whether to warn now.
+LOW_LEVELS = { 0.10, 0.06 }
+LOW_RESET  = 0.15
+function low_warning(charge, given)
+	charge = tonumber(charge)
+	given = tonumber(given) or 0
+	if not charge then return given, false end
+	if charge > LOW_RESET then return 0, false end
+	for i = #LOW_LEVELS, 1, -1 do
+		if given < i and charge <= LOW_LEVELS[i] then return i, true end
+	end
+	return given, false
+end
+
 -- index of the entry with the highest charge in a list of charges (nil for an empty list)
 function best_index(charges)
 	local best, bi = nil, nil
@@ -72,6 +88,7 @@ local next_scan = 0
 local last_t = nil
 local hours = DEFAULT_HOURS
 local warned_dead = false
+local warned_low = 0         -- low-battery warnings given for this battery (low_warning)
 local last_charge = nil      -- charge of cam_id at the previous look, to spot a new battery
 local last_charge_id = nil
 
@@ -120,6 +137,19 @@ local function scan()
 	if i then cam_id = ids[i] end
 end
 
+-- message and a short vanilla beep (the RF detector's)
+local beep = nil
+function low_battery_alert()
+	if actor_menu and actor_menu.set_msg then
+		actor_menu.set_msg(1, game.translate_string("st_zbc_bodycam_item_low"), 4)
+	end
+	local ok = pcall(function()
+		beep = beep or sound_object("detectors\\RF\\beep_02")
+		beep:play(db.actor, 0, sound_object.s2d)
+	end)
+	return ok
+end
+
 local function refresh(now)
 	if now >= next_scan then
 		next_scan = now + SCAN_MS
@@ -145,6 +175,11 @@ local function refresh(now)
 	end
 	-- a battery put on the camera (in the inventory) shows up as a jump in its charge
 	local charge = obj and obj:condition()
+	if charge and cam_charged then
+		local warn
+		warned_low, warn = low_warning(charge, warned_low)
+		if warn then low_battery_alert() end
+	end
 	if anim and charge and last_charge_id == cam_id and anim.is_insert(last_charge, charge) then
 		anim.request("insert", now)
 	end

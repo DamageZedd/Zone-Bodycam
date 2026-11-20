@@ -13,6 +13,16 @@
   - Each time a box appears, the text decodes from scrambled characters, letter by letter from the left (about a second for a long name).
   - **Identification by distance**, after the Identification UI mod: within 50 m a stalker is identified as soon as their box appears. Further out the name, faction and colour stay unknown (white, scrambled) and only decode while you look at them, at that mod's rate (about 4 s at 60 m, 28 s at 100 m, 7 s at 100 m through a 4x scope). Identified stalkers stay identified for the session.
   - Through a scope the marker range grows with the zoom, so far allies you're aiming at get a box and a name too.
+- **Camera effects** (new MCM section, everything on by default):
+  - **Interference**: the picture tears, jitters, rolls and drops frames during emissions and psy storms, in psy fields, in strong radiation, within 7 m of anomalies, and briefly when you take a big hit.
+  - **Signal lost on death**: the feed breaks up, cuts to black and shows SIGNAL LOST (НЕТ СИГНАЛА in Russian) over the last timestamp. On exes older than Shader Bus 7 it only cuts to black.
+  - **Low-light mode** (Auto / Always / Off): a grainy, nearly black-and-white infrared look at night (21:00-05:00) and in underground levels, fading in and out.
+  - **Lens dirt**: rain drops bead on the lens and refract the picture while it rains, drying slowly after; blood splatters the lens when someone is hit within 2.5 m in front of you and fades over about 25 s.
+  - **Event marker**: "EVENT" appears after the recording timer for 5 s when you fire or take a big hit.
+  - **GPS line**: coordinates under the name in the overlay (it moves up when the name is hidden).
+  - **Low-battery warning** (bodycam item): a message and a beep at 10% and again at 6%.
+  - New script `zbc_fx.script`; test `tools/tests/zbc_fx_test.lua`.
+- **Mutants get boxes too** (MCM **Ally markers > Mark mutants**, on by default). The label shows the species (BLOODSUCKER, SNORK, PSEUDODOG...) with MUTANT under it, in English or Russian; four-legged mutants get a wide, low box. They identify by distance like stalkers and decode to the enemy colour (or friendly, for the rare tame one). Faces of mutants are not pixelated.
 - **Full Russian localization.** Every menu string, the optional Body Camera item (name, description, battery message, its MCM page) and all MCM list options (logo, time zone, text size, marker style, colours) have Russian text in `configs\text\rus`.
   - The overlay font now has Russian letters, so Russian names and factions show in the top-right overlay and above the markers, with the lens on or off. KlartextMono has no Cyrillic, so those letters come from Roboto Mono Bold (Apache-2.0), matched to KlartextMono's capital height and letter width. `tools/make_overlay_assets.py` takes it as a fourth argument and also writes the shader copy of the letters (`zbc_osd_atlas_cyr.script`).
   - Names are put in capitals correctly for Russian text too.

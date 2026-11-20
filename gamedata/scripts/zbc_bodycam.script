@@ -55,6 +55,13 @@ defaults = {
 	rolling_shutter   = 0.50,
 	sensor_grade      = 0.75,
 	face_blur         = true,   -- pixelate NPC faces (zbc_faces.script)
+	-- camera effects (zbc_fx.script)
+	fx_glitch         = true,   -- interference in emissions, psy fields, radiation, near anomalies, on big hits
+	signal_lost       = true,   -- on death: glitch, cut to black, "SIGNAL LOST"
+	night_mode        = 0,      -- low-light infrared look: 0 auto (night, underground), 1 always, 2 off
+	lens_dirt         = true,   -- rain drops and blood on the lens
+	event_marker      = true,   -- "EVENT" after REC when you fire or take a big hit
+	gps_line          = true,   -- coordinates line in the overlay
 	-- motion
 	motion         = 1.0,
 	turn_lag       = 1.0,
@@ -85,6 +92,7 @@ defaults = {
 	allies_opacity         = 0.85,
 	allies_color_companion = 1,      -- see zbc_allies (7 = none)
 	allies_enemies         = true,   -- enemies get a box too (it decodes from white to the enemy colour)
+	allies_mutants         = true,   -- mutants get a box too, labelled with their species
 	allies_color_friend    = 1,      -- green
 	allies_color_enemy     = 5,      -- red
 }
@@ -127,6 +135,7 @@ local CLAMPS = {
 	allies_color_companion = { 0, 7 },
 	allies_color_friend    = { 0, 7 },
 	allies_color_enemy     = { 0, 7 },
+	night_mode             = { 0, 2 },
 }
 
 local LIST_OPTS = {
@@ -137,9 +146,11 @@ local LIST_OPTS = {
 	allies_color_companion = true,
 	allies_color_friend    = true,
 	allies_color_enemy     = true,
+	night_mode             = true,
 }
 
 local cfg = {}
+local fx_event = false       -- EVENT shown after REC (zbc_fx.script), for the HUD-drawn timer
 
 local function mcm_get(id)
 	if ui_mcm and ui_mcm.get then
@@ -190,6 +201,10 @@ local LANES = {
 	batt       = "zbc_batt",
 	faces      = "zbc_faces",
 	face_rows  = "zbc_face_rows",
+	glitch     = "zbc_glitch",     -- x interference, y hit burst, z time of death (0 alive)
+	ir         = "zbc_ir",         -- x low-light mix
+	dirt       = "zbc_dirt",       -- x rain on the lens, y blood seed, z time blood hit (0 none)
+	event      = "zbc_event",      -- x EVENT shown after REC
 }
 local MAX_FACES = 64   -- two faces per uint4 row: keep in step with ZBC_FACE_ROWS in zbc_lens.h
 local tokens = nil          -- nil: not tried yet, false: bus unavailable
@@ -325,9 +340,20 @@ local function faces_update()
 	send("faces", n, 0, 0, 0)
 end
 
+local function fx_off()
+	if not tokens then return end
+	send("glitch", 0, 0, 0, 0)
+	send("ir",     0, 0, 0, 0)
+	send("dirt",   0, 0, 0, 0)
+	send("event",  0, 0, 0, 0)
+end
+
 local function lens_off(keep_faces)
 	if not tokens then return end   -- never registers lanes just to clear them
-	if not keep_faces then faces_off() end
+	if not keep_faces then
+		faces_off()
+		fx_off()
+	end
 	send("motion",   0, 0, 0, 0)
 	send("vig",      0, 0, 0, 0)
 	send("vig_occ",  0, 0, cfg.rig_occlusion or defaults.rig_occlusion, housing_power())
@@ -435,11 +461,15 @@ end
 local function rec_whole() return floor(rec.secs or 0) end
 local function rec_dot_on() return ((rec.secs or 0) % 1) < 0.5 end   -- 1 Hz, in step with the seconds
 
-local function rec_text(s)
-	if s == rec_str_s and rec_str then return rec_str end
-	rec_str_s = s
+-- "REC HH:MM:SS", plus " EVENT" while an event is flagged (zbc_fx.script); must match zbc_rec_char
+-- in shaders\r3\zbc_osd.h
+local rec_str_ev = nil
+function rec_text(s, ev)
+	ev = ev and true or false
+	if s == rec_str_s and ev == rec_str_ev and rec_str then return rec_str end
+	rec_str_s, rec_str_ev = s, ev
 	local h = min(floor(s / 3600), 999)
-	rec_str = string.format("REC %02d:%02d:%02d", h, floor(s / 60) % 60, s % 60)
+	rec_str = string.format("REC %02d:%02d:%02d", h, floor(s / 60) % 60, s % 60) .. (ev and " EVENT" or "")
 	return rec_str
 end
 
@@ -941,7 +971,7 @@ end
 local F = zbc_font_metrics
 local MAX_CHARS = 40
 local FONT_VW = { [0] = 1.0, [1] = 1.2, [2] = 1.4 }    -- the real overlay is 1.2vw
-local REC_CHARS = 16                                    -- "REC 999:59:59"
+local REC_CHARS = 22                                    -- "REC 999:59:59 EVENT"
 -- recording timer geometry in em, shared with shaders\r3\zbc_osd.h (keep in step)
 local REC_DOT_D   = 1.06   -- dot square (the red core is 66% of it: about the capital height)
 local REC_DOT_CY  = 0.56   -- dot centre below the line top (middle of the capitals)
@@ -953,20 +983,19 @@ local BATT_ABOVE  = 0.22   -- gap between the gauge and the top of the dot squar
 
 local osd_char_rows = nil
 
--- Pack up to 3 lines x 40 ASCII bytes into 31 uint4 rows for bus_zbc_osd_chars.
-local function upload_osd_chars(s1, s2, s3)
+-- Pack up to 4 lines x 40 Windows-1251 bytes into 41 uint4 rows for bus_zbc_osd_chars
+-- (row 0: the four lengths; then 10 rows of 4 characters per line).
+local OSD_LINES = 4
+local function upload_osd_chars(s1, s2, s3, s4)
 	if not (bus_ready() and shader_bus.set_array_uint) then return end
 	if not osd_char_rows then
 		osd_char_rows = {}
-		for r = 1, 31 do osd_char_rows[r] = { 0, 0, 0, 0 } end
+		for r = 1, 1 + OSD_LINES * 10 do osd_char_rows[r] = { 0, 0, 0, 0 } end
 	end
-	local strs = { s1 or "", s2 or "", s3 or "" }
+	local strs = { s1 or "", s2 or "", s3 or "", s4 or "" }
 	local r0 = osd_char_rows[1]
-	r0[1] = min(#strs[1], MAX_CHARS)
-	r0[2] = min(#strs[2], MAX_CHARS)
-	r0[3] = min(#strs[3], MAX_CHARS)
-	r0[4] = 0
-	for i = 0, 2 do
+	for i = 1, OSD_LINES do r0[i] = min(#strs[i], MAX_CHARS) end
+	for i = 0, OSD_LINES - 1 do
 		local str = strs[i + 1]
 		local len = r0[i + 1]
 		local base = 2 + i * 10
@@ -1011,7 +1040,7 @@ function ZbcHud:__init() super()
 		return { glyphs = glyphs, text = nil, visible = false }
 	end
 	self.lines = {}
-	for i = 1, 3 do self.lines[i] = new_line(MAX_CHARS) end
+	for i = 1, OSD_LINES do self.lines[i] = new_line(MAX_CHARS) end
 	-- recording timer (top left), used while the lens is off; with the lens on the post shader draws it
 	self.rec_dot = xml:InitStatic("zbc_dot", self)
 	self.rec_dot:Show(false)
@@ -1104,7 +1133,7 @@ function ZbcHud:Layout()
 		scale = em_px / F.em,                          -- screen px per atlas px
 		ux = ux, uy = uy,
 		right = W - 0.054 * eff_w,                     -- screen px
-		tops = { 0.030 * eff_w, 0.030 * eff_w + em_px, 0.030 * eff_w + 2 * em_px },
+		tops = { 0.030 * eff_w, 0.030 * eff_w + em_px, 0.030 * eff_w + 2 * em_px, 0.030 * eff_w + 3 * em_px },
 	}
 	for _, line in ipairs(self.lines) do line.text = nil end
 
@@ -1196,10 +1225,11 @@ function ZbcHud:RefreshRec(visible, lens_on)
 	else
 		if tokens then send("rec", 0, 0, 0, 0) end
 		if show and self.glyph then
-			if self.rec_line.text == nil or secs ~= self.rec_sec then
-				self.rec_sec = secs
+			local ev = fx_event
+			if self.rec_line.text == nil or secs ~= self.rec_sec or ev ~= self.rec_ev then
+				self.rec_sec, self.rec_ev = secs, ev
 				local G = self.glyph
-				lay_glyphs(self.rec_line, rec_text(secs), G, G.rec_x, G.tops[1])
+				lay_glyphs(self.rec_line, rec_text(secs, ev), G, G.rec_x, G.tops[1])
 			end
 			hud_text, hud_dot = true, dot
 		end
@@ -1236,6 +1266,20 @@ function ZbcHud:RefreshRec(visible, lens_on)
 	end
 end
 
+-- the four overlay lines: date, device + serial, name, GPS. Hidden lines are left out, so the GPS
+-- line moves up when the name is off.
+function overlay_lines(date)
+	local dev_str, upper_name = actor_ident(cfg.device_label)
+	local l = { date, dev_str }
+	if cfg.show_name then l[#l + 1] = upper_name end
+	local actor = db.actor
+	if cfg.gps_line and actor and zbc_fx and zbc_fx.gps_text then
+		local p = actor:position()
+		l[#l + 1] = zbc_fx.gps_text(p.x, p.z)
+	end
+	return l[1] or "", l[2] or "", l[3] or "", l[4] or ""
+end
+
 function ZbcHud:Refresh(visible, lens_on, lens)
 	self:Layout()
 
@@ -1255,7 +1299,7 @@ function ZbcHud:Refresh(visible, lens_on, lens)
 	if osd_in_post then
 		if not self.logos_hidden then
 			for _, s in pairs(self.logos) do s:Show(false) end
-			for i = 1, 3 do self:ShowLine(i, false) end
+			for i = 1, OSD_LINES do self:ShowLine(i, false) end
 			self.logos_hidden = true
 			self.shown_logo_style = -1
 		end
@@ -1287,8 +1331,7 @@ function ZbcHud:Refresh(visible, lens_on, lens)
 			self.osd_fs = self.last_fs
 			self.osd_dirty = false
 			self.lines[1].text = nil
-			local dev_str, upper_name = actor_ident(cfg.device_label)
-			upload_osd_chars(date, dev_str, cfg.show_name and upper_name or "")
+			upload_osd_chars(overlay_lines(date))
 		end
 		return
 	end
@@ -1304,17 +1347,20 @@ function ZbcHud:Refresh(visible, lens_on, lens)
 		for style, s in pairs(self.logos) do s:Show(show and cfg.logo_style == style) end
 		self.shown_logo_style = target_logo
 	end
-	for i = 1, 3 do self:ShowLine(i, show and (i < 3 or cfg.show_name)) end
-	if not show then return end
+	if not show then
+		for i = 1, OSD_LINES do self:ShowLine(i, false) end
+		return
+	end
 
 	local date, sec = date_line()
 	if date ~= self.sec_date or sec ~= self.sec or self.lines[1].text == nil then
 		self.sec = sec
 		self.sec_date = date
-		local dev_str, upper_name = actor_ident(cfg.device_label)
-		self:SetLine(1, date)
-		self:SetLine(2, dev_str)
-		self:SetLine(3, upper_name)
+		local l = { overlay_lines(date) }
+		for i = 1, OSD_LINES do
+			self:SetLine(i, l[i])
+			self:ShowLine(i, #l[i] > 0)
+		end
 	end
 end
 
@@ -1410,6 +1456,9 @@ end
 
 function actor_on_first_update()
 	in_menu = false                          -- loading from the title menu may not fire main_menu_on_quit
+	dead = false
+	fx_last = nil
+	if tokens then send("glitch", 0, 0, 0, 0) end
 	rec_on_first_update()
 	clear_send_cache()
 	load_settings()
@@ -1420,8 +1469,45 @@ function actor_on_first_update()
 	hud_add()
 end
 
+---------------------------------------------------------------------------------------------------
+-- Camera effects (zbc_fx.script): interference, signal lost, low light, lens dirt, event marker
+---------------------------------------------------------------------------------------------------
+
+function fx_enabled() return cfg.enabled and powered() end
+function fx_option(id) return cfg[id] and true or false end
+
+local fx_last = nil
+local dead = false
+
+local function fx_update()
+	if not (zbc_fx and zbc_fx.frame and bus_ready()) then return end
+	local now = time_global() / 1000
+	local dt = fx_last and (now - fx_last) or 0
+	fx_last = now
+	local F = zbc_fx.frame(cfg, dt)
+	fx_event = F.event and cfg.rec_timer or false
+	send("glitch", F.glitch, F.burst, F.death_t, 0)
+	send("ir",     F.ir, 0, 0, 0)
+	send("dirt",   F.wet, F.blood_seed, F.blood_t, 0)
+	send("event",  fx_event and 1 or 0, 0, 0, 0)
+end
+
+-- Called by zbc_fx on the actor's death: the shader takes it from here (glitch, cut to black,
+-- "SIGNAL LOST" over the last timestamp), timed from death_t on its own clock, so it keeps going
+-- even if the scripts stop updating.
+function signal_lost(death_t)
+	if dead or not bus_ready() then return end
+	dead = true
+	send("glitch", 1, 1, death_t, 0)
+	-- the in-shader text: line 4 carries the translated "SIGNAL LOST", line 1 the last timestamp
+	local date = date_line()
+	upload_osd_chars(date, "", "", zbc_allies and zbc_allies.upper_cp1251
+		and zbc_allies.upper_cp1251(game.translate_string("st_zbc_signal_lost")) or "SIGNAL LOST")
+	hud_remove()                                   -- markers, labels and HUD text go with the feed
+end
+
 function actor_on_update()
-	if not cfg.enabled or in_menu then return end
+	if not cfg.enabled or in_menu or dead then return end
 	rec_tick()                               -- keeps recording while the camera has no power
 	if not powered() then
 		if was_powered then power_down() end
@@ -1450,6 +1536,7 @@ function actor_on_update()
 		rs = 0
 	end
 	faces_update()
+	fx_update()
 	if HUD then
 		-- the lens exactly as the shader sees it, for placing ally markers
 		local L = lens_state

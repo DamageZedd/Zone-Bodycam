@@ -17,12 +17,34 @@ uniform float4 bus_zbc_sensor;   // x: highlight blowout & auto-exposure punch (
 // Face pixelation (scripts\zbc_faces.script). Squares in rendered-image uv, independent of the lens.
 uniform float4 bus_zbc_faces;    // x: number of faces in use (0..64)
 
+// Camera effects (scripts\zbc_fx.script), independent of the lens.
+uniform float4 bus_zbc_glitch;   // x: interference 0..1  y: hit burst 0..1  z: time of death (timers.x clock, 0 alive)
+uniform float4 bus_zbc_ir;       // x: low-light (infrared) mix 0..1
+uniform float4 bus_zbc_dirt;     // x: rain on the lens 0..1  y: blood seed  z: time the blood hit (0 none)
+
 #define ZBC_INTENSITY (saturate(bus_zbc_motion.x))
 #define ZBC_ACTIVE    (bus_zbc_motion.x > 0.0005)
 #define ZBC_FACES     (bus_zbc_faces.x > 0.5)
+#define ZBC_FX        (bus_zbc_glitch.x + bus_zbc_glitch.y + bus_zbc_glitch.z + bus_zbc_dirt.x + bus_zbc_dirt.z > 0.0005)
 
 // width / height of the display
 float2 zbc_aspect() { return float2(max(screen_res.x * screen_res.w, 0.1), 1.0); }
+
+// 2D -> 1D hash in [0, 1)
+float zbc_hash(float2 p)
+{
+	p  = frac(p * float2(443.897, 441.423));
+	p += dot(p, p.yx + 19.19);
+	return frac((p.x + p.y) * p.x);
+}
+
+// Vectorized 2D -> 3D hash in [0, 1) for decorrelated luma + chroma sensor grain
+float3 zbc_hash3(float2 p)
+{
+	float3 p3 = frac(float3(p.xyx) * float3(0.1031, 0.1030, 0.0973));
+	p3 += dot(p3, p3.yxz + 33.33);
+	return frac((p3.xxy + p3.yzz) * p3.zyx);
+}
 
 // Snaps src to the centre of its mosaic block when it falls inside face f. ax: aspect.
 bool zbc_face_snap_one(float4 f, inout float2 src, float ax)
@@ -77,20 +99,150 @@ float3 zbc_plain_sample(Texture2D tex, float2 uv)
 	return tex.SampleLevel(smp_rtlinear, uv, 0).rgb;
 }
 
-// 2D -> 1D hash in [0, 1)
-float zbc_hash(float2 p)
+//------------------------------------------------------------------------------------------------
+// Interference (emissions, psy, radiation, anomalies, hits) and the death glitch
+//------------------------------------------------------------------------------------------------
+
+// seconds since death, or -1 while alive
+float zbc_death_age() { return (bus_zbc_glitch.z > 0.0) ? max(timers.x - bus_zbc_glitch.z, 0.0) : -1.0; }
+
+// how broken the picture is now, 0..1
+float zbc_glitch_amount()
 {
-	p  = frac(p * float2(443.897, 441.423));
-	p += dot(p, p.yx + 19.19);
-	return frac((p.x + p.y) * p.x);
+	float g = saturate(max(bus_zbc_glitch.x, bus_zbc_glitch.y));
+	float e = zbc_death_age();
+	if (e >= 0.0)
+		g = max(g, saturate(e / 0.3));             // death: full breakup within 0.3 s
+	return g;
 }
 
-// Vectorized 2D -> 3D hash in [0, 1) for decorrelated luma + chroma sensor grain
-float3 zbc_hash3(float2 p)
+// tearing: sideways-shifted bands, line jitter, an occasional vertical roll (24 updates a second)
+float2 zbc_glitch_uv(float2 uv, float g)
 {
-	float3 p3 = frac(float3(p.xyx) * float3(0.1031, 0.1030, 0.0973));
-	p3 += dot(p3, p3.yxz + 33.33);
-	return frac((p3.xxy + p3.yzz) * p3.zyx);
+	if (g < 0.002)
+		return uv;
+	float t    = floor(timers.x * 24.0);
+	float rows = lerp(6.0, 36.0, zbc_hash(float2(t, 3.1)));
+	float band = floor(uv.y * rows);
+	float on   = step(zbc_hash(float2(band, t)), g * 0.55);
+	uv.x += on * (zbc_hash(float2(band, t + 7.0)) - 0.5) * 0.14 * g;
+	uv.x += (zbc_hash(float2(floor(uv.y * screen_res.y * 0.5), t)) - 0.5) * 0.004 * g * g;
+	float roll = step(zbc_hash(float2(t, 11.0)), g * g * 0.15) * (zbc_hash(float2(t, 13.0)) - 0.5) * 0.25;
+	uv.y = frac(uv.y + roll);
+	return uv;
+}
+
+// colour damage: noise bars, corrupted macroblocks, whole-frame dropouts
+float3 zbc_glitch_color(float3 c, float2 uv, float g)
+{
+	if (g < 0.002)
+		return c;
+	float  t   = floor(timers.x * 24.0);
+	float  bar = floor(uv.y * 90.0);
+	float  nb  = step(zbc_hash(float2(bar, t + 1.0)), g * 0.12);
+	float  n   = zbc_hash(floor(uv * screen_res.xy * 0.5) + t);
+	c = lerp(c, n.xxx * 0.8, nb * 0.85);
+	float2 blk = floor(uv * float2(24.0, 14.0));
+	float  bc  = step(zbc_hash(blk + t * 1.7), g * g * 0.10);
+	c = lerp(c, c.gbr * 1.4, bc);
+	float drop = step(zbc_hash(float2(t, 5.0)), g * g * 0.06);
+	return c * (1.0 - drop * 0.85);
+}
+
+// signal lost: the picture is gone (black) from 0.9 to 1.4 s after death
+float zbc_death_black()
+{
+	float e = zbc_death_age();
+	return (e < 0.0) ? 0.0 : smoothstep(0.9, 1.4, e);
+}
+
+//------------------------------------------------------------------------------------------------
+// Low-light (infrared) mode
+//------------------------------------------------------------------------------------------------
+
+// strong gain with soft highlight roll-off, nearly black-and-white with a faint green cast
+float3 zbc_ir_pass(float3 c, float k)
+{
+	float l  = dot(c, float3(0.299, 0.587, 0.114));
+	float ir = 1.0 - exp(-l * 4.5);
+	return lerp(c, ir.xxx * float3(0.93, 1.0, 0.95), saturate(k));
+}
+
+//------------------------------------------------------------------------------------------------
+// Lens dirt: rain drops (refract the picture) and blood (stains, fading over ~25 s)
+//------------------------------------------------------------------------------------------------
+
+// uv offset of the rain drop over screen uv (each drop flips the picture behind it); rim: its dark edge
+float2 zbc_drop_offset(float2 uv, out float rim)
+{
+	rim = 0.0;
+	float wet = saturate(bus_zbc_dirt.x);
+	if (wet < 0.01)
+		return float2(0.0, 0.0);
+	float2 asp  = zbc_aspect();
+	float  dens = 9.0;                                   // drop cells per screen height
+	float2 p    = uv * asp * dens;
+	float2 cell = floor(p);
+	if (zbc_hash(cell + 0.37) > wet * 0.55)
+		return float2(0.0, 0.0);
+	float life = frac(timers.x * (0.04 + 0.08 * zbc_hash(cell + 1.7)) + zbc_hash(cell + 2.3));
+	float fade = smoothstep(0.0, 0.15, life) * (1.0 - smoothstep(0.75, 1.0, life));
+	float2 c   = cell + 0.5 + (float2(zbc_hash(cell + 3.1), zbc_hash(cell + 4.7)) - 0.5) * 0.3;
+	float  r   = lerp(0.12, 0.38, zbc_hash(cell + 5.9));
+	float2 d   = p - c;
+	d.y *= 0.85;
+	float dist = length(d) / r;
+	if (dist >= 1.0)
+		return float2(0.0, 0.0);
+	float bulge = sqrt(1.0 - dist * dist);
+	rim = smoothstep(0.7, 1.0, dist) * fade;
+	return -d / (asp * dens) * bulge * 2.5 * fade;
+}
+
+// blood coverage 0..1 at screen uv: a few irregular splats, mostly towards the edges
+float zbc_blood(float2 uv)
+{
+	if (bus_zbc_dirt.z <= 0.0)
+		return 0.0;
+	float age  = timers.x - bus_zbc_dirt.z;
+	float fade = 1.0 - smoothstep(12.0, 25.0, age);
+	if (age < 0.0 || fade <= 0.0)
+		return 0.0;
+	float  seed = bus_zbc_dirt.y;
+	float2 asp  = zbc_aspect();
+	float2 p    = (uv - 0.5) * asp;
+	float  a    = 0.0;
+	[unroll] for (int k = 0; k < 7; k++)
+	{
+		float2 hk  = float2(seed, (float)k * 13.7);
+		float  ang = zbc_hash(hk) * 6.2832;
+		float  rc  = lerp(0.22, 0.52, zbc_hash(hk + 1.3));
+		float2 c   = float2(cos(ang) * rc * asp.x * 0.8, sin(ang) * rc * 0.9);
+		float  r   = lerp(0.03, 0.11, zbc_hash(hk + 2.9)) * ((k == 0) ? 1.6 : 1.0);
+		float2 d   = p - c;
+		float  wob = 1.0 + 0.25 * sin(atan2(d.y, d.x) * 5.0 + seed);
+		a = max(a, 1.0 - smoothstep(0.75, 1.0, length(d) / (r * wob)));
+	}
+	return a * fade * 0.85;
+}
+
+// screen uv -> uv to sample (interference tearing + rain drop refraction); g: zbc_glitch_amount()
+float2 zbc_fx_uv(float2 uv, float g, out float rim)
+{
+	float2 u = zbc_glitch_uv(uv, g);
+	return u + zbc_drop_offset(uv, rim);
+}
+
+// colour effects on the picture (before the overlay): drop rims, blood, interference, infrared
+float3 zbc_fx_color(float3 c, float2 uv, float g, float rim)
+{
+	c *= 1.0 - rim * 0.35;
+	float b = zbc_blood(uv);
+	c = lerp(c, c * float3(0.35, 0.03, 0.03) + float3(0.06, 0.0, 0.0), b);
+	c = zbc_glitch_color(c, uv, g);
+	[branch] if (bus_zbc_ir.x > 0.001)
+		c = zbc_ir_pass(c, bus_zbc_ir.x);
+	return c;
 }
 
 // body motion: roll about the centre, then shift (p centred, in screen heights)
@@ -246,7 +398,7 @@ float3 zbc_grain(float3 c, float2 uv, float osd_mask, float scene_vis)
 	if (lift_w <= 0.0001)
 		return c;
 
-	float g = saturate(bus_zbc_extra.z) * ZBC_INTENSITY;
+	float g = saturate(saturate(bus_zbc_extra.z) * (1.0 + 1.5 * saturate(bus_zbc_ir.x))) * ZBC_INTENSITY;   // infrared: noisier
 	[branch] if (g >= 0.001)
 	{
 		float2 px    = floor(uv * screen_res.xy);

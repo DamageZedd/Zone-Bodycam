@@ -270,4 +270,124 @@
   <string id="ui_mcm_lst_zbc_col_none">
     <text>Нет (скрыть)</text>
   </string>
+  <string id="ui_mcm_zone_bodycam_allies_mutants">
+    <text>Отмечать мутантов</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_mutants_desc">
+    <text>Мутанты тоже получают рамку с названием вида, которая, как у сталкеров, расшифровывается из белой в цвет врага.</text>
+  </string>
+  <string id="st_zbc_mutant">
+    <text>Мутант</text>
+  </string>
+  <string id="st_zbc_mutant_bloodsucker">
+    <text>Кровосос</text>
+  </string>
+  <string id="st_zbc_mutant_boar">
+    <text>Кабан</text>
+  </string>
+  <string id="st_zbc_mutant_burer">
+    <text>Бюрер</text>
+  </string>
+  <string id="st_zbc_mutant_cat">
+    <text>Кот</text>
+  </string>
+  <string id="st_zbc_mutant_chimera">
+    <text>Химера</text>
+  </string>
+  <string id="st_zbc_mutant_controller">
+    <text>Контролёр</text>
+  </string>
+  <string id="st_zbc_mutant_dog">
+    <text>Слепой пёс</text>
+  </string>
+  <string id="st_zbc_mutant_flesh">
+    <text>Плоть</text>
+  </string>
+  <string id="st_zbc_mutant_fracture">
+    <text>Излом</text>
+  </string>
+  <string id="st_zbc_mutant_gigant">
+    <text>Псевдогигант</text>
+  </string>
+  <string id="st_zbc_mutant_poltergeist">
+    <text>Полтергейст</text>
+  </string>
+  <string id="st_zbc_mutant_pseudodog">
+    <text>Псевдособака</text>
+  </string>
+  <string id="st_zbc_mutant_psy_dog_phantom">
+    <text>Пси-фантом</text>
+  </string>
+  <string id="st_zbc_mutant_psy_dog">
+    <text>Пси-собака</text>
+  </string>
+  <string id="st_zbc_mutant_rat">
+    <text>Крыса</text>
+  </string>
+  <string id="st_zbc_mutant_snork">
+    <text>Снорк</text>
+  </string>
+  <string id="st_zbc_mutant_tushkano">
+    <text>Тушкан</text>
+  </string>
+  <string id="st_zbc_mutant_zombie">
+    <text>Зомби</text>
+  </string>
+  <string id="st_zbc_mutant_karlik">
+    <text>Карлик</text>
+  </string>
+  <string id="st_zbc_mutant_psysucker">
+    <text>Пси-кровосос</text>
+  </string>
+  <string id="st_zbc_mutant_lurker">
+    <text>Луркер</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_fx_glitch">
+    <text>Помехи</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_fx_glitch_desc">
+    <text>Изображение рвётся и рассыпается во время выбросов и пси-штормов, в пси-полях, при сильной радиации, рядом с аномалиями и на мгновение при сильном попадании.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_signal_lost">
+    <text>Потеря сигнала при смерти</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_signal_lost_desc">
+    <text>Когда вы погибаете, картинка искажается, гаснет и показывает НЕТ СИГНАЛА с последней меткой времени.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_night_mode">
+    <text>Режим слабого освещения</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_night_mode_desc">
+    <text>Зернистая, почти чёрно-белая инфракрасная картинка, как у настоящей нательной камеры в темноте. Авто: ночью и под землёй.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_lens_dirt">
+    <text>Грязь на объективе</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_lens_dirt_desc">
+    <text>В дождь на объективе собираются капли, а кровь брызгает на него, когда в кого-то стреляют прямо перед вами. Со временем всё стирается.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_event_marker">
+    <text>Метка события</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_event_marker_desc">
+    <text>После таймера записи на несколько секунд появляется EVENT, когда вы стреляете или получаете сильный удар, как кнопка события на настоящей камере.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_gps_line">
+    <text>Строка GPS</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_gps_line_desc">
+    <text>Координаты под именем в оверлее, обновляются при движении.</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_night_auto">
+    <text>Авто (ночью, под землёй)</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_night_always">
+    <text>Всегда</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_night_off">
+    <text>Выкл.</text>
+  </string>
+  <string id="st_zbc_signal_lost">
+    <text>Нет сигнала</text>
+  </string>
 </string_table>

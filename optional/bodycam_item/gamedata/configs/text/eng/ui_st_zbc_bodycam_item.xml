@@ -27,4 +27,7 @@
   <string id="ui_mcm_zone_bodycam_item_animations_desc">
     <text>Play a first-person animation when the battery dies (take the camera off, look at it, put it away) and when you put a new battery on it (slide the battery in, clip the camera back on). Off: the camera just turns off and on.</text>
   </string>
+  <string id="st_zbc_bodycam_item_low">
+    <text>Body camera: battery low</text>
+  </string>
 </string_table>

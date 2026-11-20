@@ -65,6 +65,30 @@ for id, kind in mcm:gmatch('{ id = "([%w_]+)",%s*type = "(%w+)"') do
 	end
 end
 
+-- every mutant class the markers know has a display name in both languages
+do
+	local aenv = setmetatable({}, { __index = _G })
+	local ac = assert(loadfile("gamedata/scripts/zbc_allies.script"))
+	setfenv(ac, aenv)
+	ac()
+	local kinds = rawget(aenv, "MUTANT_KINDS")
+	check(type(kinds) == "table" and #kinds >= 18, "MUTANT_KINDS listed")
+	local rus = ids("gamedata/configs/text/rus/ui_st_zbc_bodycam.xml")
+	check(main_eng["st_zbc_mutant"] and rus["st_zbc_mutant"], "the MUTANT label exists in both languages")
+	for _, k in ipairs(kinds or {}) do
+		check(main_eng["st_zbc_mutant_" .. k], "English name for mutant " .. k)
+		check(rus["st_zbc_mutant_" .. k], "Russian name for mutant " .. k)
+	end
+	local ba = rawget(aenv, "box_aspect")
+	check(type(ba) == "function", "box_aspect exists")
+	if type(ba) == "function" then
+		aenv.IsStalker = function() return false end
+		check(ba({}, "pseudodog") > 1 and ba({}, "snork") < 1 and ba({}, nil) < 1, "four-legged mutants get wide boxes")
+		aenv.IsStalker = function() return true end
+		check(ba({}) == 0.42, "stalkers keep the upright box")
+	end
+end
+
 -- upper case for Windows-1251 text (zbc_allies.upper_cp1251)
 local env = setmetatable({}, { __index = _G })
 local chunk = assert(loadfile("gamedata/scripts/zbc_allies.script"))

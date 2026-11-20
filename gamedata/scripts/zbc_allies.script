@@ -309,6 +309,7 @@ end
 ---------------------------------------------------------------------------------------------------
 
 local scan_enemies = true        -- cfg.allies_enemies, set by update()
+local scan_mutants = true        -- cfg.allies_mutants, set by update()
 local frame_cols = {}            -- relation -> colour, set by update()
 
 local function scan(actor, range)
@@ -317,7 +318,7 @@ local function scan(actor, range)
 	local n = 0
 	for id, st in pairs(db.storage) do
 		local obj = st and st.object
-		if obj and id ~= 0 and IsStalker(obj) and obj:alive() then
+		if obj and id ~= 0 and (IsStalker(obj) or (scan_mutants and IsMonster(obj))) and obj:alive() then
 			local d2 = obj:position():distance_to_sqr(apos)
 			if d2 <= r2 and (scan_enemies or obj:relation(actor) ~= game_object.enemy) then
 				if n < POOL or d2 < scan_d2[POOL] then
@@ -356,6 +357,45 @@ local function project_dot(obj, L, a, W)
 	return nil
 end
 
+-- Mutants: the class names Anomaly uses for them (dynamic_news_helper.GetMonsterDescription), each
+-- with a display name st_zbc_mutant_<kind> in configs\text\<language>\ui_st_zbc_bodycam.xml
+MUTANT_KINDS = {
+	"bloodsucker", "boar", "burer", "cat", "chimera", "controller", "dog", "flesh", "fracture", "gigant",
+	"poltergeist", "pseudodog", "psy_dog_phantom", "psy_dog", "rat", "snork", "tushkano", "zombie",
+	"karlik", "psysucker", "lurker",
+}
+local QUADRUPED = { boar = true, cat = true, chimera = true, dog = true, flesh = true, pseudodog = true,
+	psy_dog = true, psy_dog_phantom = true, rat = true, tushkano = true, lurker = true }
+
+local function mutant_kind(obj)
+	local h = dynamic_news_helper and dynamic_news_helper.GetMonsterDescription
+	if not h then return nil end
+	local ok, kind = pcall(h, obj)
+	return ok and type(kind) == "string" and kind or nil
+end
+
+-- box width / height: stalkers stand upright, four-legged mutants are long and low
+function box_aspect(obj, kind)
+	if IsStalker and IsStalker(obj) then return 0.42 end
+	kind = kind or mutant_kind(obj)
+	return QUADRUPED[kind] and 1.3 or 0.5
+end
+
+-- label lines: a stalker's name and faction; a mutant's species and "MUTANT"
+local function npc_name(obj)
+	if IsStalker(obj) then return label_text(obj:character_name()) end
+	local kind = mutant_kind(obj)
+	local key = kind and ("st_zbc_mutant_" .. kind)
+	local s = key and game.translate_string(key)
+	if not s or s == key then s = kind or "" end            -- no string: the class name itself
+	return label_text((s:gsub("_", " ")))
+end
+
+local function npc_faction(obj)
+	if IsStalker(obj) then return faction_text(obj) end
+	return label_text(game.translate_string("st_zbc_mutant"), FACTION_CHARS)
+end
+
 local function project_box(obj, L, a, ux, uy, size, W)
 	local feet = obj:position()
 	local head = utils_obj.safe_bone_pos(obj, "bip01_head") or feet
@@ -368,7 +408,7 @@ local function project_box(obj, L, a, ux, uy, size, W)
 	local h_ui = abs(fv - tv) * 768
 	if h_ui <= 2 then return nil end
 	h_ui = h_ui * size
-	local w_ui = (h_ui / uy) * 0.42 * ux
+	local w_ui = (h_ui / uy) * box_aspect(obj) * ux
 	local cx = (tu + fu) * 0.5 * 1024
 	local cy = (tv + fv) * 0.5 * 768
 	if cx + w_ui * 0.5 <= 0 or cx - w_ui * 0.5 >= 1024 or cy + h_ui * 0.5 <= 0 or cy - h_ui * 0.5 >= 768 then
@@ -519,7 +559,7 @@ local function step_entity(
 	-- the colour the box decodes to. White only means "not identified yet" (see draw_slot): once
 	-- decoded, everyone is either friendly (neutrals included) or an enemy
 	local col
-	if obj:has_info("npcx_is_companion") then
+	if IsStalker(obj) and obj:has_info("npcx_is_companion") then
 		col = cols.companion
 	elseif rel == game_object.enemy then
 		col = cols.enemy
@@ -569,8 +609,8 @@ local function step_entity(
 			dot_t = init_dot,
 			target_dot = init_dot,
 			col = col,
-			name = label_text(obj:character_name()),
-			faction = faction_text(obj),
+			name = npc_name(obj),
+			faction = npc_faction(obj),
 			seed = id % 9973,
 			id = id,
 			dist = dist,
@@ -584,8 +624,8 @@ local function step_entity(
 	end
 
 	ent.col = col
-	if not ent.name then ent.name = label_text(obj:character_name()) end
-	if not ent.faction then ent.faction = faction_text(obj) end
+	if not ent.name then ent.name = npc_name(obj) end
+	if not ent.faction then ent.faction = npc_faction(obj) end
 	if not ent.seed then ent.seed = id % 9973 end
 	ent.id = id
 	ent.dist = dist
@@ -887,6 +927,7 @@ function update(pool, cfg, L, visible)
 	local range = max(cfg.allies_range, 2) * view_zoom()
 	local now = time_global() / 1000
 	scan_enemies = cfg.allies_enemies and true or false
+	scan_mutants = cfg.allies_mutants and true or false
 	if last_now and now < last_now then
 		next_scan = 0
 		last_now = nil

@@ -28,15 +28,38 @@ float4 main( p_postpr I ) : SV_Target
 	float3	t_0;
 	float3	t_1;
 	float2	src_0 = I.Tex0;
+	// camera effects: interference tearing and rain drops move where the picture is sampled
+	float	fx_g = 0.0;
+	float	fx_rim = 0.0;
+	float2	uv_0 = I.Tex0;
+	float2	uv_1 = I.Tex1;
+	[branch] if (ZBC_FX)
+	{
+		fx_g = zbc_glitch_amount();
+		uv_0 = zbc_fx_uv(I.Tex0, fx_g, fx_rim);
+		uv_1 = I.Tex1 + (uv_0 - I.Tex0);
+	}
 	[branch] if (ZBC_ACTIVE)
 	{
-		t_0 = zbc_lens_sample(s_base0, I.Tex0, src_0);
-		t_1 = (abs(I.Tex1.x - I.Tex0.x) + abs(I.Tex1.y - I.Tex0.y) < 0.000001) ? t_0 : zbc_lens_sample(s_base1, I.Tex1);
+		t_0 = zbc_lens_sample(s_base0, uv_0, src_0);
+		t_1 = (abs(I.Tex1.x - I.Tex0.x) + abs(I.Tex1.y - I.Tex0.y) < 0.000001) ? t_0 : zbc_lens_sample(s_base1, uv_1);
+		[branch] if (fx_g > 0.05)
+		{
+			float2 o = float2(0.006 * fx_g, 0.0);
+			t_0.r = zbc_lens_sample(s_base0, uv_0 + o).r;
+			t_0.b = zbc_lens_sample(s_base0, uv_0 - o).b;
+		}
 	}
-	else [branch] if (ZBC_FACES)
+	else [branch] if (ZBC_FACES || ZBC_FX)
 	{
-		t_0 	= zbc_plain_sample(s_base0, I.Tex0);
-		t_1 	= zbc_plain_sample(s_base1, I.Tex1);
+		t_0 	= zbc_plain_sample(s_base0, uv_0);
+		t_1 	= zbc_plain_sample(s_base1, uv_1);
+		[branch] if (fx_g > 0.05)
+		{
+			float2 o = float2(0.006 * fx_g, 0.0);
+			t_0.r = zbc_plain_sample(s_base0, uv_0 + o).r;
+			t_0.b = zbc_plain_sample(s_base0, uv_0 - o).b;
+		}
 	}
 	else
 	{
@@ -53,6 +76,8 @@ float4 main( p_postpr I ) : SV_Target
 			scene_vis *= lerp(1.0, zbc_render(I.Tex0), saturate(bus_zbc_motion.x * 4.0));
 		image *= scene_vis;
 	}
+	[branch] if (ZBC_FX || bus_zbc_ir.x > 0.001)
+		image = zbc_fx_color(image, I.Tex0, fx_g, fx_rim);
 	float	osd_mask = 0.0;
 	[branch] if (ZBC_ACTIVE)
 		zbc_osd_composite(image, I.Tex0, osd_mask);
@@ -71,6 +96,10 @@ float4 main( p_postpr I ) : SV_Target
 
 	[branch] if (ZBC_ACTIVE && bus_zbc_extra.w >= 0.5)
 		image = zbc_grain(image, I.Tex0, osd_mask, scene_vis);
+
+	// signal lost: after death the feed cuts to black with SIGNAL LOST and the last timestamp
+	[branch] if (bus_zbc_glitch.z > 0.0)
+		image = zbc_signal_lost(image, I.Tex0);
 
 	// out
 	image = HDR10_ToDisplay_World(image);

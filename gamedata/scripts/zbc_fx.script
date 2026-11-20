@@ -1,0 +1,243 @@
+--[[
+	Zone Bodycam - camera effects state (zbc_fx.script)
+
+	Works out, every frame, the values the post shader needs for:
+	- interference: the picture tears and breaks up in emissions and psy storms, in psy fields, in
+	  strong radiation, next to anomalies, and in short bursts when you are hit hard
+	- signal lost: when you die the feed glitches, cuts to black and shows "SIGNAL LOST" over the
+	  last timestamp (started from the death callback, then timed by the shader itself)
+	- low-light mode: a grainy, nearly black-and-white infrared look at night and underground
+	- event marker: "EVENT" after REC for a few seconds after you fire or take a big hit
+	- GPS line: coordinates under the name in the overlay
+	- lens dirt: rain drops while it rains, blood after someone is shot right in front of you
+
+	zbc_bodycam.script calls frame() from actor_on_update and sends the result through its Shader Bus
+	lanes (bus_zbc_glitch, bus_zbc_ir, bus_zbc_dirt, bus_zbc_event in shaders\r3\zbc_lens.h / zbc_osd.h).
+]]
+
+local floor, min, max, abs, sqrt, cos, rad = math.floor, math.min, math.max, math.abs, math.sqrt, math.cos, math.rad
+
+local function clamp01(v) return min(max(v, 0), 1) end
+
+---------------------------------------------------------------------------------------------------
+-- Pure helpers (tested in tools\tests\zbc_fx_test.lua)
+---------------------------------------------------------------------------------------------------
+
+-- moves v toward target by at most rate * dt
+function approach(v, target, rate, dt)
+	local step = rate * dt
+	if v < target then return min(v + step, target) end
+	return max(v - step, target)
+end
+
+-- interference from an anomaly d metres away: full at 1.5 m, nothing past ANOMALY_RANGE
+ANOMALY_RANGE = 7
+function anomaly_interference(d)
+	if not d or d >= ANOMALY_RANGE then return 0 end
+	return clamp01((ANOMALY_RANGE - d) / (ANOMALY_RANGE - 1.5)) * 0.6
+end
+
+-- overall interference 0..1 from its sources (each 0..1)
+function interference(storm, psy, rad, anomaly)
+	local v = max(storm * 0.55, psy * 0.9, (rad - 0.25) * 0.6, anomaly)
+	return clamp01(v)
+end
+
+-- low-light mode wanted? mode: 0 auto, 1 always, 2 off
+function night_hours(h)
+	h = tonumber(h) or 12
+	return h >= 21 or h < 5
+end
+
+function ir_target(mode, hour, underground)
+	if mode == 1 then return 1 end
+	if mode == 2 then return 0 end
+	return (underground or night_hours(hour)) and 1 or 0
+end
+
+-- levels that are always dark (labs and tunnels)
+UNDERGROUND = {
+	l03u_agr_underground = true, l04u_labx18 = true, l08u_brainlab = true, l10u_bunker = true,
+	l12u_sarcofag = true, l12u_control_monolith = true, l13u_warlab = true, jupiter_underground = true,
+	labx8 = true,
+}
+
+-- GPS line: the Chernobyl NPP plus the actor's offset on the level, in degrees (1 degree of latitude
+-- is 111 320 m). x east, z north.
+GPS_LAT, GPS_LON = 51.38912, 30.09921
+function gps_text(x, z)
+	x, z = tonumber(x) or 0, tonumber(z) or 0
+	local lat = GPS_LAT + z / 111320
+	local lon = GPS_LON + x / (111320 * cos(rad(GPS_LAT)))
+	return string.format("N%.5f E%.5f", lat, lon)
+end
+
+---------------------------------------------------------------------------------------------------
+-- State
+---------------------------------------------------------------------------------------------------
+
+local F = {
+	glitch = 0,          -- smoothed interference 0..1
+	burst = 0,           -- short hit burst 0..1, decays
+	ir = 0,              -- low-light mix 0..1
+	wet = 0,             -- rain on the lens 0..1
+	blood_t = 0,         -- time the last blood splatter hit the lens (seconds, shader clock), 0 none
+	blood_seed = 0,
+	death_t = 0,         -- time of death (seconds, shader clock), 0 alive
+	event = false,       -- show EVENT after REC
+}
+local event_until = 0
+local next_anom_scan = 0
+local anom_near = 0
+
+function reset()
+	F.glitch, F.burst, F.ir, F.wet = 0, 0, 0, 0
+	F.blood_t, F.blood_seed, F.death_t = 0, 0, 0
+	F.event = false
+	event_until, next_anom_scan, anom_near = 0, 0, 0
+end
+
+local function now_s() return time_global() / 1000 end
+
+local function read_psy(actor) return actor.psy_health end
+local function read_rad(actor) return actor.radiation end
+
+local function read_storm()
+	local surge = surge_manager and surge_manager.is_started and surge_manager.is_started()
+	local psi = psi_storm_manager and psi_storm_manager.get_psi_storm_manager
+		and psi_storm_manager.get_psi_storm_manager().started
+	return surge or psi
+end
+
+local function storm_active()
+	local ok, s = pcall(read_storm)
+	return ok and s and true or false
+end
+
+-- strongest anomaly interference around the actor (rescanned twice a second)
+local function scan_anomalies(actor, now)
+	if now < next_anom_scan then return anom_near end
+	next_anom_scan = now + 0.5
+	local best = 0
+	local apos = actor:position()
+	for _, a in pairs(db.anomaly_by_name or {}) do
+		local obj = a and a.object
+		if obj then
+			local d = obj:position():distance_to(apos)
+			if d < ANOMALY_RANGE then best = max(best, anomaly_interference(d)) end
+		end
+	end
+	anom_near = best
+	return best
+end
+
+local function underground()
+	local n = level and level.name and level.name()
+	return n and UNDERGROUND[n] or false
+end
+
+-- cfg: zbc_bodycam settings; dt seconds. Returns the state table (read only).
+function frame(cfg, dt)
+	local actor = db.actor
+	local now = now_s()
+	if not actor then return F end
+	dt = min(max(dt or 0, 0), 0.1)
+
+	-- interference
+	local target = 0
+	if cfg.fx_glitch then
+		local ok_p, psy = pcall(read_psy, actor)
+		local ok_r, radv = pcall(read_rad, actor)
+		target = interference(storm_active() and 1 or 0,
+			1 - clamp01(ok_p and tonumber(psy) or 1),
+			clamp01(ok_r and tonumber(radv) or 0),
+			scan_anomalies(actor, now))
+	else
+		F.burst = 0
+	end
+	F.glitch = approach(F.glitch, target, 0.8, dt)
+	F.burst = approach(F.burst, 0, 2.5, dt)
+
+	-- low light
+	local hour = level and level.get_time_hours and level.get_time_hours() or 12
+	F.ir = approach(F.ir, ir_target(cfg.night_mode or 0, hour, underground()), 0.7, dt)
+
+	-- rain on the lens: builds up while it rains, dries slowly
+	local rain = 0
+	if cfg.lens_dirt and not underground() and level and level.rain_factor then
+		rain = clamp01(tonumber(level.rain_factor()) or 0)
+	end
+	if rain > F.wet then
+		F.wet = approach(F.wet, rain, 0.12, dt)
+	else
+		F.wet = approach(F.wet, rain, 0.025, dt)
+	end
+	if not cfg.lens_dirt then F.blood_t = 0 end
+
+	F.event = cfg.event_marker and now < event_until or false
+	return F
+end
+
+---------------------------------------------------------------------------------------------------
+-- Callbacks
+---------------------------------------------------------------------------------------------------
+
+local function enabled()
+	return zbc_bodycam and zbc_bodycam.fx_enabled and zbc_bodycam.fx_enabled()
+end
+
+local function flag_event()
+	event_until = now_s() + 5
+end
+
+local function actor_on_weapon_fired(obj)
+	if obj and db.actor and obj:id() ~= db.actor:id() then return end
+	flag_event()
+end
+
+local function read_power(shit) return shit.power end
+
+local function actor_on_before_hit(shit)
+	local ok, p = pcall(read_power, shit)
+	p = ok and tonumber(p) or 0.3
+	F.burst = max(F.burst, clamp01(p * 1.6))
+	if p >= 0.25 then flag_event() end
+end
+
+-- blood on the lens when someone is hit right in front of the camera
+local function on_hit_near(victim, amount)
+	local actor = db.actor
+	if not (actor and victim and enabled() and zbc_bodycam.fx_option("lens_dirt")) then return end
+	if (tonumber(amount) or 0) <= 0 then return end
+	local dev = device()
+	local cam = dev and dev.cam_pos
+	local dir = dev and dev.cam_dir
+	if not (cam and dir) then return end
+	local p = victim:position()
+	local dx, dy, dz = p.x - cam.x, p.y + 1.2 - cam.y, p.z - cam.z
+	local d = sqrt(dx * dx + dy * dy + dz * dz)
+	if d > 2.5 or d < 0.01 then return end
+	if (dx * dir.x + dy * dir.y + dz * dir.z) / d < 0.4 then return end
+	F.blood_t = now_s()
+	F.blood_seed = math.random(1, 997)
+end
+
+local function npc_on_hit_callback(npc, amount) on_hit_near(npc, amount) end
+local function monster_on_hit_callback(monster, amount) on_hit_near(monster, amount) end
+
+local function actor_on_before_death()
+	if not (enabled() and zbc_bodycam.fx_option("signal_lost")) then return end
+	F.death_t = now_s()
+	if zbc_bodycam.signal_lost then zbc_bodycam.signal_lost(F.death_t) end
+end
+
+local function actor_on_first_update() reset() end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("actor_on_weapon_fired", actor_on_weapon_fired)
+	RegisterScriptCallback("actor_on_before_hit", actor_on_before_hit)
+	RegisterScriptCallback("npc_on_hit_callback", npc_on_hit_callback)
+	RegisterScriptCallback("monster_on_hit_callback", monster_on_hit_callback)
+	RegisterScriptCallback("actor_on_before_death", actor_on_before_death)
+end
