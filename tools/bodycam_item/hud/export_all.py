@@ -47,6 +47,10 @@ def export_hands():
     out = os.path.join(d, "zbc_bodycam_hud_animation.omf")
     names = ["zbc_bodycam_" + t for t, _ in SEQS]
     for n in names:
+        # stop at end: without it the engine treats the motion as a loop, never ends the script
+        # animation and returns length 0 to game.get_motion_length
+        bpy.data.actions[n].xray.flags_stopatend = True
+        bpy.data.actions[n].xray.fps = 30
         bind(arm, bpy.data.actions[n])
     bind(arm, None)
     saved = [m.name for m in arm.xray.motions_collection]
@@ -78,7 +82,8 @@ def export_hands():
                 rows.append({b.name: b.matrix.translation.copy() for b in arm.pose.bones})
             for b in rows[0]:
                 worst = max(worst, (rows[0][b] - rows[1][b]).length)
-        say("hands", n, "frames", tuple(imp.frame_range), "max bone error mm", round(worst * 1000, 3))
+        say("hands", n, "frames", tuple(imp.frame_range), "max bone error mm", round(worst * 1000, 3),
+            "stop at end", imp.xray.flags_stopatend)
     for a in new:
         bpy.data.actions.remove(a)
     bind(arm, None)
@@ -99,6 +104,7 @@ def export_item(rels):
             bpy.data.actions.remove(a)
         a = bpy.data.actions.new(name)
         a.xray.fps = 30
+        a.xray.flags_stopatend = name != "idle"
         bind(rig, a)
         for f in range(L + 1):
             pbody.matrix_basis = Matrix()

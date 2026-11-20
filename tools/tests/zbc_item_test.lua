@@ -138,6 +138,43 @@ do
 	check(A.power_held(1000, 4000 + A.POWER_AT_MS, 4000) == false, "camera on the chest: power back")
 end
 
+-- a normal run ends after the motion's length: the hand motion is stopped (never left cycling), controls back
+do
+	local chunk = assert(loadfile("optional/bodycam_item/gamedata/scripts/zbc_item_anim.script"))
+	local locked, stopped, played = nil, 0, 0
+	local actor = {
+		alive = function() return true end,
+		active_slot = function() return 0 end,
+		active_detector = function() return nil end,
+		active_item = function() return nil end,
+		activate_slot = function() end,
+	}
+	local A = setmetatable({
+		db = { actor = actor },
+		game = {
+			only_allow_movekeys = function(v) locked = v end,
+			play_hud_motion = function() played = played + 1 end,
+			get_motion_length = function() return 1000 end,
+			stop_hud_motion = function() stopped = stopped + 1 end,
+		},
+		level = {},
+		printf = function() end,
+		time_global = function() return 0 end,
+	}, { __index = _G })
+	setfenv(chunk, A)
+	chunk()
+	A.request("dead", 0)
+	A.update(0, true)
+	A.update(10, true)
+	check(played == 1 and locked == true, "the animation plays once, movement keys only")
+	A.update(500, true)
+	check(stopped == 0 and locked == true, "still playing halfway through")
+	A.update(1100, true)
+	check(stopped == 1 and locked == false, "after its length the hand motion is stopped and controls return")
+	A.update(5000, true)
+	check(played == 1, "it is not played again")
+end
+
 -- an engine call that fails mid-animation releases the movement lock and gives the weapon back
 do
 	local chunk = assert(loadfile("optional/bodycam_item/gamedata/scripts/zbc_item_anim.script"))

@@ -133,6 +133,7 @@ end
 
 local function finish()
 	local actor = db.actor
+	if phase == "playing" and game.stop_hud_motion then game.stop_hud_motion() end   -- never left cycling
 	game.only_allow_movekeys(false)
 	if game.set_actor_allow_ladder then game.set_actor_allow_ladder(true) end
 	if fov_changed and fov_anim_manager and fov_anim_manager.restore_fov then pcall(fov_anim_manager.restore_fov) end
