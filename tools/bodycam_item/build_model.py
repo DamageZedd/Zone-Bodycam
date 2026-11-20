@@ -5,7 +5,7 @@ every part as its own object (materials included), ready for bake_export.py.
 
 Proportions and feature positions were measured on Axon's orthographic front product render
 (axon_2023_axonbody4-product-2, 15.65 px per mm) and checked against a 3/4 product photo:
-64.5 x 96.5 mm front, 26 mm body + rear mount. Units are metres in Blender, millimetres below.
+64.5 x 95.3 mm front, 30 mm body + front relief + rear mount. Units are metres in Blender, millimetres below.
 Front faces -Y, Z is up, X is right as seen from the front.
 """
 import math
@@ -22,25 +22,33 @@ for o in list(sc.objects):
     bpy.data.objects.remove(o, do_unlink=True)
 col = sc.collection
 
-# ---- body dimensions (mm)
+# ---- body dimensions (mm), measured on Axon's orthographic front render
 W, D = 64.5, 30.0
-Z_TOP, Z_BOT = 47.0, -48.0    # body top and bottom (95 mm; the features are centred on Z = 0)
-CUT_X, CUT_Z = 10.3, 7.7      # corner cuts of the outline
-FRONT_CHAMFER = 3.4           # dark rim band around the front (rounded profile)
+Z_TOP, Z_BOT = 47.1, -48.2    # body top and bottom
+TOP_CUT = (21.7, 40.6)        # top corner cuts: (+-21.7, Z_TOP) -> (+-W/2, 40.6)
+BOT_CUT = (23.0, -40.5)       # bottom corner cuts: (+-23.0, Z_BOT) -> (+-W/2, -40.5)
 CORNER_R = 3.0                # rounding of the cut corners
-Y0 = -D / 2                   # front plane
+FRONT_R = 1.4                 # rounding of the front edge
+Y0 = -D / 2                   # front reference level (the side bevels reach it at |x| 25.5)
 EMBED = 0.3                   # relief parts start this far inside the shell
 
-# ---- front relief heights (mm in front of Y0)
-H_SPINE = 1.6                 # central vertical spine and the chin
-H_BLOCK = 4.0                 # lens block (highest plateau)
-H_BTN = 2.6                   # button block: lower, the strip between the two ramps down to it
-H_COLUMN = 3.0                # inner edge of the sloped side columns (just under the blocks)
-LENS_TAPER = 1.0              # width of the lens block's sloped sides
-X_COL_IN = 15.1 - LENS_TAPER * H_COLUMN / H_BLOCK   # columns end where the block side reaches their height
+# ---- front relief (approved reference sheet): h(x, z) = min(P(z), bevel(|x|)), mm in front of Y0.
+# Each side bevel is ONE plane from the bump tops (|x| 6.75, H_BUMP) down to 0 at |x| 25.5; the three
+# bumps T, M, Bo are flat-top pyramids whose sides are those bevels; the lens area and the button area
+# sit on the same level, flush with the bevels at the lens area's sides.
+H_BUMP = 4.5
+X_IN, X_OUT = 6.75, 25.5
 
-LENS = (0.0, 27.8)            # lens centre (X, Z)
-BTN = (0.0, -11.2)            # button centre
+
+def bevel_h(ax):
+    return H_BUMP * (X_OUT - ax) / (X_OUT - X_IN)
+
+
+H_FLOOR = bevel_h(15.4)       # lens area and button area (2.42)
+TOP_K, CHIN_K = H_BUMP / 6.2, H_BUMP / 13.8   # top edge slope (36 deg), chin under Bo (18 deg)
+
+LENS = (0.0, 28.0)            # lens centre (X, Z)
+BTN = (0.0, -12.0)            # button centre
 
 # ------------------------------------------------------------------------------------------------
 # helpers (all inputs in mm)
@@ -393,7 +401,7 @@ M_LABEL = material("zbc_label", (0.30, 0.30, 0.31), 0.6)
 M_MAGNET = material("zbc_magnet", (0.05, 0.05, 0.055), 0.35, metal=1.0)
 for m in (M_BODY, M_FACE, M_DISC, M_MOUNT):
     surface_noise(m)
-knurl(M_BUTTON, BTN[0], BTN[1], 13.3, 19.6, 0.85, (0.040, 0.041, 0.045), (0.050, 0.051, 0.056), (0.010, 0.010, 0.011))
+knurl(M_BUTTON, BTN[0], BTN[1], 13.5, 18.85, 0.85, (0.040, 0.041, 0.045), (0.050, 0.051, 0.056), (0.010, 0.010, 0.011))
 dots(M_GRIP, 1, 2, 1.35, 0.42, (0.016, 0.016, 0.018), (0.034, 0.034, 0.037))
 
 # ------------------------------------------------------------------------------------------------
@@ -401,17 +409,54 @@ dots(M_GRIP, 1, 2, 1.35, 0.42, (0.016, 0.016, 0.018), (0.034, 0.034, 0.037))
 # ------------------------------------------------------------------------------------------------
 
 hw = W / 2
-outline = [(-hw + CUT_X, Z_TOP), (hw - CUT_X, Z_TOP), (hw, Z_TOP - CUT_Z), (hw, Z_BOT + CUT_Z),
-           (hw - CUT_X, Z_BOT), (-hw + CUT_X, Z_BOT), (-hw, Z_BOT + CUT_Z), (-hw, Z_TOP - CUT_Z)]
-def shell(name):
-    """Extruded outline; the cut corners rounded, then a rounded rim at the front and the back."""
-    o = prism(name, outline, D / 2, D)
+outline = [(-TOP_CUT[0], Z_TOP), (TOP_CUT[0], Z_TOP), (hw, TOP_CUT[1]), (hw, BOT_CUT[1]),
+           (BOT_CUT[0], Z_BOT), (-BOT_CUT[0], Z_BOT), (-hw, BOT_CUT[1]), (-hw, TOP_CUT[1])]
+F, HB = H_FLOOR, H_BUMP
+BF = bevel_h(22.1)                               # the roof's own level under the button area
+# centre-line profile P(z), top to bottom (extended past the top and bottom edges)
+PROF = [(Z_TOP + 3.0, HB - (Z_TOP + 3.0 - 44.4) * TOP_K), (44.4, HB), (40.75, HB), (35.0, F), (20.3, F),
+        (14.4, HB), (10.75, HB), (4.4, BF), (-28.4, BF), (-34.25, HB), (-37.75, HB),
+        (Z_BOT - 3.0, HB - (-37.75 - (Z_BOT - 3.0)) * CHIN_K)]
+
+
+def Yh(h):
+    """Y of a point h mm in front of the reference level."""
+    return Y0 - h
+
+
+def roof(name):
+    """The whole front relief as one closed solid. Per band of P(z): a flat strip on the P plane
+    between |x| = xc(z), and the two side bevel planes outside it (xc: where the bevel reaches P)."""
+    xe = hw + 3.0
+    he = bevel_h(xe)
+    yb = D / 2 + 4.0
+    bm = bmesh.new()
+    rows = []
+    for z, p in PROF:
+        xc = X_OUT - p * (X_OUT - X_IN) / HB
+        f = [bm.verts.new(v3(x, Yh(h), z)) for x, h in ((-xe, he), (-xc, p), (xc, p), (xe, he))]
+        k = [bm.verts.new(v3(x, yb, z)) for x in (-xe, xe)]
+        rows.append((f, k))
+    for (f0, k0), (f1, k1) in zip(rows, rows[1:]):
+        for i in range(3):
+            bm.faces.new([f0[i], f0[i + 1], f1[i + 1], f1[i]])
+        bm.faces.new([k0[0], k1[0], k1[1], k0[1]])
+        bm.faces.new([f0[0], f1[0], k1[0], k0[0]])
+        bm.faces.new([f0[3], k0[1], k1[1], f1[3]])
+    f, k = rows[0]
+    bm.faces.new([k[0], f[0], f[1], f[2], f[3], k[1]])
+    f, k = rows[-1]
+    bm.faces.new([k[1], f[3], f[2], f[1], f[0], k[0]])
+    return finish(bm, name)
+
+
+def outline_cutter(name):
+    """Outline prism from the back face to well in front of the relief; cut corners and back rim rounded."""
+    o = prism(name, outline, D / 2, D + 12.0)
     bm = bmesh.new()
     bm.from_mesh(o.data)
     ye = [e for e in bm.edges if abs(e.verts[0].co.x - e.verts[1].co.x) < 1e-9 and abs(e.verts[0].co.z - e.verts[1].co.z) < 1e-9]
     bmesh.ops.bevel(bm, geom=ye, offset=CORNER_R * MM, segments=4, profile=0.5, affect="EDGES", clamp_overlap=True)
-    fe = [e for e in bm.edges if all(abs(v.co.y - Y0 * MM) < 1e-9 for v in e.verts)]
-    bmesh.ops.bevel(bm, geom=fe, offset=FRONT_CHAMFER * MM, segments=3, profile=0.62, affect="EDGES", clamp_overlap=True)
     be = [e for e in bm.edges if all(abs(v.co.y - D / 2 * MM) < 1e-9 for v in e.verts)]
     bmesh.ops.bevel(bm, geom=be, offset=3.0 * MM, segments=3, profile=0.5, affect="EDGES", clamp_overlap=True)
     bm.to_mesh(o.data)
@@ -421,120 +466,61 @@ def shell(name):
 
 def hull(name, pts):
     bm = bmesh.new()
-    for p in pts:
-        bm.verts.new(v3(*p))
+    for q in pts:
+        bm.verts.new(v3(*q))
     bmesh.ops.convex_hull(bm, input=bm.verts[:])
     return finish(bm, name)
 
 
-body = assign(shell("body"), M_BODY)
-# notches in the front rim beside programmable button 1: the floor slopes back from Z 25.2 to Z 31
-for s_ in (-1, 1):
-    pts = [(-25.8, Y0, 25.2), (-40, Y0, 25.2), (-40, Y0 + 3.2, 31.0), (-30.0, Y0 + 3.2, 31.0),
-           (-25.8, Y0 - 3, 25.2), (-40, Y0 - 3, 25.2), (-40, Y0 - 3, 31.0), (-30.0, Y0 - 3, 31.0)]
-    boolean(body, hull("notch", [(s_ * x, y, z) for x, y, z in pts]))
+body = assign(roof("body"), M_BODY)
+boolean(body, outline_cutter("outline_cut"), op="INTERSECT")
 
-# ------------------------------------------------------------------------------------------------
-# front relief (measured outlines, mm)
-# ------------------------------------------------------------------------------------------------
-
-Z_END_T, Z_END_B = Z_TOP - FRONT_CHAMFER, Z_BOT + FRONT_CHAMFER   # the rim chamfer starts here
-TOP_IN_T, TOP_IN_B = Z_END_T - 0.5, Z_END_B + 0.5                 # short end walls of the sunk spine
-X_FRAME = 25.8                           # outer flat frame (with the screws) ends here
-
-# Front relief (corrected by the author against the photos): the lens area and the main button area
-# are flat and on the same level; raised bumps with ramps on both sides run between them, above the
-# lens and under the button; the side columns slope from the screw frame up to that level.
-H_FLOOR = 3.0                    # lens area and button area (same level)
-H_BUMP = 4.5                     # flat tops of the three bumps
-FRONT = []                       # every relief solid, for the pocket cuts further down
+# round the front edge (between the front faces and the side walls)
+bm = bmesh.new()
+bm.from_mesh(body.data)
+bm.normal_update()
+fe = []
+for e in bm.edges:
+    if len(e.link_faces) != 2:
+        continue
+    n1, n2 = (fc.normal for fc in e.link_faces)
+    if (n1.y < -0.3 and abs(n2.y) < 0.2) or (n2.y < -0.3 and abs(n1.y) < 0.2):
+        fe.append(e)
+bmesh.ops.bevel(bm, geom=fe, offset=FRONT_R * MM, segments=3, profile=0.5, affect="EDGES", clamp_overlap=True)
+bm.to_mesh(body.data)
+bm.free()
 
 
-def add(o):
-    FRONT.append(o.name)
-    return assign(o, M_FACE)
-
-
-def facets(name, pts, tris):
-    """A surface patch given as triangles over points (x, z, h), each triangle its own solid slab."""
-    for k, (a, b, c) in enumerate(tris):
-        add(slab("%s_%d" % (name, k), [pts[a], pts[b], pts[c]]))
-
-
-def quads(name, quad_list):
-    """Each quad (four (x, z, h) points) split into two triangle slabs."""
-    for k, (a, b, c, d) in enumerate(quad_list):
-        facets("%s_%d" % (name, k), [a, b, c, d], [(0, 1, 2), (0, 2, 3)])
-
-
-F, HB = H_FLOOR, H_BUMP
-LENS_OUT = mirror_x([(0, 36.4), (-13.5, 36.4), (-15.1, 34.8), (-15.1, 20.1), (-6.6, 14.4), (0, 14.4)])
-BTN_OUT = mirror_x([(0, 6.9), (-18.3, 6.9), (-22.0, 3.9), (-22.0, -26.0), (-20.6, -28.2), (-6.6, -34.6), (0, -34.6)])
-
-
-def frustum(name, base, base_h, h_top, insets, chamfer=0.2):
-    """Flat-top pyramid: base outline with a height per vertex (mm in front of the front plane), a flat
-    top at h_top over the outline inset by `insets` (one value per edge, edge i = base[i] -> base[i+1])."""
-    top = inset_convex(base, insets)
+def plateau(name):
+    """Button area on the lens level, with the band under M and the band over Bo (planes) leading up
+    to the bump tops; short walls where it stands above the side bevels."""
+    zt, zb, hb = 11.0, -34.5, HB - 0.02
+    ring = [(-6.75, zt, hb), (6.75, zt, hb), (22.1, 4.4, F), (22.1, -28.4, F),
+            (6.75, zb, hb), (-6.75, zb, hb), (-22.1, -28.4, F), (-22.1, 4.4, F)]
     bm = bmesh.new()
-    back = [bm.verts.new(v3(x, Y0 + EMBED, z)) for x, z in base]
-    ring = [bm.verts.new(v3(x, Y0 - bh, z)) for (x, z), bh in zip(base, base_h)]
-    front = [bm.verts.new(v3(x, Y0 - h_top, z)) for x, z in top]
-    n = len(base)
-    bm.faces.new(front)
-    bm.faces.new(list(reversed(back)))
-    for i in range(n):
-        j = (i + 1) % n
-        bm.faces.new([back[i], back[j], ring[j], ring[i]])
-        bm.faces.new([ring[i], ring[j], front[j], front[i]])
-    bm.normal_update()
-    if chamfer > 0:
-        fe = [e for e in bm.edges if all(abs(v.co.y - (Y0 - h_top) * MM) < 1e-9 for v in e.verts)]
-        bmesh.ops.bevel(bm, geom=fe, offset=chamfer * MM, segments=2, profile=0.5, affect="EDGES", clamp_overlap=True)
-    return add(finish(bm, name))
+    fr = [bm.verts.new(v3(x, Yh(h), z)) for x, z, h in ring]
+    bk = [bm.verts.new(v3(x, Yh(-1.0), z)) for x, z, h in ring]
+    bm.faces.new([fr[0], fr[1], fr[2], fr[7]])
+    bm.faces.new([fr[7], fr[2], fr[3], fr[6]])
+    bm.faces.new([fr[6], fr[3], fr[4], fr[5]])
+    bm.faces.new(list(reversed(bk)))
+    for i in range(8):
+        j = (i + 1) % 8
+        bm.faces.new([fr[j], fr[i], bk[i], bk[j]])
+    return finish(bm, name)
 
 
-# Base (agreed diagram): one flat-top pyramid over the whole front inside the screw strips. Its top is
-# the lens/button level; its left and right sides are the big side bevels (S) rising from the screw
-# strips; its top and bottom sides run down into the rim. Pieces never share a flat face (that breaks
-# the union): every base ring sits a little inside the surface it rises from.
-SINK = 0.05                                      # base rings this far below the surface under them
-CORE = [(-25.8, 40.5), (-20.6, Z_END_T), (20.6, Z_END_T), (25.8, 40.5),
-        (25.8, -41.5), (20.6, Z_END_B), (-20.6, Z_END_B), (-25.8, -41.5)]
-frustum("core", CORE, [-SINK] * 8, F, [6.0, 2.0, 6.0, 10.7, 6.0, 2.0, 6.0, 10.7], chamfer=0.0)
-# button area (B): the same level, wider than the core's flat top; only the two side wings are added,
-# standing up from the side bevels with a small sloped wall (their inner edge meets the core's top edge)
+boolean(body, plateau("button_area"), op="UNION")
+
+# recessed side channels for the middle screws, with a sloped triangle at each end
+CH_FLOOR = -1.5
 for s_ in (-1, 1):
-    wing = [(15.1, 6.9), (18.3, 6.9), (22.0, 3.9), (22.0, -26.0), (20.6, -28.2), (15.1, -30.71)]
-    wing = [(s_ * x, z) for x, z in wing]
-    walls = [0.8, 0.8, 0.8, 0.8, 0.8, 0.0]       # last edge = the inner edge (x = 15.1): vertical, flush with the core
-    frustum("button_wing_%s" % ("r" if s_ > 0 else "l"), wing, [-SINK] * 6, F, walls, chamfer=0.0)
-# three flat-top pyramids rising from that level: T above the lens (trapezoid to the top edge),
-# M between lens and button, Bo below the button (trapezoid to the bottom edge, carries AXON)
-FB = F - 0.4                                     # bump bases start just inside the lens/button level
-frustum("bump_top", [(-13.5, 36.4), (13.5, 36.4), (20.0, Z_END_T - 0.05), (-20.0, Z_END_T - 0.05)],
-        [FB, FB, -0.3, -0.3], HB, [1.5, 1.8, 2.0, 1.8])
-frustum("bump_mid", [(-6.6, 14.4), (6.6, 14.4), (6.6, 6.9), (-6.6, 6.9)], [FB] * 4, HB, [1.5, 1.2, 1.5, 1.2])
-frustum("bump_bottom", [(-6.6, -34.6), (6.6, -34.6), (20.0, Z_END_B + 0.05), (-20.0, Z_END_B + 0.05)],
-        [FB, FB, -0.3, -0.3], HB, [1.5, 1.8, 2.0, 1.8])
-
-# one flush piece: the bumps are merged into the shell, so their sloped sides run straight into the
-# front plane and the rim instead of sitting on it as separate blocks
-for tname in list(FRONT):
-    o = sc.objects.get(tname)
-    if o:
-        boolean(body, o, op="UNION")
-FRONT.clear()
-
-# pockets around the two middle screws (left and right edge, at the button block's top)
-for s_ in (-1, 1):
-    for tname in ["body"] + FRONT:
-        o = sc.objects.get(tname)
-        if o:
-            boolean(o, box("screw_pocket_cut", 5.8, 6.5, 6.4, (s_ * 27.3, Y0 - 1.75, 1.6), bevel=0.6, seg=2))
-
-Y_LENS = Y0 - H_FLOOR                            # lens area
-Y_BTN = Y0 - H_FLOOR                             # button area
+    quad = [(25.5, 28.6), (30.35, 24.5), (30.35, -26.25), (25.5, -28.75)]   # outer wall just past the triangles'
+    boolean(body, hull("channel_cut", [(s_ * x, Yh(h), z) for x, z in quad for h in (CH_FLOOR, 8.0)]))
+    for tri in (((25.5, 28.6, 0.0), (30.25, 24.4, CH_FLOOR), (30.25, 31.25, bevel_h(30.25) - 0.02)),
+                ((25.5, -28.75, 0.0), (30.25, -26.15, CH_FLOOR), (30.25, -32.0, bevel_h(30.25) - 0.02))):
+        pts = [(s_ * x, Yh(h), z) for x, z, h in tri] + [(s_ * x, Yh(8.0), z) for x, z, h in tri]
+        boolean(body, hull("channel_end_cut", pts))
 
 
 def funnel(name, cx, cz, r_top, y_top, r_bot, y_bot, seg=128, a0=0.0, a1=360.0):
@@ -596,59 +582,61 @@ lx, lz = LENS
 bx, bz = BTN
 
 # ------------------------------------------------------------------------------------------------
-# lens: sunk into the lens block (second reference photo): a dark round pocket, a ring with four
-# dark notches at the diagonals, a black groove and the glass deep inside
+# lens: a bezel ring flush with the lens area in a round bore (the bore also cuts into the ramps),
+# four dark notches, a black groove, the lens face and the glass a little deeper
 # ------------------------------------------------------------------------------------------------
 
-Y_LENS_FLOOR = Y_LENS + 3.0
-cut(FRONT + ["body"],
-    lambda: disc("lens_pocket_cut", 10.2, lx, lz, Y_LENS_FLOOR, Y0 - 12.0, seg=120))
-assign(funnel("lens_wall", lx, lz, 10.2, Y_LENS - 0.01, 9.5, Y_LENS_FLOOR - 0.01, seg=120), M_GLOSS)
-yl = Y_LENS_FLOOR - 0.7
-assign(disc("lens_ring", 9.5, lx, lz, Y_LENS_FLOOR + 0.2, yl, seg=120, chamfer=0.25, cseg=2), M_TAB)
-for a in (45, 135, 225, 315):
+LG = F - 0.9                                     # floor of the gap around the bezel
+cut(["body"], lambda: disc("lens_pocket_cut", 10.3, lx, lz, Yh(LG), Y0 - 12.0, seg=120))
+cut(["body"], lambda: disc("lens_inner_cut", 7.3, lx, lz, Yh(F - 1.8), Y0 - 12.0, seg=96))
+assign(annulus("lens_gap", lx, lz, 9.6, 10.3, Yh(LG) - 0.02, seg=120), M_HOLE)
+assign(lathe("lens_ring", lx, lz, [(9.6, -LG), (9.6, -F), (8.4, -F), (7.1, -(F - 1.0)), (7.1, -(F - 1.6))], Y0, seg=120), M_BEZEL)
+for a in (32, 148, 212, 328):
     r = math.radians(a)
-    assign(box("lens_notch", 2.2, 0.3, 1.3, (lx + 8.3 * math.cos(r), yl - 0.05, lz + 8.3 * math.sin(r)), rot=(0, -r, 0)), M_HOLE)
-assign(annulus("lens_groove", lx, lz, 6.6, 7.1, yl - 0.02), M_HOLE)
-assign(disc("lens_face", 6.6, lx, lz, yl + 0.2, yl - 0.2, seg=96, chamfer=0.2, cseg=2), M_BEZEL)
+    assign(box("lens_notch", 1.9, 1.2, 1.6, (lx + 8.45 * math.cos(r), Yh(F - 0.45), lz + 8.45 * math.sin(r)), rot=(0, -r, 0)), M_HOLE)
+assign(annulus("lens_groove", lx, lz, 6.6, 7.1, Yh(F - 1.6) - 0.02), M_HOLE)
+yl = Yh(F - 1.4)
+assign(disc("lens_face", 6.6, lx, lz, yl + 0.4, yl, seg=96, chamfer=0.2, cseg=2), M_BEZEL)
 bm = bmesh.new()
 bmesh.ops.create_uvsphere(bm, u_segments=32, v_segments=16, radius=5.0 * MM)
 for v in bm.verts:
-    v.co.y *= 0.25
+    v.co.y *= 0.18
 bmesh.ops.delete(bm, geom=[v for v in bm.verts if v.co.y > 1e-7], context="VERTS")
 glass = assign(finish(bm, "lens_glass"), M_GLASS)
-glass.location = v3(lx, yl - 0.2, lz)
+glass.location = v3(lx, yl, lz)
 
 # ------------------------------------------------------------------------------------------------
-# button: sunk in a well in the button block: dark glossy wall, groove, knurled face, smooth centre
-# disc, raised beveled logo; white light pipes top and left, a row of white dots on the right
+# button: rim flush with the button area (same level as the lens), dark gap around it, concave
+# knurled face down to a smooth centre disc, raised logo, white light pipes and indicator dots
 # ------------------------------------------------------------------------------------------------
 
-DISH = 1.6                                       # the button face is concave: this deep at the centre
-cut(FRONT + ["body"], lambda: disc("button_seat_cut", 21.7, bx, bz, Y_BTN - 0.01, Y0 - 12.0, seg=128))   # not coplanar with the front
-cut(FRONT + ["body"], lambda: disc("button_dish_cut", 13.3, bx, bz, Y_BTN + DISH, Y_BTN - 0.01, seg=128, r_front=19.95))
-assign(annulus("button_ring", bx, bz, 20.5, 21.7, Y_BTN - 0.03, seg=128), M_GLOSS)
-assign(annulus("button_groove", bx, bz, 19.9, 20.5, Y_BTN - 0.02, seg=128), M_HOLE)
-assign(funnel("button", bx, bz, 19.95, Y_BTN - 0.02, 13.3, Y_BTN + DISH - 0.02), M_BUTTON)
-ydisc = Y_BTN + DISH - 0.03
-assign(disc("button_disc", 13.3, bx, bz, ydisc + 0.1, ydisc, seg=96), M_DISC)
+BL = F                                           # rim level
+DISH0, DISH1 = BL - 0.15, BL - 1.3               # concave face: outer and inner edge
+cut(["body"], lambda: disc("button_seat_cut", 20.45, bx, bz, Yh(BL - 1.2), Y0 - 12.0, seg=128))
+cut(["body"], lambda: disc("button_well_cut", 19.0, bx, bz, Yh(DISH1 - 0.4), Y0 - 12.0, seg=128))
+assign(annulus("button_gap", bx, bz, 19.85, 20.45, Yh(BL - 1.2) - 0.02, seg=128), M_HOLE)
+assign(lathe("button_rim", bx, bz, [(19.85, -(BL - 1.2)), (19.85, -BL), (19.35, -BL), (19.35, -(BL - 0.5)),
+                                     (18.85, -(BL - 0.5)), (18.85, -DISH0)], Y0, seg=128), M_GLOSS)
+assign(annulus("button_groove", bx, bz, 18.9, 19.3, Yh(BL - 0.5) - 0.02, seg=128), M_HOLE)
+assign(funnel("button", bx, bz, 18.85, Yh(DISH0), 13.5, Yh(DISH1)), M_BUTTON)
+ydisc = Yh(DISH1) - 0.01
+assign(disc("button_disc", 13.5, bx, bz, ydisc + 0.3, ydisc, seg=96), M_DISC)
 
 
 def dish_y(r):                                   # depth of the concave face at radius r
-    return Y_BTN - 0.04 + DISH * (19.95 - r) / (19.95 - 13.3)
+    return Yh(DISH0 - (DISH0 - DISH1) * (18.85 - r) / (18.85 - 13.5)) - 0.02
 
 
-assign(funnel("lightpipe_top", bx, bz, 17.2, dish_y(17.2), 16.6, dish_y(16.6), seg=128, a0=80, a1=100), M_LIGHTPIPE)
-assign(funnel("lightpipe_left", bx, bz, 17.2, dish_y(17.2), 16.6, dish_y(16.6), seg=128, a0=196, a1=232), M_LIGHTPIPE)
-for i in range(9):                              # indicator dots on the right
-    a = math.radians(298 + i * 4.6)
-    yd = dish_y(17.6)
-    assign(disc("dot_%d" % i, 0.38, bx + 17.6 * math.cos(a), bz + 17.6 * math.sin(a), yd + 0.1, yd - 0.04, seg=12), M_LIGHTPIPE)
+assign(funnel("lightpipe_top", bx, bz, 17.8, dish_y(17.8), 17.0, dish_y(17.0), seg=128, a0=76, a1=104), M_LIGHTPIPE)
+assign(funnel("lightpipe_left", bx, bz, 17.8, dish_y(17.8), 17.0, dish_y(17.0), seg=128, a0=194, a1=226), M_LIGHTPIPE)
+for i in range(7):                              # indicator dots on the right
+    a = math.radians(314 + i * 32 / 6)
+    yd = dish_y(17.3)
+    assign(disc("dot_%d" % i, 0.42, bx + 17.3 * math.cos(a), bz + 17.3 * math.sin(a), yd + 0.1, yd - 0.04, seg=12), M_LIGHTPIPE)
 
-# logo: Axon delta with a three-blade swirl
-ylogo = ydisc - 0.45
-R = 15.0 / math.sqrt(3)                         # 15 mm side
-lcx, lcz = bx, bz - 0.8
+# logo: Axon delta with a three-blade swirl (apex Z -3.0, base Z -16.35, 15.4 mm wide)
+R = 8.9
+lcx, lcz = bx, -11.9
 tri = [(lcx + R * math.cos(math.radians(90 + 120 * i)), lcz + R * math.sin(math.radians(90 + 120 * i))) for i in range(3)]
 r_in = R / 2                                    # inradius: edge midpoints
 
@@ -670,32 +658,32 @@ def cut_curve(phi):
 
 for i in range(3):
     th = 90 + 120 * i
-    a = cut_curve(th - 60)                      # midpoint -> centre
+    a = cut_curve(th - 60)
     b = cut_curve(th + 60)
-    poly = list(reversed(a)) + [polar(R, th)] + b[:-1]    # centre -> midpoint, vertex, midpoint -> (centre)
-    poly = [p for k, p in enumerate(poly) if k == 0 or (abs(p[0] - poly[k - 1][0]) + abs(p[1] - poly[k - 1][1])) > 1e-6]
-    gx = sum(p[0] for p in poly) / len(poly)
-    gz = sum(p[1] for p in poly) / len(poly)
-    # open a gap along both cuts: push each point away from the cut lines towards the blade's vertex
+    poly = list(reversed(a)) + [polar(R, th)] + b[:-1]
+    poly = [q for k, q in enumerate(poly) if k == 0 or (abs(q[0] - poly[k - 1][0]) + abs(q[1] - poly[k - 1][1])) > 1e-6]
     vx, vz = polar(R, th)
     poly = [(x + (vx - x) * 0.055, z + (vz - z) * 0.055) for x, z in poly]
-    assign(prism("logo_%d" % i, poly, ydisc + 0.1, 1.2, chamfer=0.22), M_LOGO)
+    assign(prism("logo_%d" % i, poly, ydisc + 0.1, 0.7, chamfer=0.22), M_LOGO)
 
 # ------------------------------------------------------------------------------------------------
-# screws (Torx, in dark counterbores), holes, wordmark
+# screws (Torx, in dark counterbores: top and bottom ones on the bevels, middle ones in the
+# channels), holes, wordmark
 # ------------------------------------------------------------------------------------------------
 
-def screw(name, x, z, yb=Y0):
+def screw(name, x, z, h_floor):
+    yb = Yh(h_floor)
+    cut(["body"], lambda: disc(name + "_bore_cut", 1.95, x, z, yb, Y0 - 12.0, seg=32))
     assign(annulus(name + "_bore", x, z, 1.45, 1.95, yb - 0.02, seg=32), M_HOLE)
-    s = disc(name, 1.45, x, z, yb + 0.2, yb - 0.55, seg=24, chamfer=0.3, cseg=2)
+    sc_ = disc(name, 1.45, x, z, yb + 0.2, yb - 0.55, seg=24, chamfer=0.3, cseg=2)
     for a in (0, 60, 120):
-        cut = box("torx", 1.5, 1.0, 0.42, (x, yb - 0.55, z), rot=(0, math.radians(a), 0))
-        boolean(s, cut)
-    assign(s, M_SCREW)
+        boolean(sc_, box("torx", 1.5, 1.0, 0.42, (x, yb - 0.55, z), rot=(0, math.radians(a), 0)))
+    assign(sc_, M_SCREW)
 
 
-for i, (x, z) in enumerate([(-27.1, 36.8), (27.1, 36.8), (-27.1, 1.6), (27.1, 1.6), (-27.1, -38.3), (27.1, -38.3)]):
-    screw("screw_%d" % i, x, z, Y0 + 1.5 if abs(z - 1.6) < 0.01 else Y0)
+for i, (x, z) in enumerate([(-26.8, 36.9), (26.8, 36.9), (-26.8, 1.9), (26.8, 1.9), (-26.9, -38.4), (26.9, -38.4)]):
+    h_floor = CH_FLOOR - 0.4 if abs(z - 1.9) < 0.01 else bevel_h(abs(x) + 1.95) - 0.4
+    screw("screw_%d" % i, x, z, h_floor)
 
 
 def surface_at(x, z):
@@ -719,11 +707,11 @@ def hole(name, x, z, r):
     o.rotation_euler = facing(nor).to_euler()
 
 
-hole("hole_tl", -18.8, 36.2, 0.65)
-hole("hole_tr", 18.8, 36.2, 0.65)
-hole("hole_b0", 12.6, -35.6, 0.62)
-hole("hole_b1", 15.4, -34.9, 0.62)
-TXT_LOC, TXT_NOR = surface_at(0, -41.8)
+hole("hole_tl", -18.75, 36.4, 0.62)
+hole("hole_tr", 18.75, 36.4, 0.62)
+hole("hole_b0", 12.65, -36.3, 0.62)
+hole("hole_b1", 15.85, -35.2, 0.62)
+TXT_LOC, TXT_NOR = surface_at(0, -43.2)
 
 cu = bpy.data.curves.new("axon_txt", "FONT")
 cu.body = "AXON"
@@ -744,11 +732,11 @@ bpy.context.view_layer.update()
 with bpy.context.temp_override(object=txt, active_object=txt, selected_objects=[txt], selected_editable_objects=[txt]):
     bpy.ops.object.convert(target="MESH")
 txt = sc.objects["axon_txt"]
-txt.rotation_euler = (facing(TXT_NOR) @ txt.rotation_euler.to_quaternion()).to_euler()   # lie on the bottom slope
+txt.rotation_euler = (facing(TXT_NOR) @ txt.rotation_euler.to_quaternion()).to_euler()   # lie on the chin slope
 txt.location = TXT_LOC + TXT_NOR * (0.09 * MM)
 w_now = txt.dimensions.x / MM
 if w_now > 0:
-    s = 12.6 / w_now
+    s = 12.3 / w_now
     txt.scale = (s, s, s)
 assign(txt, M_TEXT)
 
@@ -784,10 +772,10 @@ for i, (z0, z1, icon) in enumerate(SIDE_PADS):
 # right side (third reference photo): tall raised POV port cover at the top, dotted grip panel below
 assign(box("pov_cover", 2.4, 9.5, 22.0, (hw + 0.5, -3.0, 28.0), bevel=1.0, seg=3), M_RUBBER)
 assign(box("pov_seam", 0.4, 10.3, 22.8, (hw + 0.1, -3.0, 28.0), bevel=0.3, seg=1), M_HOLE)
-assign(box("grip_right", 1.2, 20.0, 56.0, (hw + 0.2, 0.5, -16.5), bevel=0.5, seg=2), M_GRIP)
+assign(box("grip_right", 1.2, 20.0, 51.5, (hw + 0.2, 0.5, -14.25), bevel=0.5, seg=2), M_GRIP)
 # top: status display in a rubber bezel, operation LED
-assign(box("display_bezel", 40.0, 16.0, 1.6, (1.5, -2.5, Z_TOP + 0.2), bevel=1.2, seg=3), M_RUBBER)
-assign(box("display", 34.0, 11.5, 1.6, (1.5, -2.5, Z_TOP + 0.35), bevel=0.8, seg=3), M_DISPLAY)
+assign(box("display_bezel", 28.0, 18.0, 2.2, (0.0, Y0 + 7.0, Z_TOP), bevel=1.0, seg=3), M_RUBBER)   # 1.1 mm proud of the top
+assign(box("display", 22.0, 12.5, 2.2, (0.0, Y0 + 10.75, Z_TOP + 0.05), bevel=0.8, seg=3), M_DISPLAY)
 led = assign(disc("led", 1.1, 0, 0, 0.0, -0.45, seg=20), material("zbc_led", (0.35, 0.03, 0.03), 0.2))
 led.rotation_euler = (math.radians(-90), 0, 0)
 led.location = v3(-24.0, -6.0, Z_TOP + 0.05)
@@ -846,4 +834,7 @@ bpy.context.view_layer.objects.active = meshes[0]
 with bpy.context.temp_override(selected_objects=meshes, selected_editable_objects=meshes,
                                active_object=meshes[0], object=meshes[0]):
     bpy.ops.object.shade_smooth_by_angle(angle=math.radians(30))
+# the body's facets meet at 13-20 degrees: keep them flat (smooth only the rounded edges)
+with bpy.context.temp_override(selected_objects=[body], selected_editable_objects=[body], active_object=body, object=body):
+    bpy.ops.object.shade_smooth_by_angle(angle=math.radians(8))
 print("zbc_bodycam: %d parts" % len(meshes))
