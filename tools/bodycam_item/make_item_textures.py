@@ -1,18 +1,20 @@
-"""Zone Bodycam - build the bodycam item's game textures from the Blender bakes and icon render.
+r"""Zone Bodycam - build the bodycam item's game textures from the Blender output and icon render.
 
-    py -I make_item_textures.py <albedo.png> <ao.png> <icon.png> <component gamedata dir>
+    py -I make_item_textures.py <bake dir> <component gamedata dir>
 
-Writes:
-  textures\\item\\item_zbc_bodycam.dds   model texture: albedo x ambient occlusion, uncompressed BGRA with a
-                                       full mip chain (DXT1 tints this near-black grey green)
-  textures\\ui\\ui_icon_zbc_bodycam.dds  inventory icon: 2x2 cells (100x100 px at 50 px per cell) in the
-                                       top-left of a 128x128 uncompressed RGBA texture
-The bakes and the icon come from build_model.py + bake_export.py (run in Blender).
+<bake dir> is OUT from bake_export.py (PHASE "bake"): swatches.json, one <mat>.png per baked material and
+icon.png. Writes, one texture per model material (no shared atlas):
+  textures\item\item_zbc_bodycam_<mat>.dds  flat materials: an 8x8 swatch of the exact colour; baked
+                                             materials: their own colour bake. Uncompressed BGRA with a
+                                             full mip chain (DXT1 tints near-black grey green)
+  textures\ui\ui_icon_zbc_bodycam.dds       inventory icon: 2x2 cells (100x100 px at 50 px per cell) in
+                                             the top-left of a 128x128 uncompressed RGBA texture
 """
-import os, struct, sys
-from PIL import Image, ImageChops
+import glob, json, os, struct, sys
+from PIL import Image
 
-AO_FLOOR = 0.45          # darkest the occlusion may make a texel (keeps crevices from going pure black)
+SWATCH = 8               # flat-material texture size
+PREFIX = "item_zbc_bodycam_"
 ICON_CELLS = (2, 2)      # inv_grid_width / inv_grid_height in items_zbc_bodycam.ltx
 CELL_PX = 50             # vanilla inventory grid cell in texture pixels
 ICON_TEX = 128
@@ -44,13 +46,22 @@ def save_bgra_mipmapped(img, path):
     return len(levels)
 
 
-def model_texture(albedo_png, ao_png, out_dds):
-    albedo = Image.open(albedo_png).convert("RGB")
-    ao = Image.open(ao_png).convert("L").resize(albedo.size, Image.LANCZOS)
-    lo = int(AO_FLOOR * 255)
-    ao = ao.point(lambda v: lo + (255 - lo) * v // 255)
-    shaded = ImageChops.multiply(albedo, Image.merge("RGB", (ao, ao, ao)))
-    return save_bgra_mipmapped(shaded, out_dds)
+def tex_file(item_dir, mat_name):
+    return os.path.join(item_dir, PREFIX + mat_name.replace("zbc_", "") + ".dds")
+
+
+def model_textures(bake_dir, item_dir):
+    with open(os.path.join(bake_dir, "swatches.json"), encoding="utf-8") as f:
+        swatches = json.load(f)
+    written = []
+    for mat, rgb in sorted(swatches.items()):
+        save_bgra_mipmapped(Image.new("RGB", (SWATCH, SWATCH), tuple(rgb)), tex_file(item_dir, mat))
+        written.append(mat)
+    for png in sorted(glob.glob(os.path.join(bake_dir, "zbc_*.png"))):
+        mat = os.path.splitext(os.path.basename(png))[0]
+        save_bgra_mipmapped(Image.open(png).convert("RGB"), tex_file(item_dir, mat))
+        written.append(mat)
+    return written
 
 
 def icon_texture(icon_png, out_dds):
@@ -63,12 +74,15 @@ def icon_texture(icon_png, out_dds):
 
 
 if __name__ == "__main__":
-    albedo, ao, icon, gamedata = sys.argv[1:5]
+    bake_dir, gamedata = sys.argv[1:3]
     item_dir = os.path.join(gamedata, "textures", "item")
     ui_dir = os.path.join(gamedata, "textures", "ui")
     os.makedirs(item_dir, exist_ok=True)
     os.makedirs(ui_dir, exist_ok=True)
-    n = model_texture(albedo, ao, os.path.join(item_dir, "item_zbc_bodycam.dds"))
-    print("model texture: BGRA, %d mip levels" % n)
-    icon_texture(icon, os.path.join(ui_dir, "ui_icon_zbc_bodycam.dds"))
+    old = os.path.join(item_dir, "item_zbc_bodycam.dds")      # the former single shared texture
+    if os.path.exists(old):
+        os.remove(old)
+    mats = model_textures(bake_dir, item_dir)
+    print("model textures: %d (%s)" % (len(mats), ", ".join(mats)))
+    icon_texture(os.path.join(bake_dir, "icon.png"), os.path.join(ui_dir, "ui_icon_zbc_bodycam.dds"))
     print("icon: %dx%d px in a %dx%d texture" % (ICON_CELLS[0] * CELL_PX, ICON_CELLS[1] * CELL_PX, ICON_TEX, ICON_TEX))

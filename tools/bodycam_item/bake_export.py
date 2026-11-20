@@ -1,15 +1,20 @@
-"""Zone Bodycam - bake, icon render and OGF export for the bodycam item. Run inside Blender after
+"""Zone Bodycam - textures, icon render and OGF export for the bodycam item. Run inside Blender after
 build_model.py, with these globals set before exec():
 
-    PHASE    = "bake"    joins a copy of the parts, unwraps it, bakes albedo.png + ao.png and renders
-                         icon.png into OUT
-             = "export"  after tools\\bodycam_item\\make_item_textures.py wrote the DDS files: rigs the
-                         joined mesh (one bone, box shape) and exports the OGF into GAMEDATA
-    OUT      = folder for the bakes and the icon render
+    PHASE    = "bake"    copies and joins the parts and gives every material its own texture source in OUT:
+                         flat materials get an exact colour (swatches.json), the materials whose detail is
+                         a shader pattern (BAKED) get their own <mat>.png colour bake over their own full
+                         UV square; also renders icon.png
+             = "export"  after tools\\bodycam_item\\make_item_textures.py wrote the DDS files: one X-Ray
+                         material per source material, rigs the joined mesh (one bone, box shape) and
+                         exports the OGF into GAMEDATA
+    OUT      = folder for the bakes, swatches.json and the icon render
     GAMEDATA = the component's gamedata folder (optional\\bodycam_item\\gamedata)
 
+No single shared texture: the geometry carries the shape, so a flat material needs nothing but its colour.
 Needs the io_scene_xray addon for the export phase.
 """
+import json
 import math
 import os
 import bpy
@@ -17,7 +22,8 @@ import bmesh
 from mathutils import Vector
 from bpy_extras.object_utils import world_to_camera_view
 
-TEX_SIZE = 1024
+TEX_SIZE = 1024                 # per baked material
+BAKED = ("zbc_grip", "zbc_button")   # base colour comes from a shader pattern
 MESH = "zbc_bodycam_mesh"
 RIG = "zbc_bodycam"
 TEX_NAME = "item_zbc_bodycam"
@@ -62,83 +68,109 @@ def studio():
     return cam
 
 
-def join_copy():
+def tex_name(mat_name):
+    return TEX_NAME + "_" + mat_name.replace("zbc_", "")
+
+
+def base_color(m):
+    bsdf = next(n for n in m.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
+    return bsdf.inputs["Base Color"].default_value
+
+
+def srgb(c):
+    return [round(255 * (12.92 * v if v <= 0.0031308 else 1.055 * v ** (1 / 2.4) - 0.055)) for v in c[:3]]
+
+
+def with_only(o, fn):
+    for x in sc.objects:
+        x.select_set(False)
+    o.select_set(True)
+    bpy.context.view_layer.objects.active = o
+    with bpy.context.temp_override(active_object=o, object=o, selected_objects=[o], selected_editable_objects=[o]):
+        return fn()
+
+
+def bake_material(o, out):
+    """Unwrap one single-material copy over the full UV square and bake its base colour to <mat>.png."""
+    m = o.data.materials[0]
+
+    def unwrap():
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_all(action="SELECT")
+        bpy.ops.uv.smart_project(angle_limit=math.radians(50), island_margin=0.004, area_weight=0.0,
+                                 correct_aspect=True, scale_to_bounds=False)
+        bpy.ops.uv.pack_islands(margin=0.004, rotate=True)
+        bpy.ops.object.mode_set(mode="OBJECT")
+    with_only(o, unwrap)
+    i = bpy.data.images.get("bake_" + m.name)
+    if i:
+        bpy.data.images.remove(i)
+    img = bpy.data.images.new("bake_" + m.name, TEX_SIZE, TEX_SIZE, alpha=False)
+    nt = m.node_tree
+    n = nt.nodes.new("ShaderNodeTexImage")
+    n.image = img
+    for x in nt.nodes:
+        x.select = False
+    n.select = True
+    nt.nodes.active = n
+    sc.render.engine = "CYCLES"
+    sc.cycles.samples = 64
+    sc.render.bake.margin = 8
+    sc.render.bake.use_pass_direct = False
+    sc.render.bake.use_pass_indirect = False
+    sc.render.bake.use_pass_color = True
+    with_only(o, lambda: bpy.ops.object.bake(type="DIFFUSE"))
+    nt.nodes.remove(n)
+    img.filepath_raw = os.path.join(out, m.name + ".png")
+    img.file_format = "PNG"
+    img.save()
+
+
+def prepare(out):
+    """Copies of the parts with transforms applied and one UV map: baked materials over the full square,
+    flat ones all at the centre of their swatch. Writes the bakes and swatches.json, then joins."""
     old = sc.objects.get(MESH)
     if old:
         bpy.data.objects.remove(old, do_unlink=True)
     src = parts()
-    dups = []
+    for o in src:
+        o.hide_render = True                       # the originals overlap the copies
+    dups, swatches = [], {}
     for o in src:
         d = o.copy()
         d.data = o.data.copy()
         sc.collection.objects.link(d)
+        d.hide_render = False
+        with_only(d, lambda: bpy.ops.object.transform_apply(location=True, rotation=True, scale=True))
+        while d.data.uv_layers:
+            d.data.uv_layers.remove(d.data.uv_layers[0])
+        uv = d.data.uv_layers.new(name="uv")
+        names = {m.name for m in d.data.materials if m}
+        if names & set(BAKED):
+            assert len(d.data.materials) == 1, d.name
+            bake_material(d, out)
+        else:
+            for lp in uv.data:
+                lp.uv = (0.5, 0.5)
+            for m in d.data.materials:
+                swatches[m.name] = srgb(base_color(m))
         dups.append(d)
-    for o in sc.objects:
-        o.select_set(False)
+    with open(os.path.join(out, "swatches.json"), "w", encoding="utf-8", newline="\n") as f:
+        json.dump(swatches, f, indent=1, sort_keys=True)
+    for x in sc.objects:
+        x.select_set(False)
     for d in dups:
         d.select_set(True)
     with bpy.context.temp_override(selected_objects=dups, selected_editable_objects=dups,
                                    active_object=dups[0], object=dups[0]):
-        bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
         bpy.ops.object.join()
     j = dups[0]
     j.name = MESH
     j.data.name = MESH
-    with bpy.context.temp_override(active_object=j, object=j, selected_objects=[j], selected_editable_objects=[j]):
-        bpy.ops.object.mode_set(mode="EDIT")
-        bpy.ops.mesh.select_all(action="SELECT")
-        bpy.ops.uv.smart_project(angle_limit=math.radians(50), island_margin=0.006, area_weight=0.0,
-                                 correct_aspect=True, scale_to_bounds=False)
-        bpy.ops.uv.pack_islands(margin=0.006, rotate=True)
-        bpy.ops.object.mode_set(mode="OBJECT")
+    j.hide_render = True
+    for o in src:
+        o.hide_render = False
     return j
-
-
-def bake(j, out):
-    def image(name, non_color=False):
-        i = bpy.data.images.get(name)
-        if i:
-            bpy.data.images.remove(i)
-        i = bpy.data.images.new(name, TEX_SIZE, TEX_SIZE, alpha=False)
-        if non_color:
-            i.colorspace_settings.name = "Non-Color"
-        return i
-
-    def target(img):
-        for m in j.data.materials:
-            nt = m.node_tree
-            n = nt.nodes.get("BAKE_TARGET") or nt.nodes.new("ShaderNodeTexImage")
-            n.name = "BAKE_TARGET"
-            n.image = img
-            for x in nt.nodes:
-                x.select = False
-            n.select = True
-            nt.nodes.active = n
-
-    sc.render.engine = "CYCLES"
-    sc.cycles.samples = 128
-    sc.render.bake.margin = 8
-    for o in parts():
-        o.hide_render = True                       # the originals overlap the copy: they would occlude it
-    if sc.world:
-        sc.world.light_settings.distance = 0.012   # occlusion reach: about half the body depth
-    for o in sc.objects:
-        o.select_set(False)
-    j.hide_render = False
-    j.select_set(True)
-    bpy.context.view_layer.objects.active = j
-    albedo, ao = image("bake_albedo"), image("bake_ao", True)
-    target(albedo)
-    sc.render.bake.use_pass_direct = False
-    sc.render.bake.use_pass_indirect = False
-    sc.render.bake.use_pass_color = True
-    bpy.ops.object.bake(type="DIFFUSE")
-    target(ao)
-    bpy.ops.object.bake(type="AO")
-    for img, name in ((albedo, "albedo.png"), (ao, "ao.png")):
-        img.filepath_raw = os.path.join(out, name)
-        img.file_format = "PNG"
-        img.save()
 
 
 def render_icon(out):
@@ -183,27 +215,26 @@ def render_icon(out):
 
 def export(gamedata):
     j = sc.objects[MESH]
-    dds = os.path.join(gamedata, "textures", "item", TEX_NAME + ".dds")
-    # one X-Ray material with the baked texture
-    m = bpy.data.materials.get(TEX_NAME) or bpy.data.materials.new(TEX_NAME)
-    m.use_nodes = True
-    nt = m.node_tree
-    nt.nodes.clear()
-    out = nt.nodes.new("ShaderNodeOutputMaterial")
-    bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
-    tex = nt.nodes.new("ShaderNodeTexImage")
-    img = bpy.data.images.load(dds, check_existing=True)
-    img.reload()
-    tex.image = img
-    nt.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
-    nt.links.new(bsdf.outputs[0], out.inputs[0])
-    m.xray.eshader = "models\\model"
-    m.xray.cshader = "default"
-    m.xray.gamemtl = "objects\\small_box"
-    j.data.materials.clear()
-    j.data.materials.append(m)
-    for p in j.data.polygons:
-        p.material_index = 0
+    # one X-Ray material per source material, each with its own texture (no shared atlas)
+    for slot, src in enumerate(list(j.data.materials)):
+        name = tex_name(src.name)
+        dds = os.path.join(gamedata, "textures", "item", name + ".dds")
+        m = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+        m.use_nodes = True
+        nt = m.node_tree
+        nt.nodes.clear()
+        out = nt.nodes.new("ShaderNodeOutputMaterial")
+        bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
+        tex = nt.nodes.new("ShaderNodeTexImage")
+        img = bpy.data.images.load(dds, check_existing=True)
+        img.reload()
+        tex.image = img
+        nt.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+        nt.links.new(bsdf.outputs[0], out.inputs[0])
+        m.xray.eshader = "models\\model"
+        m.xray.cshader = "default"
+        m.xray.gamemtl = "objects\\small_box"
+        j.data.materials[slot] = m
     # rig: one bone with a box shape around the mesh
     old = sc.objects.get(RIG)
     if old:
@@ -243,15 +274,17 @@ def export(gamedata):
         o.select_set(False)
     rig.select_set(True)
     bpy.context.view_layer.objects.active = rig
-    with bpy.context.temp_override(active_object=rig, object=rig, selected_objects=[rig]):
-        r = bpy.ops.xray_export.ogf_file(filepath=path)
+    # no temp_override here: the exporter splits the mesh by material in edit mode and switches back with
+    # mode_set, which a pinned active_object would point at the rig and leave the split copy in edit mode
+    r = bpy.ops.xray_export.ogf_file(filepath=path)
+    for o in [o for o in sc.objects if o.name.startswith(MESH + ".")]:
+        bpy.data.objects.remove(o, do_unlink=True)     # split copies the exporter can leave behind
     print("export", r, path)
 
 
 if PHASE == "bake":  # noqa: F821 - set by the caller
     os.makedirs(OUT, exist_ok=True)  # noqa: F821
-    join_copy()
-    bake(sc.objects[MESH], OUT)  # noqa: F821
+    prepare(OUT)  # noqa: F821
     render_icon(OUT)  # noqa: F821
 elif PHASE == "export":  # noqa: F821
     export(GAMEDATA)  # noqa: F821
