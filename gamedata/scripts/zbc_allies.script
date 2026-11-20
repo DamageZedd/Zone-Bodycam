@@ -2,7 +2,8 @@
 	Zone Bodycam - ally markers (zbc_allies.script)
 
 	"Ally safe" markers from bodycam_effect, rebuilt:
-	- boxes (or corner brackets) on friendly and neutral stalkers, another colour for companions,
+	- boxes (or corner brackets) on every stalker: white while unknown, then decoded to friendly green
+	  (neutrals included) or enemy red, another colour for companions,
 	  dots past a distance; enemies are never marked
 	- placed through the exact inverse of the Zone Bodycam lens (fisheye, zoom, body motion), so a box
 	  sits on the NPC you see, not where it would be without the lens
@@ -32,6 +33,18 @@ local DEAD_OUT_RATE = 5.0
 local MORPH_RATE = 1.8
 local HYST_LOW = 0.96
 local HYST_HIGH = 1.04
+
+-- Name labels above the boxes, in the overlay's glyph font (zbc_font_metrics, textures\ui\zbc_font).
+-- Shown only while the box itself is: never on a dot.
+-- Two lines: the name, and the faction under it in smaller text. Both decode from scrambled characters
+-- when the box appears (decode_text).
+LABEL_CHARS         = 24     -- longest name drawn
+FACTION_CHARS       = 20     -- longest faction drawn
+local LABEL_VW      = 0.85   -- name height in % of the effective 16:9 width (the overlay is 1.2)
+local FACTION_SCALE = 0.72   -- faction line size relative to the name
+local LABEL_GAP     = 0.30   -- space between the faction line and the top of the box, in name ems
+local LINE_GAP      = 0.12   -- space between the two lines, in name ems
+local FACTION_DELAY = 0.10   -- the faction line starts decoding this much after the name
 
 -- MCM list value -> colour; the last entry hides that kind of NPC
 local COLORS = {
@@ -157,10 +170,91 @@ end
 -- Pool
 ---------------------------------------------------------------------------------------------------
 
+local function hide_line(line)
+	if not line or not line.shown then return end
+	line.shown = false
+	for c = 1, #line.glyphs do line.glyphs[c]:Show(false) end
+end
+
+local function hide_label(lbl)
+	if not lbl then return end
+	hide_line(lbl.name)
+	hide_line(lbl.fac)
+end
+
 local function hide(slot)
 	slot.box:Show(false)
 	slot.brk:Show(false)
 	slot.dot:Show(false)
+	hide_label(slot.lbl)
+end
+
+-- Upper case for the game's Windows-1251 text: ASCII plus the Russian letters (a..ya -> A..YA, yo -> YO),
+-- which string.upper leaves alone. Shared with zbc_bodycam.script.
+local function upper_byte(c)
+	if c >= 97 and c <= 122 then return c - 32 end    -- a..z
+	if c >= 224 then return c - 32 end                -- Russian a..ya (224..255) -> A..YA (192..223)
+	if c == 184 then return 168 end                   -- yo -> YO
+	return c
+end
+
+function upper_cp1251(s)
+	if type(s) ~= "string" then return "" end
+	return (s:gsub("[%a\184\224-\255]", function(ch) return string.char(upper_byte(ch:byte())) end))
+end
+
+-- the text as the label shows it: upper case like the overlay, trimmed, cut to n (LABEL_CHARS)
+function label_text(name, n)
+	if type(name) ~= "string" then return "" end
+	name = name:gsub("^%s+", ""):gsub("%s+$", "")
+	return upper_cp1251(name):sub(1, n or LABEL_CHARS)
+end
+
+-- Decode effect: each letter shows random characters until it locks, one after another from the
+-- left. t: decode time (how far identification has got, see reveal_speed); seed: per NPC, so
+-- neighbours scramble differently; flicker_t: real time for the scramble, so it keeps flickering
+-- while a far NPC's identification is paused. Returns the text and whether it is fully decoded.
+-- Spaces stay spaces.
+local SCRAMBLE = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+=/<>#%"
+DECODE_DELAY = 0.12          -- seconds of pure scramble before the first letter locks
+DECODE_STEP  = 0.035         -- seconds between letters locking
+DECODE_HZ    = 20            -- scramble changes per second
+
+function decode_text(text, t, seed, flicker_t)
+	local len = #text
+	if t >= DECODE_DELAY + len * DECODE_STEP then return text, true end
+	local step = floor(max(flicker_t or t, 0) * DECODE_HZ)
+	local out = {}
+	for i = 1, len do
+		local ch = text:sub(i, i)
+		if ch == " " or t >= DECODE_DELAY + (i - 1) * DECODE_STEP then
+			out[i] = ch
+		else
+			local h = (seed * 7919 + i * 104729 + step * 1299709) % #SCRAMBLE
+			out[i] = SCRAMBLE:sub(h + 1, h + 1)
+		end
+	end
+	return table.concat(out), false
+end
+
+-- the faction's display name in the game's language (as the news feed shows it), e.g. "CLEAR SKY"
+function faction_text(obj)
+	local comm = obj and obj.character_community and obj:character_community()
+	if type(comm) ~= "string" or comm == "" then return "" end
+	local s = game and game.translate_string and game.translate_string(comm)
+	if type(s) ~= "string" or s == "" then s = comm end
+	return label_text(s, FACTION_CHARS)
+end
+
+-- atlas cell of a character, nil for a space or a character the font has no glyph for
+local function glyph_cell(code, F)
+	if F.index then return F.index(code) end
+	if code > 32 and code >= F.first and code <= F.last then return code - F.first end
+	return nil
+end
+
+local function glyph_code_ok(code, F)
+	return glyph_cell(code, F) ~= nil
 end
 
 local function reset_state()
@@ -187,6 +281,19 @@ function build(hud, xml)
 			brk = xml:InitStatic("zbc_brackets", hud),
 			dot = xml:InitStatic("zbc_dot", hud),
 		}
+		if zbc_font_metrics then
+			local function new_line(n)
+				local glyphs = {}
+				for c = 1, n do
+					local g = xml:InitStatic("zbc_glyph", hud)
+					g:SetStretchTexture(true)
+					g:Show(false)
+					glyphs[c] = g
+				end
+				return { glyphs = glyphs, text = nil, shown = true, argb = nil }
+			end
+			pool[i].lbl = { name = new_line(LABEL_CHARS), fac = new_line(FACTION_CHARS) }
+		end
 		hide(pool[i])
 	end
 	return pool
@@ -201,6 +308,9 @@ end
 -- Candidates
 ---------------------------------------------------------------------------------------------------
 
+local scan_enemies = true        -- cfg.allies_enemies, set by update()
+local frame_cols = {}            -- relation -> colour, set by update()
+
 local function scan(actor, range)
 	local apos = actor:position()
 	local r2 = range * range
@@ -209,7 +319,7 @@ local function scan(actor, range)
 		local obj = st and st.object
 		if obj and id ~= 0 and IsStalker(obj) and obj:alive() then
 			local d2 = obj:position():distance_to_sqr(apos)
-			if d2 <= r2 and obj:relation(actor) ~= game_object.enemy then
+			if d2 <= r2 and (scan_enemies or obj:relation(actor) ~= game_object.enemy) then
 				if n < POOL or d2 < scan_d2[POOL] then
 					local limit = (n < POOL) and (n + 1) or POOL
 					local pos = limit
@@ -341,6 +451,15 @@ local function ray_to_point(actor, obj_id, cam_vec, tx, ty, tz)
 	return false
 end
 
+-- Line of sight from the camera to one point, by the same rules as the markers (glass, bushes and
+-- mesh let it through). Used by zbc_faces.script.
+function los_point(actor, obj_id, cam_vec, x, y, z)
+	if not (ray_pick and cam_vec) then return true end
+	tmp_ray_p = tmp_ray_p or vector()
+	tmp_ray_d = tmp_ray_d or vector()
+	return ray_to_point(actor, obj_id, cam_vec, x, y, z)
+end
+
 local function has_los(actor, obj, obj_id, check_los, cam_vec)
 	if not check_los then return true end
 	if not (ray_pick and cam_vec) then
@@ -371,22 +490,41 @@ local function has_los(actor, obj, obj_id, check_los, cam_vec)
 	return false
 end
 
+local frame_dir = nil        -- camera direction this frame, set by update()
+local ID_LENIENCE_COS = 0.984   -- = ID_LENIENCE (defined with the identification below)
+
+-- is the camera looking at this stalker (their upper body within ID_LENIENCE of the view centre)?
+local function aimed_at(obj, cam_vec)
+	local dir = frame_dir
+	if not (dir and cam_vec) then return true end
+	local p = obj:position()
+	local dx, dy, dz = p.x - cam_vec.x, p.y + 1.3 - cam_vec.y, p.z - cam_vec.z
+	local l = sqrt(dx * dx + dy * dy + dz * dz)
+	if l < 0.01 then return true end
+	return (dx * dir.x + dy * dir.y + dz * dir.z) / l >= (ID_LENIENCE or ID_LENIENCE_COS)
+end
+
 local function step_entity(
 	id, actor, apos, cam_vec, now, range, dot_dist, in_cand,
-	cfg, L, a, ux, uy, dot_w, dot_h, col_n, col_c, dt, W
+	cfg, L, a, ux, uy, dot_w, dot_h, cols, dt, W
 )
 	local ent = states[id]
 	local obj = level.object_by_id(id)
-	if not obj or obj:relation(actor) == game_object.enemy then
+	local rel = obj and obj:relation(actor)
+	if not obj or (rel == game_object.enemy and not cfg.allies_enemies) then
 		states[id] = nil
 		return false
 	end
 
+	-- the colour the box decodes to. White only means "not identified yet" (see draw_slot): once
+	-- decoded, everyone is either friendly (neutrals included) or an enemy
 	local col
 	if obj:has_info("npcx_is_companion") then
-		col = col_c
+		col = cols.companion
+	elseif rel == game_object.enemy then
+		col = cols.enemy
 	else
-		col = col_n
+		col = cols.friend
 	end
 	if not col then
 		states[id] = nil
@@ -431,6 +569,12 @@ local function step_entity(
 			dot_t = init_dot,
 			target_dot = init_dot,
 			col = col,
+			name = label_text(obj:character_name()),
+			faction = faction_text(obj),
+			seed = id % 9973,
+			id = id,
+			dist = dist,
+			aimed = aimed_at(obj, cam_vec),
 			base_alpha = cfg.allies_opacity * (1 - smoothstep(range * 0.85, range, dist)),
 			bcx = bcx, bcy = bcy, bw = bw, bh = bh,
 			dcx = dcx, dcy = dcy, dw = dot_w, dh = dot_h,
@@ -440,6 +584,12 @@ local function step_entity(
 	end
 
 	ent.col = col
+	if not ent.name then ent.name = label_text(obj:character_name()) end
+	if not ent.faction then ent.faction = faction_text(obj) end
+	if not ent.seed then ent.seed = id % 9973 end
+	ent.id = id
+	ent.dist = dist
+	ent.aimed = aimed_at(obj, cam_vec)
 	if dist <= range then
 		ent.base_alpha = cfg.allies_opacity * (1 - smoothstep(range * 0.85, range, dist))
 	end
@@ -505,16 +655,140 @@ local function apply_wnd(wnd, cx, cy, w, h, argb)
 	wnd:Show(true)
 end
 
+-- frame constants for the labels (UI units), filled in update()
+local LG = {}
+
+-- one line of glyphs centred on cx with its text top at y (UI units); M: that line's metrics
+local function draw_line(line, text, cx, y, argb, M)
+	local F = zbc_font_metrics
+	local count = #line.glyphs
+	local n = min(#text, count)
+	if n == 0 then return hide_line(line) end
+
+	local relay = line.text ~= text
+	if relay then
+		line.text = text
+		for c = 1, n do
+			local k = glyph_cell(string.byte(text, c), F)
+			if k then
+				local tx, ty = (k % F.cols) * F.cell_w, floor(k / F.cols) * F.cell_h
+				line.glyphs[c]:SetTextureRect(LG.rect:set(tx, ty, tx + F.cell_w, ty + F.cell_h))
+			end
+		end
+	end
+	if relay or line.argb ~= argb then
+		line.argb = argb
+		for c = 1, n do line.glyphs[c]:SetTextureColor(argb) end
+	end
+
+	local x0 = cx - n * M.adv * 0.5 - M.pad_x
+	local y0 = y - M.pad_y
+	local was_shown = line.shown
+	for c = 1, count do
+		local gl = line.glyphs[c]
+		if c <= n and glyph_code_ok(string.byte(text, c), F) then
+			gl:SetWndPos(LG.pos:set(x0 + (c - 1) * M.adv, y0))
+			if relay or not was_shown then
+				gl:SetWndSize(LG.size:set(M.qw, M.qh))
+				gl:Show(true)
+			end
+		elseif relay or not was_shown then
+			gl:Show(false)
+		end
+	end
+	line.shown = true
+end
+
+-- name and faction centred above a box whose top edge is at top (UI units), in the box colour,
+-- decoding from scrambled characters each time the label appears
+local function draw_label(slot, ent, cx, top, alpha, r, g, b)
+	local lbl = slot.lbl
+	if not (lbl and zbc_font_metrics and LG.on) then return hide_label(lbl) end
+	local a = floor(255 * clamp01(alpha))
+	if a <= 0 then return hide_label(lbl) end
+	local t = ent.reveal_t or 0
+	local argb = GetARGB(a, r, g, b)
+
+	local fac_y = top - LG.gap - LG.f.line_h
+	local name_y = fac_y - LG.line_gap - LG.n.line_h
+	local seed = ent.seed or 0
+	draw_line(lbl.name, (decode_text(ent.name or "", t, seed, LG.now)), cx, name_y, argb, LG.n)
+	draw_line(lbl.fac, (decode_text(ent.faction or "", t - FACTION_DELAY, seed + 17, LG.now)), cx, fac_y, argb, LG.f)
+end
+
+-- Box colour while it "identifies" the NPC: white until the name has decoded, then it fades to the
+-- relation colour. t: seconds since the box appeared; name_len: letters in the name.
+REVEAL_MIN  = 0.6            -- seconds before the colour starts to change, at the least
+COLOR_FADE  = 0.35           -- seconds the change from white takes
+function reveal_mix(t, name_len)
+	local start = max(REVEAL_MIN, DECODE_DELAY + (name_len or 0) * DECODE_STEP)
+	return smoothstep(start, start + COLOR_FADE, t or 0)
+end
+
+-- Identification by distance, after the Identification UI mod (factionID_hud_mcm): within
+-- ID_INSTANT metres a stalker is identified as soon as the box appears. Further out the name, faction
+-- and colour stay unknown (white, scrambled) and only decode while you look at them, at that mod's
+-- rate: slower with distance, faster through a scope (smaller field of view). Once identified, a
+-- stalker stays identified for the session; their box just replays the quick decode.
+ID_INSTANT  = 50             -- metres
+ID_LENIENCE = 0.984          -- cos of the largest angle from the view centre that counts as looking at them
+ID_SPEED    = 0.2            -- the mod's default identification speed
+local known = {}             -- id -> true once identified
+local id_progress = {}       -- id -> 0..1, how far a not yet identified stalker has got
+
+-- share of a full identification gained per second at dist metres and fov degrees: the mod adds
+-- 100 / ((d^2 - 2500) * 0.1) / fov * 20 * speed every 0.2 s
+function identify_rate(dist, fov)
+	if dist <= ID_INSTANT then return math.huge end
+	fov = max(fov or 75, 1)
+	return 5 * 20 * ID_SPEED * 100 / ((dist * dist - ID_INSTANT * ID_INSTANT) * 0.1 * fov)
+end
+
+-- how fast the decode time runs (1 = the quick decode near you, 0 = paused)
+-- t_full: decode time until the name is fully readable
+function reveal_speed(t_full, is_known, dist, aimed, fov)
+	if is_known or dist <= ID_INSTANT then return 1 end
+	if not aimed then return 0 end
+	return min(1, identify_rate(dist, fov) * t_full)
+end
+
+-- advances a box's identification by this frame; returns the white -> colour mix (0..1)
+local function step_reveal(ent)
+	local n = ent.name and #ent.name or 0
+	local t_full = DECODE_DELAY + max(n, 1) * DECODE_STEP
+	local id = ent.id
+	local is_known = id and known[id]
+	if not ent.reveal_t then
+		ent.reveal_t = is_known and 0 or (id and id_progress[id] or 0) * t_full
+	end
+	local s = reveal_speed(t_full, is_known, ent.dist or 0, ent.aimed, LG.fov)
+	ent.reveal_t = ent.reveal_t + (LG.dt or 0) * s
+	if id and not is_known then
+		if ent.reveal_t >= t_full then
+			known[id] = true
+			id_progress[id] = nil
+		else
+			id_progress[id] = ent.reveal_t / t_full
+		end
+	end
+	return reveal_mix(ent.reveal_t, n)
+end
+
 local function draw_slot(slot, ent, dot_w, dot_h, style)
 	local col = ent.col
+	local m = smoothstep(0, 1, ent.dot_t)
 	local r, g, b = col[1], col[2], col[3]
+	if m < 0.98 then
+		-- a box: white while unknown, decoding to its colour as the stalker is identified
+		local k = step_reveal(ent)
+		r, g, b = floor(lerp(255, r, k) + 0.5), floor(lerp(255, g, k) + 0.5), floor(lerp(255, b, k) + 0.5)
+	end
 	local vis_e = (ent.target_vis == 1) and ease_out3(ent.vis) or smoothstep(0, 1, ent.vis)
 	local pop_alpha = ent.base_alpha * vis_e
 
 	local box_pop_scale = (ent.target_vis == 1) and lerp(1.24, 1.0, vis_e) or lerp(1.14, 1.0, vis_e)
 	local dot_pop_scale = lerp(0.35, 1.0, vis_e)
 
-	local m = smoothstep(0, 1, ent.dot_t)
 	local dw, dh = ent.dw or dot_w, ent.dh or dot_h
 
 	local bx, by, bw, bh
@@ -536,11 +810,14 @@ local function draw_slot(slot, ent, dot_w, dot_h, style)
 		apply_wnd(st, bx, by, bw * box_pop_scale, bh * box_pop_scale, argb)
 		other:Show(false)
 		slot.dot:Show(false)
+		draw_label(slot, ent, bx, by - bh * box_pop_scale * 0.5, pop_alpha, r, g, b)
 	elseif m >= 0.98 then
 		local argb = GetARGB(floor(255 * clamp01(pop_alpha)), r, g, b)
 		apply_wnd(slot.dot, dx, dy, dw * dot_pop_scale, dh * dot_pop_scale, argb)
 		slot.box:Show(false)
 		slot.brk:Show(false)
+		hide_label(slot.lbl)
+		ent.reveal_t = nil                       -- decodes again when it turns back into a box
 	else
 		local mcx = lerp(bx, dx, m)
 		local mcy = lerp(by, dy, m)
@@ -550,6 +827,7 @@ local function draw_slot(slot, ent, dot_w, dot_h, style)
 		local box_a = (1 - smoothstep(0.15, 0.95, m)) * pop_alpha
 		apply_wnd(st, mcx, mcy, box_w, box_h, GetARGB(floor(255 * clamp01(box_a)), r, g, b))
 		other:Show(false)
+		draw_label(slot, ent, mcx, mcy - box_h * 0.5, box_a, r, g, b)
 
 		local d_scale = lerp(0.55, 1.0, m) * dot_pop_scale
 		local dot_a = smoothstep(0.10, 0.85, m) * pop_alpha
@@ -560,6 +838,31 @@ end
 ---------------------------------------------------------------------------------------------------
 -- Per frame
 ---------------------------------------------------------------------------------------------------
+
+-- How much the view is magnified: 1 normally, the scope's zoom while aiming through one.
+-- base_deg: the normal field of view (console "fov"); cur_deg: the camera's field of view now.
+local MAX_ZOOM = 40
+function zoom_factor(base_deg, cur_deg)
+	if type(base_deg) ~= "number" or type(cur_deg) ~= "number" or cur_deg <= 0.5 or base_deg <= cur_deg then
+		return 1
+	end
+	local r = math.rad
+	local z = math.tan(r(min(base_deg, 170)) * 0.5) / math.tan(r(cur_deg) * 0.5)
+	if not (z == z) then return 1 end
+	return min(max(z, 1), MAX_ZOOM)
+end
+
+local function console_fov()
+	local c = get_console and get_console()
+	if not (c and c.get_float) then return nil end
+	local ok, v = pcall(c.get_float, c, "fov")
+	return ok and v or nil
+end
+
+function view_zoom()
+	local dev = device and device()
+	return zoom_factor(console_fov(), dev and dev.fov)
+end
 
 -- cfg: zbc_bodycam settings; L: lens state; visible: HUD shown
 function update(pool, cfg, L, visible)
@@ -579,8 +882,11 @@ function update(pool, cfg, L, visible)
 	tmp_ray_p = tmp_ray_p or vector()
 	tmp_ray_d = tmp_ray_d or vector()
 
-	local range = max(cfg.allies_range, 2)
+	-- through a scope the range (and the box/dot switch) grows with the zoom, so an ally that looks as
+	-- big as one at the normal range still gets a box and a name
+	local range = max(cfg.allies_range, 2) * view_zoom()
 	local now = time_global() / 1000
+	scan_enemies = cfg.allies_enemies and true or false
 	if last_now and now < last_now then
 		next_scan = 0
 		last_now = nil
@@ -608,9 +914,39 @@ function update(pool, cfg, L, visible)
 		cam_vec = tmp_cam:set(dev.cam_pos.x, dev.cam_pos.y, dev.cam_pos.z)
 	end
 	local apos = actor:position()
-	local col_n, col_c = COLORS[cfg.allies_color_neutral + 1], COLORS[cfg.allies_color_companion + 1]
+	frame_cols.companion = COLORS[cfg.allies_color_companion + 1]
+	frame_cols.friend    = COLORS[(cfg.allies_color_friend or 1) + 1]
+	frame_cols.enemy     = COLORS[(cfg.allies_color_enemy or 5) + 1]
+	LG.now = now
+	LG.dt = dt
+	LG.fov = dev.fov
+	frame_dir = dev.cam_dir
 	local dot_dist = range * cfg.allies_dot_ratio
 	local dot_w, dot_h = 11 * cfg.allies_size * ux, 11 * cfg.allies_size * uy
+
+	-- name labels: overlay glyph font, size from the effective 16:9 width like the overlay
+	local F = zbc_font_metrics
+	LG.on = cfg.allies_names and F ~= nil
+	if LG.on then
+		local em_px = LABEL_VW * 0.01 * min(sw, sh * (16 / 9))
+		local function metrics(M, em)
+			local scale = em / F.em
+			M.adv    = F.advance * scale * ux
+			M.qw     = F.cell_w * scale * ux
+			M.qh     = F.cell_h * scale * uy
+			M.pad_x  = F.pad * scale * ux
+			M.pad_y  = F.pad * scale * uy
+			M.line_h = (F.cell_h - 2 * F.pad) * scale * uy
+			return M
+		end
+		LG.n        = metrics(LG.n or {}, em_px)
+		LG.f        = metrics(LG.f or {}, em_px * FACTION_SCALE)
+		LG.gap      = LABEL_GAP * em_px * uy
+		LG.line_gap = LINE_GAP * em_px * uy
+		LG.pos      = LG.pos or vector2()
+		LG.size     = LG.size or vector2()
+		LG.rect     = LG.rect or Frect()
+	end
 
 	for k in pairs(cand_set) do cand_set[k] = nil end
 	local n_proc = 0
@@ -634,7 +970,7 @@ function update(pool, cfg, L, visible)
 		local id = proc_ids[i]
 		local ok = step_entity(
 			id, actor, apos, cam_vec, now, range, dot_dist, cand_set[id] == true,
-			cfg, L, a, ux, uy, dot_w, dot_h, col_n, col_c, dt, W
+			cfg, L, a, ux, uy, dot_w, dot_h, frame_cols, dt, W
 		)
 		if ok then
 			n_draw = n_draw + 1

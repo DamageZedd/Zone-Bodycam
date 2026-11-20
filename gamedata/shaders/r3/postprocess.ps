@@ -33,6 +33,11 @@ float4 main( p_postpr I ) : SV_Target
 		t_0 = zbc_lens_sample(s_base0, I.Tex0, src_0);
 		t_1 = (abs(I.Tex1.x - I.Tex0.x) + abs(I.Tex1.y - I.Tex0.y) < 0.000001) ? t_0 : zbc_lens_sample(s_base1, I.Tex1);
 	}
+	else [branch] if (ZBC_FACES)
+	{
+		t_0 	= zbc_plain_sample(s_base0, I.Tex0);
+		t_1 	= zbc_plain_sample(s_base1, I.Tex1);
+	}
 	else
 	{
 		t_0 	= s_base0.Sample( smp_rtlinear, I.Tex0);

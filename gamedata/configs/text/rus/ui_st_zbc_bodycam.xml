@@ -1,0 +1,273 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<string_table>
+  <string id="ui_mcm_menu_zone_bodycam">
+    <text>Zone Bodycam</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_aberration">
+    <text>Хроматическая аберрация</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_breathing">
+    <text>Дыхание</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_device_label">
+    <text>Название устройства</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_device_label_desc">
+    <text>Текст перед серийным номером во второй строке.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_distortion">
+    <text>Искажение «рыбий глаз»</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_edge_in_image">
+    <text>Край объектива в изображении</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_edge_in_image_desc">
+    <text>Вкл. (по умолчанию): край объектива, виньетка и шум - часть изображения, под интерфейсом игры и без проблем с генерацией кадров. Выкл.: рисуются слоем интерфейса поверх всего.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_edge_radius">
+    <text>Размер края объектива</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_edge_shape">
+    <text>Форма края объектива</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_edge_shape_desc">
+    <text>0 = круглый, 1 = повторяет форму экрана.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_edge_softness">
+    <text>Мягкость края объектива</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_enabled">
+    <text>Включить Zone Bodycam</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_font_size">
+    <text>Размер текста оверлея</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_grain">
+    <text>Шум матрицы</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_impacts">
+    <text>Толчки (шаги, приземления, выстрелы, попадания)</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_intensity">
+    <text>Сила эффекта объектива</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_iso_t">
+    <text>Буква «T» перед временем (ISO)</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_lens_enabled">
+    <text>Объектив нательной камеры</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_lens_enabled_desc">
+    <text>Объектив «рыбий глаз», корпус, резкость и шум. Применяется после DLSS/FSR, поэтому апскейлер его не видит.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_logo_opacity">
+    <text>Непрозрачность логотипа</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_logo_style">
+    <text>Логотип</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_motion">
+    <text>Движение тела (всё)</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_overlay">
+    <text>Оверлей камеры (справа вверху)</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_rec_timer">
+    <text>Таймер записи (слева вверху)</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_rec_timer_desc">
+    <text>Мигающая красная точка и время записи камеры в этом прохождении. Реальное время, сохраняется вместе с игрой.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_roll">
+    <text>Крен камеры</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_sharpen">
+    <text>Резкость матрицы</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_show_name">
+    <text>Показывать имя персонажа</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_text_opacity">
+    <text>Непрозрачность текста</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_timezone">
+    <text>Часовой пояс</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_title">
+    <text>Zone Bodycam</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_turn_invert">
+    <text>Инвертировать запаздывание поворота</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_turn_lag">
+    <text>Запаздывание при повороте</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_vignette">
+    <text>Виньетка</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_walk_bob">
+    <text>Покачивание при ходьбе</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_zoom">
+    <text>Увеличение объектива</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_zoom_desc">
+    <text>Минимальная обрезка. Объектив всегда приближает изображение настолько, чтобы заполнить экран при текущем искажении и форме экрана, поэтому чёрных краёв нет. Увеличьте, чтобы обрезать сильнее.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies">
+    <text>Метки сталкеров</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_color_companion">
+    <text>Цвет: компаньоны</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_enemies">
+    <text>Отмечать врагов</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_enemies_desc">
+    <text>Враги тоже получают рамку, которая расшифровывается из белой в цвет врага. Выкл.: отмечаются только друзья.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_color_friend">
+    <text>Цвет: друзья</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_color_enemy">
+    <text>Цвет: враги</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_desc">
+    <text>Рамка вокруг каждого сталкера, которого видит камера. Пока сталкер не опознан, она белая, затем, по мере расшифровки имени, становится зелёной (друг) или красной (враг).</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_dot_ratio">
+    <text>Точка вместо рамки дальше (доля дальности)</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_los">
+    <text>Только видимые NPC</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_opacity">
+    <text>Непрозрачность меток</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_range">
+    <text>Дальность меток (метры)</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_size">
+    <text>Размер меток</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_names">
+    <text>Показывать имена</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_names_desc">
+    <text>Имя и группировка сталкера над каждой рамкой, шрифтом оверлея. Скрыты, пока метка - точка.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_style">
+    <text>Стиль меток</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_edge_follow">
+    <text>Край объектива следует за движением</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_edge_follow_desc">
+    <text>Насколько край объектива и виньетка смещаются вместе с телом, как у камеры на груди. 0 = неподвижно.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_rig_occlusion">
+    <text>Перекрытие разгрузкой и плечами</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_rig_occlusion_desc">
+    <text>Насколько бронежилет, плечи и оружие заходят в края кадра при наклоне, приседании, прицеливании или взгляде вниз.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_housing_roundness">
+    <text>Форма корпуса (круг - скруглённый квадрат)</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_housing_roundness_desc">
+    <text>0 = плавная овальная оправа объектива, 1 = корпус Axon в виде скруглённого квадрата.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_edge_soft_blur">
+    <text>Размытие по краям объектива</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_edge_soft_blur_desc">
+    <text>Оптическое смягчение широкоугольного объектива к краям кадра при резком центре.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_highlight_blowout">
+    <text>Пересвет</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_highlight_blowout_desc">
+    <text>Узкий динамический диапазон маленькой матрицы: пересвет неба, ламп и вспышек выстрелов.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_compression">
+    <text>Цифровое сжатие</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_compression_desc">
+    <text>Лёгкие блоки видеокодека нательной камеры и субдискретизация цвета.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_rolling_shutter">
+    <text>Скос «бегущего затвора»</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_rolling_shutter_desc">
+    <text>Перекос строк CMOS-матрицы при резких поворотах, стрельбе и попаданиях. 0 = выкл.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_face_blur">
+    <text>Размывать лица</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_face_blur_desc">
+    <text>Пикселизирует лица сталкеров, которых видит камера, как на опубликованных записях нательных камер. Работает с объективом и без него.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_sensor_grade">
+    <text>Цветокоррекция CMOS</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_sensor_grade_desc">
+    <text>Контрастная кривая современной матрицы Axon, лёгкое снижение насыщенности и холодный нейтральный цифровой тон.</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_logo_official">
+    <text>Официальный логотип</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_logo_swirl">
+    <text>Треугольник с завитком (рисованный)</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_logo_plain">
+    <text>Простой треугольник (рисованный)</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_none">
+    <text>Нет</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_tz_zone">
+    <text>Время Зоны (+0200, летом +0300)</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_tz_utc">
+    <text>UTC (+0000)</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_size_small">
+    <text>Маленький</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_size_real">
+    <text>Как у настоящей камеры</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_size_large">
+    <text>Крупный</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_style_brackets">
+    <text>Уголки</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_style_box">
+    <text>Полная рамка</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_col_white">
+    <text>Белый</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_col_green">
+    <text>Зелёный</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_col_cyan">
+    <text>Голубой</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_col_blue">
+    <text>Синий</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_col_yellow">
+    <text>Жёлтый</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_col_red">
+    <text>Красный</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_col_purple">
+    <text>Фиолетовый</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_col_none">
+    <text>Нет (скрыть)</text>
+  </string>
+</string_table>

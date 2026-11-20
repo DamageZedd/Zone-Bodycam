@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<string_table>
+  <string id="st_zbc_bodycam_item_name">
+    <text>Нательная камера</text>
+  </string>
+  <string id="st_zbc_bodycam_item_descr">
+    <text>Прочная нательная камера с широкоугольным объективом, оверлеем с меткой времени и опознаванием «свой-чужой». Носите её где угодно в инвентаре - она ведёт запись сама.\n\nРаботает от стандартной батареи: перетащите батарею на камеру, чтобы заменить её. Когда заряд кончается, камера выключается, но часы записи продолжают идти.</text>
+  </string>
+  <string id="st_zbc_bodycam_item_dead">
+    <text>Нательная камера: батарея разряжена</text>
+  </string>
+  <string id="ui_mcm_menu_zone_bodycam_item">
+    <text>Zone Bodycam: камера</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_item_title">
+    <text>Нательная камера</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_item_battery_hours">
+    <text>Время работы батареи (реальные часы)</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_item_battery_hours_desc">
+    <text>Сколько работает полная батарея, пока камера ведёт запись, в часах реального времени. Зависит от настройки расхода батарей на выбранной сложности.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_item_animations">
+    <text>Анимации рук</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_item_animations_desc">
+    <text>Анимация от первого лица, когда батарея садится (снять камеру, посмотреть на неё, убрать) и когда вы ставите новую батарею (вставить батарею, пристегнуть камеру обратно). Выкл.: камера просто выключается и включается.</text>
+  </string>
+</string_table>

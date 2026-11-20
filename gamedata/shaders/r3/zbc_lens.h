@@ -14,11 +14,68 @@ uniform float4 bus_zbc_vig;      // x/y: independent vignette & housing center o
 uniform float4 bus_zbc_vig_occ;  // x: horizontal chest/shoulder occlusion (-1 left .. +1 right)  y: vertical rig/chin occlusion (-1 top .. +1 bottom)  z: occlusion strength (0..1+)  w: superellipse power (2.0..6.0)
 uniform float4 bus_zbc_sensor;   // x: highlight blowout & auto-exposure punch (0..1)  y: digital compression crispness (0..1)  z: signed rolling-shutter horizontal shear  w: CMOS color grade (0..1)
 
+// Face pixelation (scripts\zbc_faces.script). Squares in rendered-image uv, independent of the lens.
+uniform float4 bus_zbc_faces;    // x: number of faces in use (0..64)
+
 #define ZBC_INTENSITY (saturate(bus_zbc_motion.x))
 #define ZBC_ACTIVE    (bus_zbc_motion.x > 0.0005)
+#define ZBC_FACES     (bus_zbc_faces.x > 0.5)
 
 // width / height of the display
 float2 zbc_aspect() { return float2(max(screen_res.x * screen_res.w, 0.1), 1.0); }
+
+// Snaps src to the centre of its mosaic block when it falls inside face f. ax: aspect.
+bool zbc_face_snap_one(float4 f, inout float2 src, float ax)
+{
+	float2 blk     = float2(f.w / ax, f.w);
+	float2 half_sz = float2(f.z / ax, f.z);
+	float2 d       = src - f.xy;
+	if (f.w <= 0.0 || abs(d.x) >= half_sz.x || abs(d.y) >= half_sz.y)
+		return false;
+	src = f.xy + (floor(d / blk) + 0.5) * blk;
+	return true;
+}
+
+// The faces arrive as a uint4 array, which exes older than Shader Bus 7 can't read (see zbc_osd.h),
+// so on those the faces are simply not pixelated.
+#if defined(SHADER_BUS) && SHADER_BUS >= 7
+#define ZBC_FACE_ROWS 32
+// two faces per row; per face two uints of 16-bit halves: (centre u | centre v), (half side | block),
+// centres -0.25..1.25 uv, sizes 0..0.75 screen heights (pack_face in scripts\zbc_faces.script)
+uniform uint4 bus_zbc_face_rows[ZBC_FACE_ROWS];
+
+float4 zbc_face_unpack(uint2 p)
+{
+	float4 q = float4(p.x >> 16u, p.x & 0xFFFFu, p.y >> 16u, p.y & 0xFFFFu) / 65535.0;
+	return float4(q.xy * 1.5 - 0.25, q.zw * 0.75);
+}
+
+// Pixelates faces: true when src was snapped to a mosaic block.
+bool zbc_face_snap(inout float2 src)
+{
+	[branch] if (!ZBC_FACES)
+		return false;
+	float ax = zbc_aspect().x;
+	uint  n  = min((uint)bus_zbc_faces.x, ZBC_FACE_ROWS * 2u);
+	[loop] for (uint i = 0u; i < n; i++)
+	{
+		uint4 row = bus_zbc_face_rows[i >> 1u];
+		uint2 p   = (i & 1u) ? row.zw : row.xy;
+		if (zbc_face_snap_one(zbc_face_unpack(p), src, ax))
+			return true;
+	}
+	return false;
+}
+#else
+bool zbc_face_snap(inout float2 src) { return false; }
+#endif
+
+// Lens off: plain sample with the faces pixelated.
+float3 zbc_plain_sample(Texture2D tex, float2 uv)
+{
+	zbc_face_snap(uv);
+	return tex.SampleLevel(smp_rtlinear, uv, 0).rgb;
+}
 
 // 2D -> 1D hash in [0, 1)
 float zbc_hash(float2 p)
@@ -79,6 +136,8 @@ float3 zbc_lens_sample(Texture2D tex, float2 uv, out float2 out_src)
 	float2 asp = zbc_aspect();
 	float2 src = zbc_warp(uv);
 	out_src    = src;
+	[branch] if (zbc_face_snap(src))   // a face: one flat tap per mosaic block, no sharpening or fringing
+		return max(tex.SampleLevel(smp_rtlinear, src, 0).rgb, 0.0);
 	float  ca  = bus_zbc_lens.y * k;
 	float  sh  = saturate(bus_zbc_extra.y) * k;
 

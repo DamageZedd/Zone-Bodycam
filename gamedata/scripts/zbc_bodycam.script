@@ -54,6 +54,7 @@ defaults = {
 	compression       = 0.35,
 	rolling_shutter   = 0.50,
 	sensor_grade      = 0.75,
+	face_blur         = true,   -- pixelate NPC faces (zbc_faces.script)
 	-- motion
 	motion         = 1.0,
 	turn_lag       = 1.0,
@@ -76,13 +77,16 @@ defaults = {
 	-- ally markers (zbc_allies.script)
 	allies                 = true,
 	allies_los             = true,   -- only NPCs the actor can see
+	allies_names           = true,   -- NPC name above each box
 	allies_range           = 30,     -- metres
 	allies_dot_ratio       = 0.5,    -- beyond this share of the range: a dot instead of a box
 	allies_style           = 0,      -- 0 corner brackets, 1 full box
 	allies_size            = 1.0,
 	allies_opacity         = 0.85,
-	allies_color_neutral   = 0,      -- see zbc_allies (7 = none)
-	allies_color_companion = 1,
+	allies_color_companion = 1,      -- see zbc_allies (7 = none)
+	allies_enemies         = true,   -- enemies get a box too (it decodes from white to the enemy colour)
+	allies_color_friend    = 1,      -- green
+	allies_color_enemy     = 5,      -- red
 }
 
 local CLAMPS = {
@@ -120,8 +124,9 @@ local CLAMPS = {
 	timezone               = { 0, 1 },
 	font_size              = { 0, 2 },
 	allies_style           = { 0, 1 },
-	allies_color_neutral   = { 0, 7 },
 	allies_color_companion = { 0, 7 },
+	allies_color_friend    = { 0, 7 },
+	allies_color_enemy     = { 0, 7 },
 }
 
 local LIST_OPTS = {
@@ -129,8 +134,9 @@ local LIST_OPTS = {
 	timezone               = true,
 	font_size              = true,
 	allies_style           = true,
-	allies_color_neutral   = true,
 	allies_color_companion = true,
+	allies_color_friend    = true,
+	allies_color_enemy     = true,
 }
 
 local cfg = {}
@@ -182,7 +188,10 @@ local LANES = {
 	osd_atlas  = "zbc_osd_atlas",
 	rec        = "zbc_rec",
 	batt       = "zbc_batt",
+	faces      = "zbc_faces",
+	face_rows  = "zbc_face_rows",
 }
+local MAX_FACES = 64   -- two faces per uint4 row: keep in step with ZBC_FACE_ROWS in zbc_lens.h
 local tokens = nil          -- nil: not tried yet, false: bus unavailable
 local bus_warned = false
 local atlas_uploaded = false
@@ -217,6 +226,10 @@ local function bus_ready()
 		and (not shader_bus.version or shader_bus.version() >= 7)
 	if tokens and not atlas_uploaded and can_uint_osd and zbc_osd_atlas and zbc_osd_atlas.ROWS then
 		shader_bus.set_array_uint(tokens.osd_atlas, 0, zbc_osd_atlas.ROWS)
+		-- Russian letters after the ASCII glyphs and the logo (rows 816.., see shaders\r3\zbc_osd.h)
+		if zbc_osd_atlas_cyr and zbc_osd_atlas_cyr.ROWS then
+			shader_bus.set_array_uint(tokens.osd_atlas, zbc_osd_atlas_cyr.OFFSET, zbc_osd_atlas_cyr.ROWS)
+		end
 		atlas_uploaded = true
 	end
 	return tokens ~= false
@@ -287,8 +300,34 @@ local function sync_lens_settings()
 	end
 end
 
-local function lens_off()
+local function faces_off()
+	if not tokens then return end
+	send("faces", 0, 0, 0, 0)
+	if zbc_faces and zbc_faces.reset then zbc_faces.reset() end
+end
+
+-- NPC faces the camera sees: squares sent to the shader, which pixelates them before the lens warp.
+-- Independent of the lens, so it also works with the lens turned off. Needs Shader Bus 7 (uint arrays).
+local face_rows = nil
+local function faces_update()
+	local can = shader_bus and shader_bus.set_array_uint
+		and (not shader_bus.version or shader_bus.version() >= 7)
+	if not (cfg.face_blur and can and zbc_faces and zbc_faces.update and db.actor and bus_ready()) then
+		faces_off()
+		return
+	end
+	local list, n = zbc_faces.update(db.actor, MAX_FACES)
+	if n > 0 then
+		face_rows = face_rows or {}
+		zbc_faces.pack_rows(list, n, face_rows)
+		shader_bus.set_array_uint(tokens.face_rows, 0, face_rows)
+	end
+	send("faces", n, 0, 0, 0)
+end
+
+local function lens_off(keep_faces)
 	if not tokens then return end   -- never registers lanes just to clear them
+	if not keep_faces then faces_off() end
 	send("motion",   0, 0, 0, 0)
 	send("vig",      0, 0, 0, 0)
 	send("vig_occ",  0, 0, cfg.rig_occlusion or defaults.rig_occlusion, housing_power())
@@ -878,7 +917,7 @@ local function serial_for(name)
 	end
 	cached_raw_name = name
 	cached_serial = "X6039" .. out
-	cached_upper_name = string.upper(name)
+	cached_upper_name = (zbc_allies and zbc_allies.upper_cp1251) and zbc_allies.upper_cp1251(name) or string.upper(name)
 	cached_dev_in = nil
 	return cached_serial
 end
@@ -1083,7 +1122,13 @@ function ZbcHud:Layout()
 	self.rec_line.text = nil
 end
 
-local function drawable(code) return code ~= 32 and code >= F.first and code <= F.last end
+-- atlas cell of a Windows-1251 character (ASCII and Russian letters), nil for a space or no glyph
+local function glyph_cell(code)
+	if F.index then return F.index(code) end
+	if code > 32 and code >= F.first and code <= F.last then return code - F.first end
+	return nil
+end
+local function drawable(code) return glyph_cell(code) ~= nil end
 
 -- lay out one line of glyphs from screen px (x0, y0)
 local function lay_glyphs(line, str, G, x0, y0)
@@ -1096,11 +1141,10 @@ local function lay_glyphs(line, str, G, x0, y0)
 	local qw, qh = F.cell_w * G.scale * G.ux, F.cell_h * G.scale * G.uy
 	for c = 1, count do
 		local g = line.glyphs[c]
-		local code = (c <= n) and string.byte(str, c) or 32
-		if c > n or not drawable(code) then
+		local k = (c <= n) and glyph_cell(string.byte(str, c)) or nil
+		if not k then
 			g:Show(false)
 		else
-			local k = code - F.first
 			local tx, ty = (k % F.cols) * F.cell_w, floor(k / F.cols) * F.cell_h
 			g:SetTextureRect(tmp_rect:set(tx, ty, tx + F.cell_w, ty + F.cell_h))
 			local px = x0 + (c - 1) * adv - F.pad * G.scale
@@ -1402,9 +1446,10 @@ function actor_on_update()
 		send("vig_occ", occ_x, occ_y, cfg.rig_occlusion, housing_power())
 		send("sensor",  cfg.highlight_blowout, cfg.compression, rs, cfg.sensor_grade)
 	else
-		lens_off()
+		lens_off(true)
 		rs = 0
 	end
+	faces_update()
 	if HUD then
 		-- the lens exactly as the shader sees it, for placing ally markers
 		local L = lens_state

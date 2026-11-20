@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Blur faces** (MCM **Lens > Blur faces**, on by default): the faces of stalkers the camera sees are pixelated into a coarse mosaic, like released bodycam footage.
+  - Every face you can see, at any distance (up to 64 at once, nearest first), alive or dead, so faces stay pixelated through a scope. Faces behind walls are left alone (same line-of-sight rules as the ally markers), and faces only a few pixels big are too small to need it.
+  - Needs Shader Bus 7 (modded exes 2026.10.11 or newer); on older exes faces are not pixelated.
+  - The mosaic is applied before the lens warp, so it bends with the fisheye; it also works with the lens turned off.
+  - Near faces get 8 blocks across; far faces keep blocks at least 5 px tall.
+  - Test: `tools/tests/zbc_faces_test.lua`.
+- **Names above the ally boxes** (MCM **Ally markers > Show names**, on by default): each box shows the stalker's name and, in smaller text under it, their faction, in the overlay font and the box colour, fading with the box. Hidden while the marker is a dot.
+  - Each time a box appears, the text decodes from scrambled characters, letter by letter from the left (about a second for a long name).
+  - **Identification by distance**, after the Identification UI mod: within 50 m a stalker is identified as soon as their box appears. Further out the name, faction and colour stay unknown (white, scrambled) and only decode while you look at them, at that mod's rate (about 4 s at 60 m, 28 s at 100 m, 7 s at 100 m through a 4x scope). Identified stalkers stay identified for the session.
+  - Through a scope the marker range grows with the zoom, so far allies you're aiming at get a box and a name too.
+- **Full Russian localization.** Every menu string, the optional Body Camera item (name, description, battery message, its MCM page) and all MCM list options (logo, time zone, text size, marker style, colours) have Russian text in `configs\text\rus`.
+  - The overlay font now has Russian letters, so Russian names and factions show in the top-right overlay and above the markers, with the lens on or off. KlartextMono has no Cyrillic, so those letters come from Roboto Mono Bold (Apache-2.0), matched to KlartextMono's capital height and letter width. `tools/make_overlay_assets.py` takes it as a fourth argument and also writes the shader copy of the letters (`zbc_osd_atlas_cyr.script`).
+  - Names are put in capitals correctly for Russian text too.
+  - Test: `tools/tests/zbc_localization_test.lua`.
+- **Every stalker gets a box, enemies included** (MCM **Ally markers > Mark enemies**, on by default). The box is white while the stalker is unknown and, once the name has decoded, fades to green for friendly (neutrals count as friendly) or red for enemy (MCM colours: friendly, enemy, companion; the old neutral colour option is gone). Dots far away show the final colour straight away.
+  - Test: `tools/tests/zbc_allies_label_test.lua`.
+
 ## v1.1.0 - 2026-11-20
 
 ### Added

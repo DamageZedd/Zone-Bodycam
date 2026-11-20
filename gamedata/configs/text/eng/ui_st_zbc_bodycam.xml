@@ -120,11 +120,20 @@
   <string id="ui_mcm_zone_bodycam_allies_color_companion">
     <text>Colour: companions</text>
   </string>
-  <string id="ui_mcm_zone_bodycam_allies_color_neutral">
-    <text>Colour: friendly / neutral</text>
+  <string id="ui_mcm_zone_bodycam_allies_enemies">
+    <text>Mark enemies</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_enemies_desc">
+    <text>Enemies get a box too, decoding from white to the enemy colour. Off: only friendly stalkers are marked.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_color_friend">
+    <text>Colour: friendly</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_color_enemy">
+    <text>Colour: enemy</text>
   </string>
   <string id="ui_mcm_zone_bodycam_allies_desc">
-    <text>Boxes on friendly and neutral stalkers so you can tell who not to shoot. Enemies are never marked.</text>
+    <text>A box on every stalker the camera sees. It starts white while the stalker is unknown, then decodes to green (friendly) or red (enemy) as the name resolves.</text>
   </string>
   <string id="ui_mcm_zone_bodycam_allies_dot_ratio">
     <text>Show as dot beyond (share of range)</text>
@@ -140,6 +149,12 @@
   </string>
   <string id="ui_mcm_zone_bodycam_allies_size">
     <text>Marker size</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_names">
+    <text>Show names</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_names_desc">
+    <text>The stalker's name above each box, in the overlay font. Hidden while the marker is a dot.</text>
   </string>
   <string id="ui_mcm_zone_bodycam_allies_style">
     <text>Marker style</text>
@@ -186,10 +201,73 @@
   <string id="ui_mcm_zone_bodycam_rolling_shutter_desc">
     <text>CMOS scanline skew during fast turns, gunfire, and hits. 0 = off.</text>
   </string>
+  <string id="ui_mcm_zone_bodycam_face_blur">
+    <text>Blur faces</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_face_blur_desc">
+    <text>Pixelates the faces of the stalkers the camera sees, like released bodycam footage. Works with the lens on or off.</text>
+  </string>
   <string id="ui_mcm_zone_bodycam_sensor_grade">
     <text>CMOS color grade</text>
   </string>
   <string id="ui_mcm_zone_bodycam_sensor_grade_desc">
     <text>Modern Axon CMOS contrast curve, slight desaturation, and cool-neutral digital tone.</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_logo_official">
+    <text>Official logo</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_logo_swirl">
+    <text>Swirl triangle (drawn)</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_logo_plain">
+    <text>Plain triangle (drawn)</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_none">
+    <text>None</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_tz_zone">
+    <text>Zone time (+0200, +0300 in summer)</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_tz_utc">
+    <text>UTC (+0000)</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_size_small">
+    <text>Small</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_size_real">
+    <text>Real overlay size</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_size_large">
+    <text>Large</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_style_brackets">
+    <text>Corner brackets</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_style_box">
+    <text>Full box</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_col_white">
+    <text>White</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_col_green">
+    <text>Green</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_col_cyan">
+    <text>Cyan</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_col_blue">
+    <text>Blue</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_col_yellow">
+    <text>Yellow</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_col_red">
+    <text>Red</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_col_purple">
+    <text>Purple</text>
+  </string>
+  <string id="ui_mcm_lst_zbc_col_none">
+    <text>None (hide)</text>
   </string>
 </string_table>

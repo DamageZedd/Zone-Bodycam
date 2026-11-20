@@ -5,8 +5,9 @@
 local function d(id) return zbc_bodycam and zbc_bodycam.defaults and zbc_bodycam.defaults[id] end
 
 function on_mcm_load()
-	local colors = { { 0, "White" }, { 1, "Green" }, { 2, "Cyan" }, { 3, "Blue" }, { 4, "Yellow" },
-		{ 5, "Red" }, { 6, "Purple" }, { 7, "None (hide)" } }
+	-- list entries are string keys: MCM shows ui_mcm_lst_<key> from configs\text\<language>\ui_st_zbc_bodycam.xml
+	local colors = { { 0, "zbc_col_white" }, { 1, "zbc_col_green" }, { 2, "zbc_col_cyan" }, { 3, "zbc_col_blue" },
+		{ 4, "zbc_col_yellow" }, { 5, "zbc_col_red" }, { 6, "zbc_col_purple" }, { 7, "zbc_col_none" } }
 	return {
 		id = "zone_bodycam", sh = true,
 		gr = {
@@ -34,6 +35,7 @@ function on_mcm_load()
 			{ id = "highlight_blowout", type = "track", val = 2, min = 0, max = 1,    step = 0.05,  def = d("highlight_blowout") },
 			{ id = "compression",    type = "track", val = 2, min = 0,    max = 1,    step = 0.05,  def = d("compression") },
 			{ id = "rolling_shutter", type = "track", val = 2, min = 0,   max = 1.5,  step = 0.05,  def = d("rolling_shutter") },
+			{ id = "face_blur",      type = "check", val = 1, def = d("face_blur") },
 
 			{ id = "hdr_motion",     type = "line" },
 			{ id = "motion",         type = "track", val = 2, min = 0,    max = 2,    step = 0.05,  def = d("motion") },
@@ -49,23 +51,26 @@ function on_mcm_load()
 			{ id = "rec_timer",      type = "check", val = 1, def = d("rec_timer") },
 			{ id = "device_label",   type = "input", val = 0, def = d("device_label") },
 			{ id = "show_name",      type = "check", val = 1, def = d("show_name") },
-			{ id = "logo_style",     type = "list",  val = 2, def = d("logo_style"), no_str = true,
-				content = { { 0, "Official logo" }, { 1, "Swirl triangle (drawn)" }, { 2, "Plain triangle (drawn)" }, { 3, "None" } } },
-			{ id = "timezone",       type = "list",  val = 2, def = d("timezone"), no_str = true,
-				content = { { 0, "Zone time (+0200, +0300 in summer)" }, { 1, "UTC (+0000)" } } },
+			{ id = "logo_style",     type = "list",  val = 2, def = d("logo_style"),
+				content = { { 0, "zbc_logo_official" }, { 1, "zbc_logo_swirl" }, { 2, "zbc_logo_plain" }, { 3, "zbc_none" } } },
+			{ id = "timezone",       type = "list",  val = 2, def = d("timezone"),
+				content = { { 0, "zbc_tz_zone" }, { 1, "zbc_tz_utc" } } },
 			{ id = "iso_t",          type = "check", val = 1, def = d("iso_t") },
-			{ id = "font_size",      type = "list",  val = 2, def = d("font_size"), no_str = true,
-				content = { { 0, "Small" }, { 1, "Real overlay size" }, { 2, "Large" } } },
+			{ id = "font_size",      type = "list",  val = 2, def = d("font_size"),
+				content = { { 0, "zbc_size_small" }, { 1, "zbc_size_real" }, { 2, "zbc_size_large" } } },
 			{ id = "text_opacity",   type = "track", val = 2, min = 0.2,  max = 1,    step = 0.05,  def = d("text_opacity") },
 			{ id = "logo_opacity",   type = "track", val = 2, min = 0.2,  max = 1,    step = 0.05,  def = d("logo_opacity") },
 
 			{ id = "hdr_allies",     type = "line" },
 			{ id = "allies",         type = "check", val = 1, def = d("allies") },
 			{ id = "allies_los",     type = "check", val = 1, def = d("allies_los") },
-			{ id = "allies_style",   type = "list",  val = 2, def = d("allies_style"), no_str = true,
-				content = { { 0, "Corner brackets" }, { 1, "Full box" } } },
-			{ id = "allies_color_neutral",   type = "list", val = 2, def = d("allies_color_neutral"),   no_str = true, content = colors },
-			{ id = "allies_color_companion", type = "list", val = 2, def = d("allies_color_companion"), no_str = true, content = colors },
+			{ id = "allies_names",   type = "check", val = 1, def = d("allies_names") },
+			{ id = "allies_style",   type = "list",  val = 2, def = d("allies_style"),
+				content = { { 0, "zbc_style_brackets" }, { 1, "zbc_style_box" } } },
+			{ id = "allies_color_companion", type = "list", val = 2, def = d("allies_color_companion"), content = colors },
+			{ id = "allies_enemies",         type = "check", val = 1, def = d("allies_enemies") },
+			{ id = "allies_color_friend",    type = "list", val = 2, def = d("allies_color_friend"),    content = colors },
+			{ id = "allies_color_enemy",     type = "list", val = 2, def = d("allies_color_enemy"),     content = colors },
 			{ id = "allies_range",     type = "track", val = 2, min = 5,    max = 100,  step = 1,     def = d("allies_range") },
 			{ id = "allies_dot_ratio", type = "track", val = 2, min = 0,    max = 1,    step = 0.05,  def = d("allies_dot_ratio") },
 			{ id = "allies_size",      type = "track", val = 2, min = 0.5,  max = 2,    step = 0.05,  def = d("allies_size") },

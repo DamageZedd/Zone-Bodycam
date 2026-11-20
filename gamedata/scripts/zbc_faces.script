@@ -1,0 +1,209 @@
+--[[
+	Zone Bodycam - face pixelation (zbc_faces.script)
+
+	Finds the heads of the human NPCs (alive or dead, at any distance) the camera can see and returns a
+	square around each face in rendered-image uv. postprocess.ps snaps every pixel that samples inside
+	one of those squares to a coarse block grid (zbc_face_snap in shaders\r3\zbc_lens.h) before the
+	lens warp, so the mosaic bends with the fisheye like the rest of the picture.
+
+	Called by zbc_bodycam.script every frame while the camera records (MCM: Blur faces).
+]]
+
+local floor, ceil, min, max, sqrt = math.floor, math.ceil, math.min, math.max, math.sqrt
+
+-- No distance limit: through a scope a face hundreds of metres away fills the screen. What decides is
+-- the face's size on screen, so a far face without a scope (a few pixels) is left alone.
+local POOL          = 256    -- nearest online NPCs kept as candidates (only those on screen and in sight are drawn)
+local SCAN_INTERVAL = 0.25   -- seconds between candidate rescans
+local LOS_INTERVAL  = 0.1    -- seconds between line-of-sight checks per NPC
+local HEAD_UP       = 0.07   -- metres from the head bone up to the middle of the face
+local HEAD_HALF     = 0.17   -- half the side of the square around the face, metres
+BLOCKS              = 8      -- blocks across the square on a near face (even)
+MIN_BLOCK_PX        = 5      -- smaller faces still get blocks at least this many pixels tall...
+MIN_FACE_PX         = 3      -- ...and faces with a half side under this many pixels are not pixelated
+
+local cands = {}
+local scan_d2 = {}
+local next_scan = 0
+local last_now = nil
+local los = {}               -- id -> { ok = bool, next = seconds }
+local rows = {}              -- reused result rows { cu, cv, half_v, blk_v }
+local tmp_c, tmp_t, tmp_up, tmp_side, tmp_cam
+
+function reset()
+	for i = #cands, 1, -1 do cands[i] = nil; scan_d2[i] = nil end
+	next_scan = 0
+	last_now = nil
+	los = {}
+end
+
+-- The square for one face, in v units (screen heights; u units are these divided by the aspect).
+-- cu, cv: face centre in uv; tu, tv: the point HEAD_HALF beside it in uv; a: aspect; H: height px.
+-- Returns half_v, blk_v: the square is a whole, even number of blocks wide, at least 4. nil for a
+-- face too small to recognise.
+function face_square(cu, cv, tu, tv, a, H)
+	H = max(H, 1)
+	local du, dv = (tu - cu) * a, tv - cv
+	local half = sqrt(du * du + dv * dv)
+	if not (half == half) or half < MIN_FACE_PX / H then return nil end
+	-- blocks: BLOCKS across a near face, at least MIN_BLOCK_PX, but never so big that 4 of them
+	-- would make the square larger than the face
+	local blk = min(max(2 * half / BLOCKS, MIN_BLOCK_PX / H), half / 2)
+	local n = max(2 * ceil(half / blk - 0.001), 4)
+	return n * 0.5 * blk, blk
+end
+
+-- Shader packing (bus_zbc_face_rows in shaders\r3\zbc_lens.h): two faces per uint4 row, each face
+-- two uints of two 16-bit fixed-point halves: (centre u | centre v), (half side | block size).
+-- Centres cover -0.25..1.25 uv, sizes 0..0.75 screen heights: steps of about 1/40000 of the screen.
+POS_MIN, POS_SPAN, SIZE_SPAN = -0.25, 1.5, 0.75
+
+local function q16(v, lo, span)
+	local q = floor((v - lo) / span * 65535 + 0.5)
+	if not (q == q) then return 0 end
+	return min(max(q, 0), 65535)
+end
+
+function pack_face(cu, cv, half, blk)
+	return q16(cu, POS_MIN, POS_SPAN) * 65536 + q16(cv, POS_MIN, POS_SPAN),
+		q16(half, 0, SIZE_SPAN) * 65536 + q16(blk, 0, SIZE_SPAN)
+end
+
+-- fills out[1..ceil(n/2)] with uint4 rows for faces 1..n of list; returns the row count
+function pack_rows(list, n, out)
+	local rows_n = ceil(n / 2)
+	for r = 1, rows_n do
+		local row = out[r]
+		if not row then
+			row = { 0, 0, 0, 0 }
+			out[r] = row
+		end
+		local a = list[2 * r - 1]
+		row[1], row[2] = pack_face(a[1], a[2], a[3], a[4])
+		local b = (2 * r <= n) and list[2 * r]
+		if b then
+			row[3], row[4] = pack_face(b[1], b[2], b[3], b[4])
+		else
+			row[3], row[4] = 0, 0
+		end
+	end
+	for r = rows_n + 1, #out do out[r] = nil end
+	return rows_n
+end
+
+local function scan(actor)
+	local apos = actor:position()
+	local n = 0
+	for id, st in pairs(db.storage) do
+		local obj = st and st.object
+		if obj and id ~= 0 and IsStalker(obj) then
+			local d2 = obj:position():distance_to_sqr(apos)
+			if n < POOL or d2 < scan_d2[POOL] then
+				local pos = (n < POOL) and (n + 1) or POOL
+				while pos > 1 and d2 < scan_d2[pos - 1] do
+					scan_d2[pos] = scan_d2[pos - 1]
+					cands[pos] = cands[pos - 1]
+					pos = pos - 1
+				end
+				scan_d2[pos] = d2
+				cands[pos] = id
+				if n < POOL then n = n + 1 end
+			end
+		end
+	end
+	for i = n + 1, #cands do cands[i] = nil; scan_d2[i] = nil end
+	for id in pairs(los) do
+		local keep = false
+		for i = 1, n do if cands[i] == id then keep = true break end end
+		if not keep then los[id] = nil end
+	end
+end
+
+local function project(vec)
+	local p = game.world2ui(vec, false)
+	if not p or p.x == -9999 then return nil end
+	return p.x / 1024, p.y / 768
+end
+
+local function visible(actor, obj, id, now, cam)
+	local e = los[id]
+	if not e then
+		e = { ok = false, next = 0 }
+		los[id] = e
+	end
+	if now >= e.next then
+		e.next = now + LOS_INTERVAL
+		if cam and zbc_allies and zbc_allies.los_point then
+			e.ok = zbc_allies.los_point(actor, id, cam, tmp_c.x, tmp_c.y, tmp_c.z)
+		else
+			e.ok = actor:see(obj)
+		end
+	end
+	return e.ok
+end
+
+-- Returns rows, n: up to max_n squares { cu, cv, half_v, blk_v }, nearest first.
+function update(actor, max_n)
+	if not actor then return rows, 0 end
+	tmp_c   = tmp_c   or vector()
+	tmp_t   = tmp_t   or vector()
+	tmp_up   = tmp_up   or vector():set(0, 1, 0)
+	tmp_side = tmp_side or vector()
+	tmp_cam  = tmp_cam  or vector()
+
+	local now = time_global() / 1000
+	if last_now and now < last_now then reset() end
+	last_now = now
+	if now >= next_scan then
+		next_scan = now + SCAN_INTERVAL
+		scan(actor)
+	end
+
+	local dev = device()
+	local W, H = dev and dev.width or 0, dev and dev.height or 0
+	if W <= 0 or H <= 0 then return rows, 0 end
+	local a = W / H
+	-- the square's size comes from a point HEAD_HALF to the side of the face: a sideways offset stays
+	-- its full length on screen whatever the pitch (world up, only when looking straight up or down)
+	local side = tmp_up
+	local dir = dev.cam_dir
+	if dir then
+		local l = sqrt(dir.x * dir.x + dir.z * dir.z)
+		if l > 0.05 then side = tmp_side:set(dir.z / l, 0, -dir.x / l) end
+	end
+	local cam = nil
+	if dev.cam_pos then cam = tmp_cam:set(dev.cam_pos.x, dev.cam_pos.y, dev.cam_pos.z) end
+
+	local n = 0
+	for i = 1, #cands do
+		if n >= max_n then break end
+		local id = cands[i]
+		local obj = level.object_by_id(id)
+		-- cheap skip for NPCs behind the camera before the bone lookup
+		if obj and cam and dir then
+			local p = obj:position()
+			if (p.x - cam.x) * dir.x + (p.y + 1.6 - cam.y) * dir.y + (p.z - cam.z) * dir.z < -0.5 then obj = nil end
+		end
+		local head = obj and utils_obj.safe_bone_pos(obj, "bip01_head")
+		if head then
+			tmp_c:set(head.x, head.y + HEAD_UP, head.z)
+			local cu, cv = project(tmp_c)
+			if cu and cu > -0.1 and cu < 1.1 and cv > -0.1 and cv < 1.1 then
+				tmp_t:set(tmp_c.x + side.x * HEAD_HALF, tmp_c.y + side.y * HEAD_HALF, tmp_c.z + side.z * HEAD_HALF)
+				local tu, tv = project(tmp_t)
+				local half, blk
+				if tu then half, blk = face_square(cu, cv, tu, tv, a, H) end
+				if half and visible(actor, obj, id, now, cam) then
+					n = n + 1
+					local r = rows[n]
+					if not r then
+						r = {}
+						rows[n] = r
+					end
+					r[1], r[2], r[3], r[4] = cu, cv, half, blk
+				end
+			end
+		end
+	end
+	return rows, n
+end

@@ -1,0 +1,5 @@
+RobotoMono-VariableFont_wght.ttf - Roboto Mono by Christian Robertson (Google Fonts).
+Licensed under the Apache License, Version 2.0: https://www.apache.org/licenses/LICENSE-2.0
+
+Zone Bodycam uses it only for the Russian letters of the overlay font atlas, which
+KlartextMonoBold.ttf does not have (tools/make_overlay_assets.py, fourth argument).

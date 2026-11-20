@@ -15,7 +15,8 @@
 uniform float4 bus_zbc_osd_info;        // x: active (>0.5), y: logo_style (0=official, 1=swirl, 2=plain, 3=none), z: text_opacity, w: logo_opacity
 uniform float4 bus_zbc_osd_layout;       // x: logo_x (0.950), y: logo_y (0.026*asp.x), z: logo_w (0.035), w: em_v (em_px / H)
 uniform uint4  bus_zbc_osd_chars[31];    // row 0: (len0, len1, len2, 0); row 1+i*10+(c>>2) comp (c&3) = ASCII byte
-uniform uint4  bus_zbc_osd_atlas[816];   // rows 0..751: ASCII 33..126 16x32 2-bit (8 uint4s/glyph); rows 752..815: 64x64 2-bit logo
+uniform uint4  bus_zbc_osd_atlas[1344];  // rows 0..751: ASCII 33..126 16x32 2-bit (8 uint4s/glyph); rows 752..815: 64x64 2-bit logo;
+                                         // rows 816..1343: Russian letters, Windows-1251 168, 184, 192..255 (scripts\zbc_osd_atlas_cyr.script)
 uniform float4 bus_zbc_rec;              // top-left recording timer. x: active (>0.5), y: dot lit (>0.5), z: whole seconds recorded, w: text_opacity
 uniform float4 bus_zbc_batt;             // VHS battery gauge above the red dot. x: active (>0.5), y: lit bars (0..4, one per 25%), z: last bar shown (<0.5 while it flashes), w: opacity
 
@@ -49,15 +50,25 @@ float2 zbc_osd_glyph_decode(uint code)
 	return float2(1.0, 1.0);
 }
 
+// First atlas row of a Windows-1251 character's glyph, or 0xFFFFFFFF when it has none (space, unknown).
+uint zbc_osd_glyph_base(uint ch)
+{
+	if (ch >= 33u && ch <= 126u) return (ch - 33u) * 8u;
+	if (ch == 168u)              return 816u;                       // Yo
+	if (ch == 184u)              return 824u;                       // yo
+	if (ch >= 192u && ch <= 255u) return 832u + (ch - 192u) * 8u;    // A..ya
+	return 0xFFFFFFFFu;
+}
+
 // Reads two horizontally adjacent texels (x0, x0+1) from one 16x32 2-bit font row in a single cbuffer fetch.
-void zbc_osd_glyph_pair(uint g, int x0, int iy, out float2 c0, out float2 c1)
+void zbc_osd_glyph_pair(uint base, int x0, int iy, out float2 c0, out float2 c1)
 {
 	c0 = float2(0.0, 0.0);
 	c1 = float2(0.0, 0.0);
 	if (iy < 0 || iy >= 32)
 		return;
 	uint uy   = (uint)iy;
-	uint row  = min(g, 93u) * 8u + (uy >> 2u);
+	uint row  = min(base + (uy >> 2u), 1343u);
 	uint word = zbc_uint4_comp(bus_zbc_osd_atlas[row], uy & 3u);
 	if (x0 >= 0 && x0 < 16)
 		c0 = zbc_osd_glyph_decode((word >> ((uint)x0 * 2u)) & 3u);
@@ -68,9 +79,9 @@ void zbc_osd_glyph_pair(uint g, int x0, int iy, out float2 c0, out float2 c1)
 
 float2 zbc_osd_glyph_sample(uint ch, float2 guv)
 {
-	if (ch < 33u || ch > 126u)
+	uint   g  = zbc_osd_glyph_base(ch);
+	if (g == 0xFFFFFFFFu)
 		return float2(0.0, 0.0);
-	uint   g  = ch - 33u;
 	float2 fp = guv * float2(16.0, 32.0) - 0.5;
 	int2   p0 = (int2)floor(fp);
 	float2 f  = fp - (float2)p0;
