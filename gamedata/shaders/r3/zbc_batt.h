@@ -22,8 +22,8 @@ float zbc_batt_box(float2 p, float2 a, float2 b, float fw)
 	return saturate((min(d.x, d.y) + 0.5 * fw) / fw);
 }
 
-// coverage 0..1 of the icon with `bars` (0..4) lit
-float zbc_batt_cov(float2 p, float bars, float fw)
+// coverage 0..1 of the icon with `bars` (0..4) lit; last_on < 0.5 hides the last of them (it flashes)
+float zbc_batt_cov(float2 p, float bars, float last_on, float fw)
 {
 	float outer = zbc_batt_box(p, float2(0.0, 0.0), float2(ZBC_BATT_BODY_W, ZBC_BATT_H), fw);
 	float inner = zbc_batt_box(p, float2(ZBC_BATT_T, ZBC_BATT_T), float2(ZBC_BATT_BODY_W - ZBC_BATT_T, ZBC_BATT_H - ZBC_BATT_T), fw);
@@ -37,7 +37,7 @@ float zbc_batt_cov(float2 p, float bars, float fw)
 	float bw = (x1 - x0 - 3.0 * ZBC_BATT_GAP) * 0.25;
 	[unroll] for (int i = 0; i < 4; i++)
 	{
-		if ((float)i < bars - 0.5)
+		if ((float)i < bars - 0.5 && ((float)i < bars - 1.5 || last_on > 0.5))
 		{
 			float bx = x0 + (float)i * (bw + ZBC_BATT_GAP);
 			c = max(c, zbc_batt_box(p, float2(bx, y0), float2(bx + bw, y1), fw));

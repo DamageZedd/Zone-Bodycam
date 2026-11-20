@@ -17,7 +17,7 @@ uniform float4 bus_zbc_osd_layout;       // x: logo_x (0.950), y: logo_y (0.026*
 uniform uint4  bus_zbc_osd_chars[31];    // row 0: (len0, len1, len2, 0); row 1+i*10+(c>>2) comp (c&3) = ASCII byte
 uniform uint4  bus_zbc_osd_atlas[816];   // rows 0..751: ASCII 33..126 16x32 2-bit (8 uint4s/glyph); rows 752..815: 64x64 2-bit logo
 uniform float4 bus_zbc_rec;              // top-left recording timer. x: active (>0.5), y: dot lit (>0.5), z: whole seconds recorded, w: text_opacity
-uniform float4 bus_zbc_batt;             // VHS battery gauge above the red dot. x: active (>0.5), y: lit bars (0..4), z: drawn (>0.5; blinks when low), w: opacity
+uniform float4 bus_zbc_batt;             // VHS battery gauge above the red dot. x: active (>0.5), y: lit bars (0..4, one per 25%), z: last bar shown (<0.5 while it flashes), w: opacity
 
 // recording timer geometry in em (keep in step with REC_* in scripts\zbc_bodycam.script)
 #define ZBC_REC_DOT_D  1.06
@@ -226,13 +226,13 @@ float4 zbc_rec_eval(float2 uv_s, float text_op, float2 asp)
 	float  half_v = 0.5 * ZBC_REC_DOT_D * em_v;
 
 	// 0. Battery gauge, just above the dot (left edges aligned)
-	if (bus_zbc_batt.x > 0.5 && bus_zbc_batt.z > 0.5)
+	if (bus_zbc_batt.x > 0.5)
 	{
 		float  bot_v = top_v + (ZBC_REC_DOT_CY - 0.5 * ZBC_REC_DOT_D - ZBC_BATT_ABOVE) * em_v;
 		float2 p     = float2((uv_s.x - left_u) / em_u, (uv_s.y - (bot_v - ZBC_BATT_H * em_v)) / em_v);
 		if (p.x > -0.1 && p.x < ZBC_BATT_W + 0.1 && p.y > -0.1 && p.y < ZBC_BATT_H + 0.1)
 		{
-			float c     = zbc_batt_cov(p, bus_zbc_batt.y, max(screen_res.w / em_v, 0.0001));
+			float c     = zbc_batt_cov(p, bus_zbc_batt.y, bus_zbc_batt.z, max(screen_res.w / em_v, 0.0001));
 			float src_a = saturate(c * bus_zbc_batt.w);
 			acc.rgb = src_a.xxx + acc.rgb * (1.0 - src_a);
 			acc.a   = src_a + acc.a * (1.0 - src_a);

@@ -13,9 +13,9 @@
     - When you put a battery on the camera in the inventory (after you close the menu): you slide the new battery into the bottom of the camera and clip it back on your chest. The camera turns back on at that moment.
     - The weapon and detector are put away first and come back afterwards; you can keep moving. The chest itself stays just below the screen.
     - New hand motions are their own file in the shared `hud_hands_animation` folder, so they work with every outfit's hands and don't replace any other mod's files.
-  - **Battery gauge**: a VHS-style battery icon (4 bars) just above the red REC dot, blinking when the charge is low. Drawn with the overlay (inside the image with the lens on, as HUD with it off) and shown with the recording timer.
+  - **Battery gauge**: a VHS-style battery icon just above the red REC dot. Each of its 4 bars is 25% of the charge; the bar that is draining starts flashing once its 25% is half used, then goes out. Drawn with the overlay (inside the image with the lens on, as HUD with it off) and shown with the recording timer.
   - Without the optional component the mod is unchanged: the bodycam is always on.
-  - Tests: `tools/tests/zbc_item_test.lua`.
+  - Tests: `tools/tests/zbc_item_test.lua`, `tools/tests/zbc_battery_gauge_test.lua`.
 
 ### Fixed
 - **Crash on start with modded exes older than 2026.10.11** ("R_constant_table::parse: unexpected shader variable type"). Those engines can't read the overlay's `uint` shader constants, so the in-shader overlay now only compiles when the engine reports Shader Bus 7 or newer. On older exes the game starts, the lens stays off and the overlay is drawn as normal HUD text. Regression test: `tools/tests/shader_uint_guard_test.lua`.

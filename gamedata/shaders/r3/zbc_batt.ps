@@ -2,14 +2,15 @@
 #include "hdr10.h"
 #include "zbc_batt.h"
 // Zone Bodycam - VHS battery gauge, HUD static (shader "hud\zbc_batt"), used while the lens is off.
-// The script passes its state in the texture colour: r = lit bars / 4, a = opacity (0 while blinking off).
+// The script passes its state in the texture colour: r = lit bars / 4, g = last bar shown (0 while it
+// flashes off), a = opacity.
 float4 main(p_TL I) : SV_Target
 {
 	float zbc_base = (s_base.Sample(smp_base, I.Tex0).a >= -1.0) ? 1.0 : 0.0;   // keeps the bound texture; always 1
 	float2 p  = I.Tex0 * float2(ZBC_BATT_W, ZBC_BATT_H);                          // the quad is exactly the icon
 	float  fw = max(fwidth(p.y), 0.0001);
 	float  bars = floor(I.Color.r * 4.0 + 0.5);
-	float  c  = zbc_batt_cov(p, bars, fw);
+	float  c  = zbc_batt_cov(p, bars, I.Color.g, fw);
 	float4 o  = float4(c.xxx, c * I.Color.a);
 	if (HDR10_IS_ENABLED)
 		o.rgb = HDR10_ToDisplay_UI(o.rgb, HDR10_UI_NITS_SCALAR, o.a);

@@ -290,13 +290,19 @@ local function battery_level()
 	return clamp01(v)
 end
 
-local BATT_LOW = 0.15                        -- below this the gauge blinks (one bar left)
-
--- lit bars (0..4) for a charge: any charge left shows at least one bar
+-- Each bar is a 25% chunk: lit bars (0..4) for a charge, any charge left shows at least one bar
 function battery_bars(level)
 	level = tonumber(level)
 	if not level or level <= 0 then return 0 end
 	return min(4, max(1, math.ceil(level * 4 - 1e-6)))
+end
+
+-- the last lit bar flashes once its own chunk is half used up
+function battery_flashing(level)
+	level = tonumber(level)
+	local bars = battery_bars(level)
+	if bars == 0 then return false end
+	return (level - (bars - 1) * 0.25) <= 0.125 + 1e-9
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -1084,16 +1090,16 @@ function ZbcHud:RefreshRec(visible, lens_on)
 	-- VHS battery gauge, just above the dot (only with the bodycam item component)
 	local level = (cfg.rec_timer and visible) and battery_level() or nil
 	local bars = level and battery_bars(level) or 0
-	local lit = level ~= nil and (level >= BATT_LOW or (time_global() % 1000) < 500)
+	local last_on = not (level and battery_flashing(level)) or (time_global() % 1000) < 500   -- 1 Hz flash
 	local op = clamp01(cfg.text_opacity)
 	local hud_batt = false
 	if lens_on then
-		send("batt", level and 1 or 0, bars, lit and 1 or 0, op)
+		send("batt", level and 1 or 0, bars, last_on and 1 or 0, op)
 	else
 		if tokens then send("batt", 0, 0, 0, 0) end
 		if level then
 			hud_batt = true
-			local col = GetARGB(lit and floor(255 * op) or 0, floor(255 * bars / 4 + 0.5), 255, 255)
+			local col = GetARGB(floor(255 * op), floor(255 * bars / 4 + 0.5), last_on and 255 or 0, 255)
 			if col ~= self.batt_color then
 				self.batt:SetTextureColor(col)
 				self.batt_color = col
