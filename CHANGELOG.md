@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.1.0 - 2026-11-20
 
 ### Added
 - **Optional bodycam item** (FOMOD checkbox "Bodycam item (battery powered)", off by default). Adds a **Body Camera** item sold by the general traders (about 5000 RU). The bodycam effect only runs while you carry a charged camera anywhere in your inventory, like the Wearable Devices items; no equipment slot is used.
