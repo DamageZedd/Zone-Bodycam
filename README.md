@@ -14,6 +14,15 @@
 
 </div>
 
+## What's new in v1.1.0
+
+- **Optional Body Camera item.** Tick it in the installer and the bodycam only works while you carry a charged, battery-powered camera, with hand animations when it dies and when you swap the battery. [More below](#optional-body-camera-item).
+- **Battery gauge** above the REC dot (with the item).
+- **Fixed the crash on start with modded exes older than 2026.10.11.** On those exes the lens is off, while the overlay and markers still work.
+- Performance pass on the shaders and scripts, plus safety fixes.
+
+Full history in [CHANGELOG.md](CHANGELOG.md).
+
 ## What you get
 
 - **Bodycam lens.** Fisheye view with the camera housing around the edges, a small-sensor look, grain and a slight wobble when you turn fast or get hit. The lens zooms in by itself, so stronger fisheye never leaves black edges.
