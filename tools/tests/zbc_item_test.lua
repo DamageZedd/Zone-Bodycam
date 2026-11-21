@@ -355,13 +355,27 @@ do
 	cam2_parent = 999
 	check(G.battery_level() == nil, "battery_level() returns nil when parent is not AC_ID")
 
-	-- Disabling zone_bodycam skips zbc_item_anim.update()
+	-- Disabling zone_bodycam skips zbc_item_anim.update() and resets last_t / last_charge
+	local anim_reqs = 0
+	cam2_parent = 0
+	cam2_cond = 0.50
+	G.zbc_item_anim.is_insert = function(prev, cur) return prev and cur and (cur - prev > 0.02) end
+	G.zbc_item_anim.request = function(w) if w == "insert" then anim_reqs = anim_reqs + 1 end end
 	mcm_enabled = false
 	cbs.on_option_change()
 	local prev_anim = anim_updates
 	now_ms = 3500
 	cbs.actor_on_update()
 	check(anim_updates == prev_anim, "zbc_item_anim.update() skipped when zone_bodycam/enabled == false")
+
+	-- Re-enabling after 1 hour + battery swap without main_menu_on_quit: no drain spike, no phantom insert anim
+	cam2_cond = 1.00
+	now_ms = 3500 + 3600000
+	mcm_enabled = true
+	cbs.on_option_change()
+	cbs.actor_on_update()
+	check(cam2_cond == 1.00, "re-enabling without main_menu_on_quit causes no drain spike")
+	check(anim_reqs == 0, "battery swapped while disabled does not trigger delayed insert animation")
 end
 
 if failures > 0 then

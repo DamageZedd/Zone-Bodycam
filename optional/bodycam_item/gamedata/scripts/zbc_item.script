@@ -113,7 +113,12 @@ local function load_settings()
 		local ok, f = pcall(game_difficulties.get_eco_factor, "battery_consumption")
 		if ok and tonumber(f) then eco_mult = tonumber(f) end
 	end
-	if not enabled and zbc_item_anim then zbc_item_anim.reset() end
+	if not enabled then
+		last_t = nil
+		last_charge, last_charge_id = nil, nil
+		next_scan = 0
+		if zbc_item_anim then zbc_item_anim.reset() end
+	end
 end
 
 local function carried_cam()

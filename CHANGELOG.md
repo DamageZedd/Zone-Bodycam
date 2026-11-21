@@ -46,6 +46,7 @@
 - **Stale identification cache across loads (`zbc_allies.script`)**: cleared `known` and `id_progress` on save load / level exit while keeping them intact when opening inventory/PDA.
 - **Documentation & repo hygiene**: updated `README.md` (enemy/mutant markers, face blur, camera effects, Russian localization, Bodycam exes + Bodycam GAMMA Patch note, script list, 4-arg `make_overlay_assets.py` command) and marked `*.mp4` and `*.webp` as `binary` in `.gitattributes`.
 - **Marker visibility, label clamping, inventory state & FX decay (`zbc_allies.script`, `zbc_fx.script`, `zbc_bodycam.script`)**: decoupled `allies_mutants` from `allies_enemies` and `allies_color_enemy = 7` (with red fallback), clamped marker label positions inside `[0..1024, 0..768]`, preserved tracked marker `states` across `visible == false` (inventory/PDA), and kept `wet`/`ir`/`glitch` decay ticking while unpowered.
+- **Follow-up edge cases (`zbc_item.script`, `zbc_allies.script`, `postprocess.ps`, `postprocess_cm.ps`)**: cleared `last_t`, `last_charge`, and `next_scan` when `zone_bodycam/enabled` is toggled off (preventing drain spikes or delayed battery-insert animations on re-enable without `main_menu_on_quit`), added safe fallbacks for nil/friendly mutant relations when `allies_color_friend = 7`, and snapped glitch RGB-split offsets through `zbc_face_snap()` so blurred faces do not leak un-pixelated red/blue channels during heavy interference.
 
 ## v1.1.0 - 2026-11-20
 

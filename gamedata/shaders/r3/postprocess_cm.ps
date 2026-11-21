@@ -48,9 +48,13 @@ float4 main( p_postpr I ) : SV_Target
 		t_0 = zbc_lens_sample(s_base0, uv_0, src_0);
 		[branch] if (fx_g > 0.05)
 		{
-			float2 o = float2(0.006 * fx_g, 0.0);
-			t_0.r = max(s_base0.SampleLevel(smp_rtlinear, src_0 + o, 0).r, 0.0);
-			t_0.b = max(s_base0.SampleLevel(smp_rtlinear, src_0 - o, 0).b, 0.0);
+			float2 o  = float2(0.006 * fx_g, 0.0);
+			float2 sr = src_0 + o;
+			float2 sb = src_0 - o;
+			zbc_face_snap(sr);
+			zbc_face_snap(sb);
+			t_0.r = max(s_base0.SampleLevel(smp_rtlinear, sr, 0).r, 0.0);
+			t_0.b = max(s_base0.SampleLevel(smp_rtlinear, sb, 0).b, 0.0);
 		}
 		[branch] if (same_tc)
 			t_1 = t_0;
@@ -62,9 +66,13 @@ float4 main( p_postpr I ) : SV_Target
 		t_0 = zbc_plain_sample(s_base0, uv_0);
 		[branch] if (fx_g > 0.05)
 		{
-			float2 o = float2(0.006 * fx_g, 0.0);
-			t_0.r = s_base0.SampleLevel(smp_rtlinear, uv_0 + o, 0).r;
-			t_0.b = s_base0.SampleLevel(smp_rtlinear, uv_0 - o, 0).b;
+			float2 o  = float2(0.006 * fx_g, 0.0);
+			float2 sr = uv_0 + o;
+			float2 sb = uv_0 - o;
+			zbc_face_snap(sr);
+			zbc_face_snap(sb);
+			t_0.r = s_base0.SampleLevel(smp_rtlinear, sr, 0).r;
+			t_0.b = s_base0.SampleLevel(smp_rtlinear, sb, 0).b;
 		}
 		[branch] if (same_tc)
 			t_1 = t_0;

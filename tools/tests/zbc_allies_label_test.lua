@@ -334,6 +334,20 @@ do
 	now_ms = 1010
 	ae.update(pool, cfg, lens, true)
 	check(see_calls == see_before, "visible == false preserves states and avoids re-raycasting on reopen")
+
+	-- tame mutant (relation=friend) and nil-relation mutant remain visible even when friend/enemy colours are Off (7)
+	cfg.allies_color_friend = 7
+	cfg.allies_color_enemy = 7
+	mut.relation = function() return 0 end
+	local shown_before = box_shown
+	now_ms = 1100
+	ae.update(pool, cfg, lens, true)
+	check(box_shown > shown_before, "tame mutant remains visible even when allies_color_friend=7")
+	mut.relation = nil
+	shown_before = box_shown
+	now_ms = 1150
+	ae.update(pool, cfg, lens, true)
+	check(box_shown > shown_before, "mutant with nil relation remains visible with enemy colour fallback")
 end
 
 if failures > 0 then

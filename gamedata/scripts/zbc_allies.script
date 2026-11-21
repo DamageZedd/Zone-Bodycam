@@ -4,7 +4,7 @@
 	"Ally safe" markers from bodycam_effect, rebuilt:
 	- boxes (or corner brackets) on every stalker: white while unknown, then decoded to friendly green
 	  (neutrals included) or enemy red, another colour for companions,
-	  dots past a distance; enemies are never marked
+	  dots past a distance, plus optional enemy and mutant markers
 	- placed through the exact inverse of the Zone Bodycam lens (fisheye, zoom, body motion), so a box
 	  sits on the NPC you see, not where it would be without the lens
 	- a fixed pool of HUD statics, reused every frame (the original created new ones and leaked)
@@ -567,8 +567,8 @@ local function step_entity(
 )
 	local ent = states[id]
 	local obj = level.object_by_id(id)
-	local rel = obj and obj:relation(actor)
 	local is_mon = obj and IsMonster and IsMonster(obj)
+	local rel = obj and obj.relation and obj:relation(actor) or nil
 	if not obj or (is_mon and not cfg.allies_mutants) or (not is_mon and rel == game_object.enemy and not cfg.allies_enemies) then
 		states[id] = nil
 		return false
@@ -579,10 +579,10 @@ local function step_entity(
 	local col
 	if IsStalker(obj) and obj:has_info("npcx_is_companion") then
 		col = cols.companion
-	elseif rel == game_object.enemy then
+	elseif rel == game_object.enemy or (is_mon and rel == nil) then
 		col = is_mon and (cols.enemy or COLORS[6]) or cols.enemy
 	else
-		col = cols.friend
+		col = is_mon and (cols.friend or COLORS[2]) or cols.friend
 	end
 	if not col then
 		states[id] = nil
