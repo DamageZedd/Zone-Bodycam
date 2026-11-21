@@ -87,6 +87,9 @@ local cam_charged = false
 local next_scan = 0
 local last_t = nil
 local hours = DEFAULT_HOURS
+local enabled = true
+local crit_charge = DEFAULT_CRIT
+local eco_mult = 1
 local warned_dead = false
 local warned_low = 0         -- low-battery warnings given for this battery (low_warning)
 local last_charge = nil      -- charge of cam_id at the previous look, to spot a new battery
@@ -102,23 +105,22 @@ end
 
 local function load_settings()
 	hours = clamp_hours(mcm("zone_bodycam_item/battery_hours", DEFAULT_HOURS))
-end
-
-local function bodycam_enabled()
-	return mcm("zone_bodycam/enabled", true) == true
-end
-
-local function critical()
+	enabled = mcm("zone_bodycam/enabled", true) == true
 	local c = item_device and item_device.get_power_critical and item_device.get_power_critical(ITEM_SECTION)
-	return tonumber(c) or DEFAULT_CRIT
-end
-
-local function eco_factor()
+	crit_charge = tonumber(c) or DEFAULT_CRIT
+	eco_mult = 1
 	if game_difficulties and game_difficulties.get_eco_factor then
 		local ok, f = pcall(game_difficulties.get_eco_factor, "battery_consumption")
-		if ok and tonumber(f) then return tonumber(f) end
+		if ok and tonumber(f) then eco_mult = tonumber(f) end
 	end
-	return 1
+	if not enabled and zbc_item_anim then zbc_item_anim.reset() end
+end
+
+local function carried_cam()
+	local obj = cam_id and level.object_by_id(cam_id)
+	local parent = obj and obj:parent()
+	if not (parent and parent:id() == (AC_ID or 0)) then return nil end
+	return obj
 end
 
 -- picks the carried bodycam with the most charge
@@ -150,19 +152,15 @@ function low_battery_alert()
 	return ok
 end
 
-local function refresh(now)
+local function refresh(now, silent)
 	if now >= next_scan then
 		next_scan = now + SCAN_MS
 		scan()
 	end
-	local obj = cam_id and level.object_by_id(cam_id)
-	local parent = obj and obj:parent()
-	if not (parent and parent:id() == AC_ID) then
-		cam_id = nil
-		obj = nil
-	end
+	local obj = carried_cam()
+	if not obj then cam_id = nil end
 	local was = cam_charged
-	cam_charged = obj and is_charged(obj:condition(), critical()) or false
+	cam_charged = obj and is_charged(obj:condition(), crit_charge) or false
 	local anim = zbc_item_anim
 	if was and not cam_charged and obj then
 		if not warned_dead and actor_menu and actor_menu.set_msg then
@@ -175,7 +173,11 @@ local function refresh(now)
 	end
 	-- a battery put on the camera (in the inventory) shows up as a jump in its charge
 	local charge = obj and obj:condition()
-	if charge and cam_charged then
+	if not obj then
+		warned_low = 0
+	elseif silent or cam_id ~= last_charge_id then
+		warned_low = low_warning(charge, 0)
+	elseif charge and cam_charged then
 		local warn
 		warned_low, warn = low_warning(charge, warned_low)
 		if warn then low_battery_alert() end
@@ -196,17 +198,18 @@ end
 
 -- the overlay's battery gauge (zbc_bodycam.script): charge 0..1 of the carried camera, nil without one
 function battery_level()
-	local obj = cam_id and level.object_by_id(cam_id)
+	local obj = carried_cam()
 	return obj and obj:condition() or nil
 end
 
 local function actor_on_update()
+	if not enabled then return end
 	local now = time_global()
 	local last = last_t
 	last_t = now
 	local obj = refresh(now)
-	if obj and cam_charged and last and bodycam_enabled() then
-		local c = drain_step(obj:condition(), now - last, hours, eco_factor())
+	if obj and has_power() and last then
+		local c = drain_step(obj:condition(), now - last, hours, eco_mult)
 		obj:set_condition(c)
 		last_charge = c                  -- our own drain is never mistaken for a new battery
 	end
@@ -218,10 +221,15 @@ local function actor_on_first_update()
 	last_t = nil
 	next_scan = 0
 	cam_charged = false
+	warned_low = 0
 	last_charge, last_charge_id = nil, nil
 	if zbc_item_anim then zbc_item_anim.reset() end
-	refresh(time_global())
+	refresh(time_global(), true)
 	warned_dead = not cam_charged    -- no "battery dead" message for a camera that was already dead
+end
+
+local function actor_on_net_destroy()
+	if zbc_item_anim then zbc_item_anim.reset() end
 end
 
 local function inventory_changed()
@@ -242,6 +250,7 @@ function on_game_start()
 	end
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
 	RegisterScriptCallback("actor_on_update", actor_on_update)
+	RegisterScriptCallback("actor_on_net_destroy", actor_on_net_destroy)
 	RegisterScriptCallback("actor_on_item_take", inventory_changed)
 	RegisterScriptCallback("actor_on_item_drop", inventory_changed)
 	RegisterScriptCallback("main_menu_on_quit", main_menu_on_quit)

@@ -136,35 +136,42 @@ local function underground()
 	return n and UNDERGROUND[n] or false
 end
 
--- cfg: zbc_bodycam settings; dt seconds. Returns the state table (read only).
-function frame(cfg, dt)
+-- cfg: zbc_bodycam settings; dt seconds; is_powered: false decays effects while off. Returns the state table (read only).
+function frame(cfg, dt, is_powered)
 	local actor = db.actor
 	local now = now_s()
 	if not actor then return F end
+	if F.death_t ~= 0 and actor.alive and actor:alive() then F.death_t = 0 end
 	dt = min(max(dt or 0, 0), 0.1)
+	local on = is_powered ~= false
 
 	-- interference
 	local target = 0
-	if cfg.fx_glitch then
+	if on and cfg.fx_glitch then
 		local ok_p, psy = pcall(read_psy, actor)
 		local ok_r, radv = pcall(read_rad, actor)
 		target = interference(storm_active() and 1 or 0,
 			1 - clamp01(ok_p and tonumber(psy) or 1),
 			clamp01(ok_r and tonumber(radv) or 0),
 			scan_anomalies(actor, now))
-	else
+	elseif not cfg.fx_glitch then
 		F.burst = 0
 	end
 	F.glitch = approach(F.glitch, target, 0.8, dt)
 	F.burst = approach(F.burst, 0, 2.5, dt)
 
 	-- low light
-	local hour = level and level.get_time_hours and level.get_time_hours() or 12
-	F.ir = approach(F.ir, ir_target(cfg.night_mode or 0, hour, underground()), 0.7, dt)
+	local is_ug = underground()
+	local ir_goal = 0
+	if on then
+		local hour = level and level.get_time_hours and level.get_time_hours() or 12
+		ir_goal = ir_target(cfg.night_mode or 0, hour, is_ug)
+	end
+	F.ir = approach(F.ir, ir_goal, 0.7, dt)
 
 	-- rain on the lens: builds up while it rains, dries slowly
 	local rain = 0
-	if cfg.lens_dirt and not underground() and level and level.rain_factor then
+	if cfg.lens_dirt and not is_ug and level and level.rain_factor then
 		rain = clamp01(tonumber(level.rain_factor()) or 0)
 	end
 	if rain > F.wet then
@@ -174,7 +181,7 @@ function frame(cfg, dt)
 	end
 	if not cfg.lens_dirt then F.blood_t = 0 end
 
-	F.event = cfg.event_marker and now < event_until or false
+	F.event = (on and cfg.event_marker and now < event_until) or false
 	return F
 end
 
@@ -225,7 +232,8 @@ end
 local function npc_on_hit_callback(npc, amount) on_hit_near(npc, amount) end
 local function monster_on_hit_callback(monster, amount) on_hit_near(monster, amount) end
 
-local function actor_on_before_death()
+function actor_on_before_death(who, flags)
+	if flags and flags.ret_value == false then return end
 	if not (enabled() and zbc_bodycam.fx_option("signal_lost")) then return end
 	F.death_t = now_s()
 	if zbc_bodycam.signal_lost then zbc_bodycam.signal_lost(F.death_t) end
@@ -235,6 +243,7 @@ local function actor_on_first_update() reset() end
 
 function on_game_start()
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("actor_on_net_destroy", reset)
 	RegisterScriptCallback("actor_on_weapon_fired", actor_on_weapon_fired)
 	RegisterScriptCallback("actor_on_before_hit", actor_on_before_hit)
 	RegisterScriptCallback("npc_on_hit_callback", npc_on_hit_callback)

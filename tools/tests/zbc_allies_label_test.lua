@@ -134,6 +134,208 @@ if type(zf) == "function" then
 	check(zf(170, 0.6) <= 40, "capped at MAX_ZOOM")
 end
 
+-- small quadruped height floor
+local bty = rawget(env, "box_top_y")
+check(type(bty) == "function", "box_top_y exists")
+if type(bty) == "function" then
+	check(math.abs(bty(0.10, 0.0, true) - 0.27) < 1e-6, "quadruped height floor uses 0.15 + 0.12")
+	check(math.abs(bty(0.10, 0.0, false) - 0.72) < 1e-6, "stalker height floor keeps 0.5 + 0.22")
+end
+
+-- known / id_progress lifecycle: kept across visible == false, cleared on load / net_destroy
+do
+	local cbs = {}
+	local now_ms = 1000
+	local function make_vec(x, y, z)
+		local v = { x = x or 0, y = y or 0, z = z or 0 }
+		function v:set(nx, ny, nz) self.x, self.y, self.z = nx or 0, ny or 0, nz or 0; return self end
+		function v:distance_to(o) local dx, dy, dz = self.x - o.x, self.y - o.y, self.z - o.z; return math.sqrt(dx*dx+dy*dy+dz*dz) end
+		function v:distance_to_sqr(o) local dx, dy, dz = self.x - o.x, self.y - o.y, self.z - o.z; return dx*dx+dy*dy+dz*dz end
+		return v
+	end
+	local function make_wnd()
+		local w = {}
+		return setmetatable(w, { __index = function() return function() return w end end })
+	end
+	local npc_pos = make_vec(0, 0, 20)
+	local npc_head = make_vec(0, 1.6, 20)
+	local npc = {
+		alive = function() return true end,
+		position = function() return npc_pos end,
+		relation = function() return 0 end,
+		has_info = function() return false end,
+		character_name = function() return "Tolik" end,
+		character_community = function() return "stalker" end,
+	}
+	local actor_pos = make_vec(0, 0, 0)
+	local actor = {
+		position = function() return actor_pos end,
+		see = function() return true end,
+	}
+	local ae
+	ae = setmetatable({
+		db = { actor = actor, storage = { [42] = { object = npc } } },
+		level = { object_by_id = function(id) return id == 42 and npc or nil end },
+		game_object = { enemy = 2, friend = 0, neutral = 1 },
+		IsStalker = function(o) return o == npc end,
+		IsMonster = function() return false end,
+		utils_obj = { safe_bone_pos = function() return npc_head end },
+		game = {
+			world2ui = function(v) return { x = 512, y = (v.y > 0.5) and 300 or 450 } end,
+			translate_string = function(s) return s end,
+		},
+		device = function()
+			return { width = 1920, height = 1080, fov = 75, cam_pos = make_vec(0, 1.6, 0), cam_dir = make_vec(0, 0, 1) }
+		end,
+		time_global = function() return now_ms end,
+		vector = make_vec,
+		vector2 = make_vec,
+		Frect = make_vec,
+		GetARGB = function() return 0 end,
+		RegisterScriptCallback = function(name, fn) cbs[name] = fn end,
+	}, { __index = _G })
+	local c = assert(loadfile(PATH))
+	setfenv(c, ae)
+	c()
+	ae.on_game_start()
+	check(type(cbs.actor_on_first_update) == "function" and type(cbs.actor_on_net_destroy) == "function",
+		"zbc_allies registers load/destroy callbacks")
+
+	local pool = { { box = make_wnd(), brk = make_wnd(), dot = make_wnd() } }
+	local cfg = {
+		allies = true, allies_range = 100, allies_dot_ratio = 0.7, allies_los = false,
+		allies_enemies = true, allies_mutants = true, allies_size = 1, allies_opacity = 1,
+		allies_color_companion = 2, allies_color_friend = 1, allies_color_enemy = 5,
+		allies_names = false, allies_style = 0,
+	}
+	local lens = { k = 0, ox = 0, oy = 0, roll = 0, dist = 0, zoom = 1, shutter = 0 }
+
+	ae.update(pool, cfg, lens, true)
+	now_ms = 1080
+	ae.update(pool, cfg, lens, true)
+	check(ae.id_progress_for(42) ~= nil and ae.id_progress_for(42) > 0, "partial identification tracks id_progress")
+	for step = 1, 5 do
+		now_ms = now_ms + 80
+		ae.update(pool, cfg, lens, true)
+	end
+	check(ae.is_known_id(42) == true, "nearby NPC becomes known")
+
+	-- Hiding HUD (inventory/PDA) preserves known
+	ae.update(pool, cfg, lens, false)
+	check(ae.is_known_id(42) == true, "visible == false preserves known")
+
+	-- actor_on_first_update clears known
+	cbs.actor_on_first_update()
+	check(ae.is_known_id(42) == false and ae.id_progress_for(42) == nil, "actor_on_first_update clears known and id_progress")
+
+	-- Re-identify, then actor_on_net_destroy clears known
+	now_ms = now_ms + 80
+	ae.update(pool, cfg, lens, true)
+	for step = 1, 5 do
+		now_ms = now_ms + 80
+		ae.update(pool, cfg, lens, true)
+	end
+	check(ae.is_known_id(42) == true, "re-identified NPC is known")
+	cbs.actor_on_net_destroy()
+	check(ae.is_known_id(42) == false and ae.id_progress_for(42) == nil, "actor_on_net_destroy clears known and id_progress")
+end
+
+-- allies_mutants decoupled from allies_enemies & allies_color_enemy=7, label clamping, visible==false preserves states
+do
+	local now_ms = 1000
+	local box_shown, min_gx, min_gy, max_gx, max_gy = 0, 9999, 9999, -9999, -9999
+	local function make_vec(x, y, z)
+		local v = { x = x or 0, y = y or 0, z = z or 0 }
+		function v:set(nx, ny, nz) self.x, self.y, self.z = nx or 0, ny or 0, nz or 0; return self end
+		function v:distance_to(o) local dx, dy, dz = self.x - o.x, self.y - o.y, self.z - o.z; return math.sqrt(dx*dx+dy*dy+dz*dz) end
+		function v:distance_to_sqr(o) local dx, dy, dz = self.x - o.x, self.y - o.y, self.z - o.z; return dx*dx+dy*dy+dz*dz end
+		return v
+	end
+	local function make_wnd(is_box, is_glyph)
+		local w = {}
+		return setmetatable(w, { __index = {
+			Show = function(_, v) if is_box and v then box_shown = box_shown + 1 end end,
+			SetWndPos = function(_, p)
+				if is_glyph then
+					if p.x < min_gx then min_gx = p.x end
+					if p.y < min_gy then min_gy = p.y end
+					if p.x > max_gx then max_gx = p.x end
+					if p.y > max_gy then max_gy = p.y end
+				end
+			end,
+			SetWndSize = function() end,
+			SetTextureColor = function() end,
+			SetTextureRect = function() end,
+			InitTexture = function() end,
+		} })
+	end
+	local mut_pos = make_vec(0, 0, 15)
+	local mut_head = make_vec(0, 0.8, 15)
+	local mut = {
+		alive = function() return true end,
+		position = function() return mut_pos end,
+		relation = function() return 2 end,
+		has_info = function() return false end,
+	}
+	local actor = { position = function() return make_vec(0, 0, 0) end, see = function() return true end }
+	local see_calls = 0
+	actor.see = function() see_calls = see_calls + 1; return true end
+	local ae
+	ae = setmetatable({
+		db = { actor = actor, storage = { [77] = { object = mut } } },
+		level = { object_by_id = function(id) return id == 77 and mut or nil end },
+		game_object = { enemy = 2, friend = 0, neutral = 1 },
+		IsStalker = function() return false end,
+		IsMonster = function(o) return o == mut end,
+		dynamic_news_helper = { GetMonsterDescription = function() return "dog" end },
+		utils_obj = { safe_bone_pos = function() return mut_head end },
+		game = {
+			world2ui = function(v) return { x = 5, y = (v.y > 0.3) and 5 or 45 } end,
+			translate_string = function(s) return s end,
+		},
+		device = function()
+			return { width = 1920, height = 1080, fov = 75, cam_pos = make_vec(0, 1.6, 0), cam_dir = make_vec(0, 0, 1) }
+		end,
+		zbc_font_metrics = { em = 32, advance = 20, cell_w = 32, cell_h = 40, pad = 4, cols = 16, rows = 16, tex_w = 512, tex_h = 512, first = 33, last = 126 },
+		time_global = function() return now_ms end,
+		vector = make_vec, vector2 = make_vec, Frect = make_vec,
+		GetARGB = function() return 0 end,
+		RegisterScriptCallback = function() end,
+	}, { __index = _G })
+	local c = assert(loadfile(PATH))
+	setfenv(c, ae)
+	c()
+
+	local glyphs_n, glyphs_f = {}, {}
+	for i = 1, 24 do glyphs_n[i] = make_wnd(false, true) end
+	for i = 1, 20 do glyphs_f[i] = make_wnd(false, true) end
+	local pool = { {
+		box = make_wnd(true), brk = make_wnd(false), dot = make_wnd(false),
+		lbl = { name = { glyphs = glyphs_n }, fac = { glyphs = glyphs_f } },
+	} }
+	local cfg = {
+		allies = true, allies_range = 100, allies_dot_ratio = 0.7, allies_los = true,
+		allies_enemies = false, allies_mutants = true, allies_size = 1, allies_opacity = 1,
+		allies_color_companion = 2, allies_color_friend = 1, allies_color_enemy = 7,
+		allies_names = true, allies_style = 1,
+	}
+	local lens = { k = 0, ox = 0, oy = 0, roll = 0, dist = 0, zoom = 1, shutter = 0 }
+
+	ae.update(pool, cfg, lens, true)
+	now_ms = 1050
+	ae.update(pool, cfg, lens, true)
+	check(box_shown >= 1, "mutant remains visible when allies_enemies=false and allies_color_enemy=7")
+	check(min_gx >= -10 and min_gy >= -10 and max_gx <= 1024 and max_gy <= 768,
+		("label glyphs clamped on screen (min=%.1f,%.1f max=%.1f,%.1f)"):format(min_gx, min_gy, max_gx, max_gy))
+
+	-- visible == false hides HUD without wiping states (no extra see_calls on next frame)
+	local see_before = see_calls
+	ae.update(pool, cfg, lens, false)
+	now_ms = 1010
+	ae.update(pool, cfg, lens, true)
+	check(see_calls == see_before, "visible == false preserves states and avoids re-raycasting on reopen")
+end
+
 if failures > 0 then
 	print(failures .. " check(s) failed")
 	os.exit(1)

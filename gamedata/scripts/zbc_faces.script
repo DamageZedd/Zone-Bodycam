@@ -9,7 +9,13 @@
 	Called by zbc_bodycam.script every frame while the camera records (MCM: Blur faces).
 ]]
 
-local floor, ceil, min, max, sqrt = math.floor, math.ceil, math.min, math.max, math.sqrt
+local floor, ceil, min, max, sqrt, tan, rad = math.floor, math.ceil, math.min, math.max, math.sqrt, math.tan, math.rad
+
+local function clamp01(v)
+	if v < 0 then return 0 end
+	if v > 1 then return 1 end
+	return v
+end
 
 -- No distance limit: through a scope a face hundreds of metres away fills the screen. What decides is
 -- the face's size on screen, so a far face without a scope (a few pixels) is left alone.
@@ -91,6 +97,31 @@ function pack_rows(list, n, out)
 	return rows_n
 end
 
+-- Union AABB across list[1..n] in rendered-image uv, padded by 0.002 and quantized to 12 bits per bound.
+-- Returns count, packed_u, packed_v, valid_flag for bus_zbc_faces.
+function pack_bounds(list, n, asp)
+	if not list or not n or n <= 0 then return 0, 0, 0, 0 end
+	asp = max(tonumber(asp) or (16 / 9), 0.1)
+	local pad = 0.002
+	local min_u, min_v, max_u, max_v = 1, 1, 0, 0
+	for i = 1, n do
+		local f = list[i]
+		local cu, cv, half = f[1], f[2], f[3]
+		local hu = half / asp
+		local x0, x1 = cu - hu - pad, cu + hu + pad
+		local y0, y1 = cv - half - pad, cv + half + pad
+		if x0 < min_u then min_u = x0 end
+		if x1 > max_u then max_u = x1 end
+		if y0 < min_v then min_v = y0 end
+		if y1 > max_v then max_v = y1 end
+	end
+	local min_u_q = floor(clamp01(min_u) * 4095)
+	local max_u_q = ceil(clamp01(max_u) * 4095)
+	local min_v_q = floor(clamp01(min_v) * 4095)
+	local max_v_q = ceil(clamp01(max_v) * 4095)
+	return n, min_u_q + max_u_q * 4096, min_v_q + max_v_q * 4096, 1.0
+end
+
 local function scan(actor)
 	local apos = actor:position()
 	local n = 0
@@ -128,7 +159,7 @@ end
 local function visible(actor, obj, id, now, cam)
 	local e = los[id]
 	if not e then
-		e = { ok = false, next = 0 }
+		e = { ok = false, next = now + (id % 5) * (LOS_INTERVAL * 0.2) }
 		los[id] = e
 	end
 	if now >= e.next then
@@ -142,9 +173,9 @@ local function visible(actor, obj, id, now, cam)
 	return e.ok
 end
 
--- Returns rows, n: up to max_n squares { cu, cv, half_v, blk_v }, nearest first.
+-- Returns rows, n, aspect: up to max_n squares { cu, cv, half_v, blk_v }, nearest first.
 function update(actor, max_n)
-	if not actor then return rows, 0 end
+	if not actor then return rows, 0, 16 / 9 end
 	tmp_c   = tmp_c   or vector()
 	tmp_t   = tmp_t   or vector()
 	tmp_up   = tmp_up   or vector():set(0, 1, 0)
@@ -161,8 +192,12 @@ function update(actor, max_n)
 
 	local dev = device()
 	local W, H = dev and dev.width or 0, dev and dev.height or 0
-	if W <= 0 or H <= 0 then return rows, 0 end
-	local a = W / H
+	if W <= 0 or H <= 0 then return rows, 0, 16 / 9 end
+	local a = max(W / H, 0.1)
+	local fov = tonumber(dev.fov) or 75
+	local tan_half = tan(rad(min(max(fov, 1), 170) * 0.5))
+	local max_dist = (HEAD_HALF * H * max(a, 1)) / (2 * MIN_FACE_PX * max(tan_half, 1e-4)) + 5
+	local max_d2 = max_dist * max_dist
 	-- the square's size comes from a point HEAD_HALF to the side of the face: a sideways offset stays
 	-- its full length on screen whatever the pitch (world up, only when looking straight up or down)
 	local side = tmp_up
@@ -177,6 +212,7 @@ function update(actor, max_n)
 	local n = 0
 	for i = 1, #cands do
 		if n >= max_n then break end
+		if scan_d2[i] and scan_d2[i] > max_d2 then break end
 		local id = cands[i]
 		local obj = level.object_by_id(id)
 		-- cheap skip for NPCs behind the camera before the bone lookup
@@ -205,5 +241,5 @@ function update(actor, max_n)
 			end
 		end
 	end
-	return rows, n
+	return rows, n, a
 end

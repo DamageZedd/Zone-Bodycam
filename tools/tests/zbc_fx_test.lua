@@ -103,6 +103,135 @@ if type(lw) == "function" then
 	check(given == 1 and not warn, "no charge: unchanged")
 end
 
+-- actor_on_before_death respects flags.ret_value == false and frame() clears death_t when alive
+do
+	local sig_calls, t_ms, alive = 0, 5000, true
+	local fx_env = load("gamedata/scripts/zbc_fx.script", false)
+	fx_env.time_global = function() return t_ms end
+	fx_env.db = { actor = { alive = function() return alive end, position = function() return { x = 0, y = 0, z = 0 } end } }
+	fx_env.zbc_bodycam = {
+		fx_enabled = function() return true end,
+		fx_option = function() return true end,
+		signal_lost = function() sig_calls = sig_calls + 1 end,
+	}
+	fx_env.actor_on_before_death(nil, { ret_value = false })
+	check(sig_calls == 0, "cancelled death does not trigger signal_lost")
+	local st = fx_env.frame({}, 0.016)
+	check(st.death_t == 0, "cancelled death leaves death_t == 0")
+
+	alive = false
+	fx_env.actor_on_before_death(nil, { ret_value = true })
+	check(sig_calls == 1 and st.death_t == 5, "real death triggers signal_lost and records death_t")
+
+	alive = true
+	st = fx_env.frame({}, 0.016)
+	check(st.death_t == 0, "revived/alive actor clears F.death_t")
+
+	-- Unpowered decay: glitch, ir, and wet decay toward 0/rain instead of freezing
+	fx_env.level = { get_time_hours = function() return 23 end, rain_factor = function() return 1 end }
+	local cfg_fx = { fx_glitch = false, night_mode = 1, lens_dirt = true }
+	for _ = 1, 20 do fx_env.frame(cfg_fx, 0.1, true) end
+	check(st.ir > 0.5 and st.wet > 0.1, "powered frame builds up ir and wet")
+	fx_env.level = { get_time_hours = function() return 23 end, rain_factor = function() return 0 end }
+	local ir_before, wet_before = st.ir, st.wet
+	fx_env.frame(cfg_fx, 0.1, false)
+	check(st.ir < ir_before and st.wet < wet_before, "unpowered frame continues decaying ir and wet")
+end
+
+-- zbc_bodycam.script: dead/fx_last reload recovery & Shader Bus <= 6 uint4 gating
+do
+	local registered, set_calls, uint_calls = {}, {}, {}
+	local now_ms, alive = 1000, true
+	local bc_env
+	local stub_vec = { x = 0, y = 0, z = 0, set = function(self) return self end }
+	local mock_globals = {
+		device = function() return { width = 1920, height = 1080, fov = 75, cam_pos = stub_vec, cam_dir = stub_vec, cam_right = stub_vec, cam_top = stub_vec } end,
+		time_global = function() return now_ms end,
+		vector = function() return { x = 0, y = 0, z = 0, set = function(self) return self end } end,
+		vector2 = function() return { set = function(self) return self end } end,
+		Frect = function() return { set = function(self) return self end } end,
+		db = { actor = { alive = function() return alive end, position = function() return stub_vec end, character_name = function() return "Strelok" end } },
+		level = { present = function() return true end, get_time_hours = function() return 12 end },
+		game = {
+			get_game_time = function() return { get = function() return 2012, 5, 1, 12, 0, 0, 0 end } end,
+			translate_string = function(s) return s end,
+		},
+		shader_bus = {
+			version = function() return 6 end,
+			try_register = function(id) registered[id] = true; return id end,
+			set = function(tok, x, y, z, w) set_calls[tok] = { x, y, z, w } end,
+			set_array_uint = function(tok) uint_calls[#uint_calls + 1] = tok end,
+		},
+		zbc_osd_atlas = { ROWS = { { 1, 2, 3, 4 } } },
+		zbc_font_metrics = load("gamedata/scripts/zbc_font_metrics.script", false),
+		zbc_allies = { build = function() return {} end, update = function() end, clear_known = function() end, upper_cp1251 = function(s) return s end },
+		zbc_faces = { reset = function() end, update = function() return {}, 0, 16 / 9 end },
+		zbc_fx = { frame = function() return { glitch = 0, burst = 0, death_t = 0, ir = 0, wet = 0, blood_seed = 0, blood_t = 0, event = false } end },
+		load_var = function(_, _, d) return d end,
+		save_var = function() end,
+		get_hud = function() return { AddDialogToRender = function() end, RemoveDialogToRender = function() end } end,
+		CScriptXmlInit = function() return {
+			ParseFile = function() end,
+			InitStatic = function()
+				local w = {}
+				return setmetatable(w, { __index = function() return function() return w end end })
+			end,
+		} end,
+		CUIScriptWnd = { SetWndRect = function() end, SetAutoDelete = function() end },
+		super = function() end,
+		class = function(name)
+			local cls = {}
+			cls.__index = cls
+			setmetatable(cls, {
+				__index = bc_env.CUIScriptWnd,
+				__call = function(c, ...)
+					local inst = setmetatable({}, c)
+					if inst.__init then inst:__init(...) end
+					return inst
+				end,
+			})
+			bc_env[name] = cls
+			return function() end
+		end,
+		RegisterScriptCallback = function() end,
+		ui_mcm = false,
+		actor_menu = false,
+		main_menu = false,
+		printf = function() end,
+	}
+	bc_env = setmetatable(mock_globals, { __index = function(_, k) return _G[k] or stub end })
+	local bc_chunk = assert(loadfile("gamedata/scripts/zbc_bodycam.script"))
+	setfenv(bc_chunk, bc_env)
+	bc_chunk()
+
+	bc_env.actor_on_first_update()
+	bc_env.actor_on_update()
+	check(registered["zbc_motion"] == true and registered["zbc_lens"] == true, "Bus 6 registers float4 lanes")
+	check(not registered["zbc_osd_chars"] and not registered["zbc_osd_atlas"] and not registered["zbc_face_rows"],
+		"Bus 6 skips uint4 lane registration")
+	check(#uint_calls == 0, "Bus 6 never calls set_array_uint")
+
+	-- Death -> reload recovery (actor_on_first_update) and live-actor recovery (actor_on_update)
+	alive = false
+	bc_env.signal_lost(1.0)
+	check(set_calls["zbc_glitch"] and set_calls["zbc_glitch"][3] == 1.0, "signal_lost sends death_t")
+
+	-- Live actor recovery without reload (cancelled death / respawn)
+	alive = true
+	now_ms = 2000
+	bc_env.actor_on_update()
+	check(set_calls["zbc_glitch"] and set_calls["zbc_glitch"][3] == 0, "actor_on_update recovers when dead actor is alive")
+
+	-- Death -> save reload (actor_on_first_update)
+	alive = false
+	bc_env.signal_lost(2.0)
+	alive = true
+	bc_env.actor_on_first_update()
+	now_ms = 3000
+	bc_env.actor_on_update()
+	check(set_calls["zbc_glitch"] and set_calls["zbc_glitch"][3] == 0, "actor_on_first_update resets dead/fx_last across reload")
+end
+
 if failures > 0 then
 	print(failures .. " check(s) failed")
 	os.exit(1)

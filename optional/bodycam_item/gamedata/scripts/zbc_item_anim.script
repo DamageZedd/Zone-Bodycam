@@ -62,7 +62,7 @@ local kind = nil
 local t_phase = 0
 local t_end = 0
 local prev_slot = nil
-local det = nil
+local det_id = nil
 local hold_since = nil     -- power hold for "insert"
 local playing_since = nil
 local fov_changed = false
@@ -111,8 +111,9 @@ local function begin(now)
 	queued = nil
 	phase, t_phase = "holster", now
 	prev_slot = actor:active_slot()
-	det = actor:active_detector()
-	if det then det:switch_state(2) end
+	local d = actor:active_detector()
+	det_id = d and d:id() or nil
+	if d then d:switch_state(2) end
 	actor:activate_slot(0)
 	game.only_allow_movekeys(true)
 	if game.set_actor_allow_ladder then game.set_actor_allow_ladder(false) end
@@ -131,19 +132,27 @@ local function play(now)
 	if kind == "insert" then playing_since = now end
 end
 
-local function finish()
-	local actor = db.actor
-	if phase == "playing" and game.stop_hud_motion then game.stop_hud_motion() end   -- never left cycling
-	game.only_allow_movekeys(false)
-	if game.set_actor_allow_ladder then game.set_actor_allow_ladder(true) end
+local function cleanup_hands()
+	if phase == "playing" and game and game.stop_hud_motion then pcall(game.stop_hud_motion) end   -- never left cycling
+	if game and game.only_allow_movekeys then pcall(game.only_allow_movekeys, false) end
+	if game and game.set_actor_allow_ladder then pcall(game.set_actor_allow_ladder, true) end
 	if fov_changed and fov_anim_manager and fov_anim_manager.restore_fov then pcall(fov_anim_manager.restore_fov) end
 	fov_changed = false
+end
+
+local function finish()
+	local actor = db.actor
+	cleanup_hands()
 	if actor then
 		actor:activate_slot(prev_slot or 0)
-		if det and actor:active_detector() == nil then pcall(det.switch_state, det, 1) end
+		if det_id and actor:active_detector() == nil and level and level.object_by_id then
+			local d = level.object_by_id(det_id)
+			local p = d and d:parent()
+			if p and p:id() == (AC_ID or 0) then pcall(d.switch_state, d, 1) end
+		end
 	end
 	if kind == "insert" then hold_since, playing_since = nil, nil end
-	phase, kind, det, prev_slot = nil, nil, nil, nil
+	phase, kind, det_id, prev_slot = nil, nil, nil, nil
 end
 
 -- an engine call that fails must never leave the player locked to movement keys: log it, give the hands back
@@ -157,7 +166,7 @@ local function guarded(fn, now)
 		if not ok2 then
 			printf("! [Zone Bodycam] bodycam animation cleanup: %s", tostring(err2))
 			pcall(game.only_allow_movekeys, false)
-			phase, kind, det, prev_slot = nil, nil, nil, nil
+			phase, kind, det_id, prev_slot = nil, nil, nil, nil
 		end
 	end
 end
@@ -172,14 +181,17 @@ function update(now, carried)
 	end
 	if phase == "holster" then
 		local actor = db.actor
-		if (actor and actor:active_item() == nil) or now - t_phase > HOLSTER_MAX_MS then guarded(play, now) end
+		if (actor and actor:active_item() == nil and actor:active_detector() == nil) or now - t_phase > HOLSTER_MAX_MS then
+			guarded(play, now)
+		end
 	elseif phase == "playing" then
 		if now >= t_end + 50 then guarded(finish, now) end
 	end
 end
 
--- a load or a death in the middle: hands back, nothing pending
+-- a load or a death in the middle: safe cleanup only, never touch stale slots or detectors
 function reset()
-	if phase then finish() end
+	if phase then cleanup_hands() end
+	phase, kind, det_id, prev_slot = nil, nil, nil, nil
 	queued, hold_since, playing_since = nil, nil, nil
 end

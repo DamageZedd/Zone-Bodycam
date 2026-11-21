@@ -104,6 +104,48 @@ if type(pack_face) == "function" and type(pack_rows) == "function" then
 	check(math.abs(u - 0.05) < step, "face 5 sits in the first half of row 3")
 end
 
+-- 12-bit AABB packing for bus_zbc_faces.yzw (matches HLSL unpacking in shaders/r3/zbc_lens.h)
+local pack_bounds = rawget(env, "pack_bounds")
+check(type(pack_bounds) == "function", "pack_bounds exists")
+if type(pack_bounds) == "function" then
+	local function unpack_hlsl(py, pz)
+		local max_u = math.floor(py * (1.0 / 4096.0))
+		local min_u = (py - max_u * 4096.0) * (1.0 / 4095.0)
+		max_u = max_u * (1.0 / 4095.0)
+		local max_v = math.floor(pz * (1.0 / 4096.0))
+		local min_v = (pz - max_v * 4096.0) * (1.0 / 4095.0)
+		max_v = max_v * (1.0 / 4095.0)
+		return min_u, min_v, max_u, max_v
+	end
+
+	local c0, py0, pz0, pw0 = pack_bounds({}, 0, 16 / 9)
+	check(c0 == 0 and py0 == 0 and pz0 == 0 and pw0 == 0, "empty face list packs as (0, 0, 0, 0)")
+
+	for _, asp in ipairs({ 4 / 3, 16 / 9, 21 / 9, 32 / 9 }) do
+		local faces = {
+			{ 0.25, 0.35, 0.08, 0.02 },
+			{ 0.72, 0.61, 0.12, 0.03 },
+		}
+		local cnt, py, pz, pw = pack_bounds(faces, #faces, asp)
+		check(cnt == 2 and pw == 1.0, ("aspect %.2f: count=2, w=1.0"):format(asp))
+		check(py >= 0 and py <= 16777215 and pz >= 0 and pz <= 16777215, "packed bounds fit in exact 24-bit float32 integers")
+		local min_u, min_v, max_u, max_v = unpack_hlsl(py, pz)
+		for _, f in ipairs(faces) do
+			local hu = f[3] / asp
+			local hv = f[3]
+			check(min_u <= math.max(0, f[1] - hu - 0.002) + 1e-6, "unpacked min_u encloses padded face left")
+			check(max_u >= math.min(1, f[1] + hu + 0.002) - 1e-6, "unpacked max_u encloses padded face right")
+			check(min_v <= math.max(0, f[2] - hv - 0.002) + 1e-6, "unpacked min_v encloses padded face top")
+			check(max_v >= math.min(1, f[2] + hv + 0.002) - 1e-6, "unpacked max_v encloses padded face bottom")
+		end
+	end
+
+	-- clamping at 0.0 and 1.0 edges
+	local cnt_e, py_e, pz_e, pw_e = pack_bounds({ { -0.1, 1.1, 0.2, 0.05 }, { 0.9, 0.0, 0.2, 0.05 } }, 2, 16 / 9)
+	local eu0, ev0, eu1, ev1 = unpack_hlsl(py_e, pz_e)
+	check(cnt_e == 2 and pw_e == 1.0 and eu0 == 0 and ev0 == 0 and eu1 == 1 and ev1 == 1, "edge clamping covers [0, 1]")
+end
+
 if failures > 0 then
 	print(failures .. " check(s) failed")
 	os.exit(1)

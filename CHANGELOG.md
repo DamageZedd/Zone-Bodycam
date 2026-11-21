@@ -30,6 +30,23 @@
 - **Every stalker gets a box, enemies included** (MCM **Ally markers > Mark enemies**, on by default). The box is white while the stalker is unknown and, once the name has decoded, fades to green for friendly (neutrals count as friendly) or red for enemy (MCM colours: friendly, enemy, companion; the old neutral colour option is gone). Dots far away show the final colour straight away.
   - Test: `tools/tests/zbc_allies_label_test.lua`.
 
+### Changed
+- **Script & shader bus optimization pass**:
+  - `zbc_faces.script` & `zbc_bodycam.script`: packed padded union face AABB `(min_u, min_v, max_u, max_v)` into `bus_zbc_faces.yzw` for shader early-out, distance-culled face candidates by FOV before bone/projection lookups, staggered initial 10 Hz `ray_pick` checks, and avoided redundant `zbc_faces.reset()` calls while face blur is disabled.
+  - `zbc_allies.script`: cached label font metrics per screen resolution instead of allocating a closure per frame, cached per-entity `box_aspect` and quadruped status, reused a module buffer in `decode_text()`, relaxed the vertical height floor (`0.15 m` vs `0.5 m`) for small four-legged mutants, and staggered initial `next_los` checks.
+  - `zbc_item.script`: cached MCM, `item_device`, and `game_difficulties` settings on load/`on_option_change` instead of reading them every frame, and skipped `zbc_item_anim.update()` when the mod is disabled.
+  - `zbc_fx.script`: cached `underground()` once per frame.
+
+### Fixed
+- **Permanent mod lockout after first death (`zbc_bodycam.script`)**: hoisted `dead` and `fx_last` locals above `actor_on_first_update()` and reset them in `actor_on_net_destroy()`, plus added live-actor recovery in `actor_on_update()` when another mod cancels death or revives the actor.
+- **Cancelled death signal loss (`zbc_fx.script`)**: respected `flags.ret_value == false` in `actor_on_before_death` and cleared `F.death_t` when the actor is alive.
+- **Shader Bus `<= 6` compatibility (`zbc_bodycam.script`)**: gated registration of the three Bus-7 `uint4` lanes (`osd_chars`, `osd_atlas`, `face_rows`) on `supports_uint_bus()` (`version() >= 7`) so older Shader Bus engines keep the lens and 2D HUD fallback cleanly, and added the `version() >= 7` guard to `upload_osd_chars()`.
+- **Bodycam item animation safety & detector holster wait (`zbc_item_anim.script`)**: made `reset()` perform safe hand/FOV/lock cleanup only without touching stale `prev_slot` or `det` userdata on save load/level change, re-fetched `det` by ID with `parent():id() == AC_ID` in `finish()`, and waited for `actor:active_detector() == nil` alongside `active_item() == nil` before playing motions.
+- **Bodycam item battery warning, drain & ownership (`zbc_item.script`)**: silently seeded `warned_low` on load and camera swaps (preventing false low-battery alerts on save load), gated drain on `has_power()` rather than `cam_charged` during battery-insert animations, and verified `parent:id() == AC_ID` in `battery_level()`.
+- **Stale identification cache across loads (`zbc_allies.script`)**: cleared `known` and `id_progress` on save load / level exit while keeping them intact when opening inventory/PDA.
+- **Documentation & repo hygiene**: updated `README.md` (enemy/mutant markers, face blur, camera effects, Russian localization, Bodycam exes + Bodycam GAMMA Patch note, script list, 4-arg `make_overlay_assets.py` command) and marked `*.mp4` and `*.webp` as `binary` in `.gitattributes`.
+- **Marker visibility, label clamping, inventory state & FX decay (`zbc_allies.script`, `zbc_fx.script`, `zbc_bodycam.script`)**: decoupled `allies_mutants` from `allies_enemies` and `allies_color_enemy = 7` (with red fallback), clamped marker label positions inside `[0..1024, 0..768]`, preserved tracked marker `states` across `visible == false` (inventory/PDA), and kept `wet`/`ir`/`glitch` decay ticking while unpowered.
+
 ## v1.1.0 - 2026-11-20
 
 ### Added

@@ -42,27 +42,34 @@ float4 main( p_postpr I ) : SV_Target
 		uv_0 = zbc_fx_uv(I.Tex0, fx_g, fx_rim);
 		uv_1 = I.Tex1 + (uv_0 - I.Tex0);
 	}
+	bool	same_tc = (abs(I.Tex1.x - I.Tex0.x) + abs(I.Tex1.y - I.Tex0.y) < 0.000001);
 	[branch] if (ZBC_ACTIVE)
 	{
 		t_0 = zbc_lens_sample(s_base0, uv_0, src_0);
-		t_1 = (abs(I.Tex1.x - I.Tex0.x) + abs(I.Tex1.y - I.Tex0.y) < 0.000001) ? t_0 : zbc_lens_sample(s_base1, uv_1);
 		[branch] if (fx_g > 0.05)
 		{
 			float2 o = float2(0.006 * fx_g, 0.0);
-			t_0.r = zbc_lens_sample(s_base0, uv_0 + o).r;
-			t_0.b = zbc_lens_sample(s_base0, uv_0 - o).b;
+			t_0.r = max(s_base0.SampleLevel(smp_rtlinear, src_0 + o, 0).r, 0.0);
+			t_0.b = max(s_base0.SampleLevel(smp_rtlinear, src_0 - o, 0).b, 0.0);
 		}
+		[branch] if (same_tc)
+			t_1 = t_0;
+		else
+			t_1 = zbc_lens_sample(s_base1, uv_1);
 	}
 	else [branch] if (ZBC_FACES || ZBC_FX)
 	{
-		t_0 	= zbc_plain_sample(s_base0, uv_0);
-		t_1 	= zbc_plain_sample(s_base1, uv_1);
+		t_0 = zbc_plain_sample(s_base0, uv_0);
 		[branch] if (fx_g > 0.05)
 		{
 			float2 o = float2(0.006 * fx_g, 0.0);
-			t_0.r = zbc_plain_sample(s_base0, uv_0 + o).r;
-			t_0.b = zbc_plain_sample(s_base0, uv_0 - o).b;
+			t_0.r = s_base0.SampleLevel(smp_rtlinear, uv_0 + o, 0).r;
+			t_0.b = s_base0.SampleLevel(smp_rtlinear, uv_0 - o, 0).b;
 		}
+		[branch] if (same_tc)
+			t_1 = t_0;
+		else
+			t_1 = zbc_plain_sample(s_base1, uv_1);
 	}
 	else
 	{
@@ -80,7 +87,7 @@ float4 main( p_postpr I ) : SV_Target
 		image_o *= scene_vis;
 	}
 	[branch] if (ZBC_FX || bus_zbc_ir.x > 0.001)
-		image_o = zbc_fx_color(image_o, I.Tex0, fx_g, fx_rim);
+		image_o = zbc_fx_color(image_o, I.Tex0, fx_g, fx_rim, scene_vis);
 	float	osd_mask = 0.0;
 	[branch] if (ZBC_ACTIVE)
 		zbc_osd_composite(image_o, I.Tex0, osd_mask);

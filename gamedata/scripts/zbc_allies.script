@@ -220,21 +220,22 @@ DECODE_DELAY = 0.12          -- seconds of pure scramble before the first letter
 DECODE_STEP  = 0.035         -- seconds between letters locking
 DECODE_HZ    = 20            -- scramble changes per second
 
+local decode_buf = {}
+
 function decode_text(text, t, seed, flicker_t)
 	local len = #text
 	if t >= DECODE_DELAY + len * DECODE_STEP then return text, true end
 	local step = floor(max(flicker_t or t, 0) * DECODE_HZ)
-	local out = {}
 	for i = 1, len do
 		local ch = text:sub(i, i)
 		if ch == " " or t >= DECODE_DELAY + (i - 1) * DECODE_STEP then
-			out[i] = ch
+			decode_buf[i] = ch
 		else
 			local h = (seed * 7919 + i * 104729 + step * 1299709) % #SCRAMBLE
-			out[i] = SCRAMBLE:sub(h + 1, h + 1)
+			decode_buf[i] = SCRAMBLE:sub(h + 1, h + 1)
 		end
 	end
-	return table.concat(out), false
+	return table.concat(decode_buf, "", 1, len), false
 end
 
 -- the faction's display name in the game's language (as the news feed shows it), e.g. "CLEAR SKY"
@@ -318,9 +319,10 @@ local function scan(actor, range)
 	local n = 0
 	for id, st in pairs(db.storage) do
 		local obj = st and st.object
-		if obj and id ~= 0 and (IsStalker(obj) or (scan_mutants and IsMonster(obj))) and obj:alive() then
+		local is_mon = obj and IsMonster and IsMonster(obj)
+		if obj and id ~= 0 and (IsStalker(obj) or (scan_mutants and is_mon)) and obj:alive() then
 			local d2 = obj:position():distance_to_sqr(apos)
-			if d2 <= r2 and (scan_enemies or obj:relation(actor) ~= game_object.enemy) then
+			if d2 <= r2 and (is_mon or scan_enemies or obj:relation(actor) ~= game_object.enemy) then
 				if n < POOL or d2 < scan_d2[POOL] then
 					local limit = (n < POOL) and (n + 1) or POOL
 					local pos = limit
@@ -396,10 +398,16 @@ local function npc_faction(obj)
 	return label_text(game.translate_string("st_zbc_mutant"), FACTION_CHARS)
 end
 
-local function project_box(obj, L, a, ux, uy, size, W)
+function box_top_y(head_y, feet_y, is_quad)
+	local min_h = is_quad and 0.15 or 0.5
+	local top_pad = is_quad and 0.12 or 0.22
+	return max(head_y, feet_y + min_h) + top_pad
+end
+
+local function project_box(obj, L, a, ux, uy, size, W, aspect, is_quad)
 	local feet = obj:position()
 	local head = utils_obj.safe_bone_pos(obj, "bip01_head") or feet
-	tmp_top:set(head.x, max(head.y, feet.y + 0.5) + 0.22, head.z)
+	tmp_top:set(head.x, box_top_y(head.y, feet.y, is_quad), head.z)
 	local tu, tv = project(tmp_top)
 	local fu, fv = project(feet)
 	if not (tu and fu) then return nil end
@@ -408,7 +416,8 @@ local function project_box(obj, L, a, ux, uy, size, W)
 	local h_ui = abs(fv - tv) * 768
 	if h_ui <= 2 then return nil end
 	h_ui = h_ui * size
-	local w_ui = (h_ui / uy) * box_aspect(obj) * ux
+	local asp = aspect or box_aspect(obj)
+	local w_ui = (h_ui / uy) * asp * ux
 	local cx = (tu + fu) * 0.5 * 1024
 	local cy = (tv + fv) * 0.5 * 768
 	if cx + w_ui * 0.5 <= 0 or cx - w_ui * 0.5 >= 1024 or cy + h_ui * 0.5 <= 0 or cy - h_ui * 0.5 >= 768 then
@@ -421,11 +430,19 @@ end
 -- Animation & Slot Rendering
 ---------------------------------------------------------------------------------------------------
 
+local function ensure_entity_shape(ent, obj)
+	if ent.aspect ~= nil then return end
+	local kind = (not IsStalker(obj)) and mutant_kind(obj) or nil
+	ent.aspect = box_aspect(obj, kind)
+	ent.quad = kind and QUADRUPED[kind] or false
+end
+
 local function refresh_projections(ent, obj, L, a, ux, uy, size, dot_w, dot_h, W)
 	local bcx, dcx
 	if ent.target_dot == 0 or ent.dot_t < 0.99 then
+		ensure_entity_shape(ent, obj)
 		local bcy, bw, bh
-		bcx, bcy, bw, bh = project_box(obj, L, a, ux, uy, size, W)
+		bcx, bcy, bw, bh = project_box(obj, L, a, ux, uy, size, W, ent.aspect, ent.quad)
 		if bcx then
 			ent.bcx, ent.bcy, ent.bw, ent.bh = bcx, bcy, bw, bh
 		end
@@ -551,7 +568,8 @@ local function step_entity(
 	local ent = states[id]
 	local obj = level.object_by_id(id)
 	local rel = obj and obj:relation(actor)
-	if not obj or (rel == game_object.enemy and not cfg.allies_enemies) then
+	local is_mon = obj and IsMonster and IsMonster(obj)
+	if not obj or (is_mon and not cfg.allies_mutants) or (not is_mon and rel == game_object.enemy and not cfg.allies_enemies) then
 		states[id] = nil
 		return false
 	end
@@ -562,7 +580,7 @@ local function step_entity(
 	if IsStalker(obj) and obj:has_info("npcx_is_companion") then
 		col = cols.companion
 	elseif rel == game_object.enemy then
-		col = cols.enemy
+		col = is_mon and (cols.enemy or COLORS[6]) or cols.enemy
 	else
 		col = cols.friend
 	end
@@ -592,11 +610,14 @@ local function step_entity(
 	if not ent then
 		if not in_range then return false end
 		local init_dot = (dist > dot_dist) and 1 or 0
+		local kind = (not IsStalker(obj)) and mutant_kind(obj) or nil
+		local asp = box_aspect(obj, kind)
+		local is_quad = kind and QUADRUPED[kind] or false
 		local bcx, bcy, bw, bh, dcx, dcy
 		if init_dot == 1 then
 			dcx, dcy = project_dot(obj, L, a, W)
 		else
-			bcx, bcy, bw, bh = project_box(obj, L, a, ux, uy, cfg.allies_size, W)
+			bcx, bcy, bw, bh = project_box(obj, L, a, ux, uy, cfg.allies_size, W, asp, is_quad)
 		end
 		if not (bcx or dcx) then return false end
 		if not has_los(actor, obj, id, cfg.allies_los, cam_vec) then return false end
@@ -605,10 +626,12 @@ local function step_entity(
 			target_vis = 1,
 			los_grace = LOS_GRACE,
 			los_ok = true,
-			next_los = now + LOS_INTERVAL,
+			next_los = now + LOS_INTERVAL + (id % 4) * (LOS_INTERVAL * 0.25),
 			dot_t = init_dot,
 			target_dot = init_dot,
 			col = col,
+			aspect = asp,
+			quad = is_quad,
 			name = npc_name(obj),
 			faction = npc_faction(obj),
 			seed = id % 9973,
@@ -721,8 +744,9 @@ local function draw_line(line, text, cx, y, argb, M)
 		for c = 1, n do line.glyphs[c]:SetTextureColor(argb) end
 	end
 
-	local x0 = cx - n * M.adv * 0.5 - M.pad_x
-	local y0 = y - M.pad_y
+	local total_w = n * M.adv
+	local x0 = min(max(cx - total_w * 0.5, 0), max(1024 - total_w, 0)) - M.pad_x
+	local y0 = min(max(y, 0), max(768 - M.line_h, 0)) - M.pad_y
 	local was_shown = line.shown
 	for c = 1, count do
 		local gl = line.glyphs[c]
@@ -751,6 +775,14 @@ local function draw_label(slot, ent, cx, top, alpha, r, g, b)
 
 	local fac_y = top - LG.gap - LG.f.line_h
 	local name_y = fac_y - LG.line_gap - LG.n.line_h
+	if name_y < 0 then
+		name_y = 0
+		fac_y = LG.n.line_h + LG.line_gap
+	end
+	if fac_y + LG.f.line_h > 768 then
+		fac_y = max(768 - LG.f.line_h, 0)
+		name_y = max(fac_y - LG.line_gap - LG.n.line_h, 0)
+	end
 	local seed = ent.seed or 0
 	draw_line(lbl.name, (decode_text(ent.name or "", t, seed, LG.now)), cx, name_y, argb, LG.n)
 	draw_line(lbl.fac, (decode_text(ent.faction or "", t - FACTION_DELAY, seed + 17, LG.now)), cx, fac_y, argb, LG.f)
@@ -775,6 +807,20 @@ ID_LENIENCE = 0.984          -- cos of the largest angle from the view centre th
 ID_SPEED    = 0.2            -- the mod's default identification speed
 local known = {}             -- id -> true once identified
 local id_progress = {}       -- id -> 0..1, how far a not yet identified stalker has got
+
+function clear_known()
+	known = {}
+	id_progress = {}
+	reset_state()
+end
+
+function is_known_id(id)
+	return id ~= nil and known[id] == true
+end
+
+function id_progress_for(id)
+	return id ~= nil and id_progress[id] or nil
+end
 
 -- share of a full identification gained per second at dist metres and fov degrees: the mod adds
 -- 100 / ((d^2 - 2500) * 0.1) / fov * 20 * speed every 0.2 s
@@ -904,12 +950,27 @@ function view_zoom()
 	return zoom_factor(console_fov(), dev and dev.fov)
 end
 
+local function fill_metrics(M, F, em, ux, uy)
+	local scale = em / F.em
+	M.adv    = F.advance * scale * ux
+	M.qw     = F.cell_w * scale * ux
+	M.qh     = F.cell_h * scale * uy
+	M.pad_x  = F.pad * scale * ux
+	M.pad_y  = F.pad * scale * uy
+	M.line_h = (F.cell_h - 2 * F.pad) * scale * uy
+	return M
+end
+
 -- cfg: zbc_bodycam settings; L: lens state; visible: HUD shown
 function update(pool, cfg, L, visible)
 	if not pool then return end
 	local actor = db.actor
-	if not (visible and cfg.allies and actor) then
+	if not (cfg.allies and actor) then
 		reset_state()
+		hide_all(pool)
+		return
+	end
+	if not visible then
 		hide_all(pool)
 		return
 	end
@@ -931,7 +992,7 @@ function update(pool, cfg, L, visible)
 	if last_now and now < last_now then
 		next_scan = 0
 		last_now = nil
-		for _, ent in pairs(states) do ent.next_los = 0 end
+		for eid, ent in pairs(states) do ent.next_los = now + (eid % 4) * (LOS_INTERVAL * 0.25) end
 	end
 	local dt = last_now and min(max(now - last_now, 0), MAX_DT) or 0
 	last_now = now
@@ -969,24 +1030,17 @@ function update(pool, cfg, L, visible)
 	local F = zbc_font_metrics
 	LG.on = cfg.allies_names and F ~= nil
 	if LG.on then
-		local em_px = LABEL_VW * 0.01 * min(sw, sh * (16 / 9))
-		local function metrics(M, em)
-			local scale = em / F.em
-			M.adv    = F.advance * scale * ux
-			M.qw     = F.cell_w * scale * ux
-			M.qh     = F.cell_h * scale * uy
-			M.pad_x  = F.pad * scale * ux
-			M.pad_y  = F.pad * scale * uy
-			M.line_h = (F.cell_h - 2 * F.pad) * scale * uy
-			return M
+		if LG.sw ~= sw or LG.sh ~= sh or not LG.n then
+			LG.sw, LG.sh = sw, sh
+			local em_px = LABEL_VW * 0.01 * min(sw, sh * (16 / 9))
+			LG.n        = fill_metrics(LG.n or {}, F, em_px, ux, uy)
+			LG.f        = fill_metrics(LG.f or {}, F, em_px * FACTION_SCALE, ux, uy)
+			LG.gap      = LABEL_GAP * em_px * uy
+			LG.line_gap = LINE_GAP * em_px * uy
 		end
-		LG.n        = metrics(LG.n or {}, em_px)
-		LG.f        = metrics(LG.f or {}, em_px * FACTION_SCALE)
-		LG.gap      = LABEL_GAP * em_px * uy
-		LG.line_gap = LINE_GAP * em_px * uy
-		LG.pos      = LG.pos or vector2()
-		LG.size     = LG.size or vector2()
-		LG.rect     = LG.rect or Frect()
+		LG.pos  = LG.pos or vector2()
+		LG.size = LG.size or vector2()
+		LG.rect = LG.rect or Frect()
 	end
 
 	for k in pairs(cand_set) do cand_set[k] = nil end
@@ -1029,4 +1083,11 @@ function update(pool, cfg, L, visible)
 		draw_slot(pool[i], states[draw_list[i]], dot_w, dot_h, cfg.allies_style)
 	end
 	for i = n_shown + 1, #pool do hide(pool[i]) end
+end
+
+function on_game_start()
+	if RegisterScriptCallback then
+		RegisterScriptCallback("actor_on_first_update", clear_known)
+		RegisterScriptCallback("actor_on_net_destroy", clear_known)
+	end
 end

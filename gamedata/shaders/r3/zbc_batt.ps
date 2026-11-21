@@ -11,7 +11,7 @@ float4 main(p_TL I) : SV_Target
 	float  fw = max(fwidth(p.y), 0.0001);
 	float  bars = floor(I.Color.r * 4.0 + 0.5);
 	float  c  = zbc_batt_cov(p, bars, I.Color.g, fw);
-	float4 o  = float4(c.xxx, c * I.Color.a);
+	float4 o  = float4(1.0, 1.0, 1.0, c * I.Color.a);
 	if (HDR10_IS_ENABLED)
 		o.rgb = HDR10_ToDisplay_UI(o.rgb, HDR10_UI_NITS_SCALAR, o.a);
 	o.a *= zbc_base;

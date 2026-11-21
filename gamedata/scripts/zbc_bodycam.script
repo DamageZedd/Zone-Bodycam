@@ -206,11 +206,21 @@ local LANES = {
 	dirt       = "zbc_dirt",       -- x rain on the lens, y blood seed, z time blood hit (0 none)
 	event      = "zbc_event",      -- x EVENT shown after REC
 }
+local UINT_LANES = {
+	osd_chars = true,
+	osd_atlas = true,
+	face_rows = true,
+}
 local MAX_FACES = 64   -- two faces per uint4 row: keep in step with ZBC_FACE_ROWS in zbc_lens.h
 local tokens = nil          -- nil: not tried yet, false: bus unavailable
 local bus_warned = false
 local atlas_uploaded = false
 local sent_cache = {}
+
+local function supports_uint_bus()
+	return shader_bus and shader_bus.set_array_uint
+		and (not shader_bus.version or shader_bus.version() >= 7)
+end
 
 local function clear_send_cache()
 	for _, c in pairs(sent_cache) do
@@ -219,15 +229,24 @@ local function clear_send_cache()
 end
 
 local function bus_ready()
+	local can_uint_osd = supports_uint_bus()
 	if tokens == nil then
 		if not (shader_bus and shader_bus.try_register and shader_bus.set) then
 			tokens = false
 		else
 			local t = {}
 			for key, id in pairs(LANES) do
-				local tok = shader_bus.try_register(id, BUS_OWNER, "Zone Bodycam " .. key)
-				if not tok then t = false break end
-				t[key] = tok
+				if not UINT_LANES[key] or can_uint_osd then
+					local tok = shader_bus.try_register(id, BUS_OWNER, "Zone Bodycam " .. key)
+					if not tok then
+						if not UINT_LANES[key] then
+							t = false
+							break
+						end
+					else
+						t[key] = tok
+					end
+				end
 			end
 			tokens = t
 			if tokens then clear_send_cache() end
@@ -237,9 +256,7 @@ local function bus_ready()
 			printf("! [Zone Bodycam] Shader Bus unavailable (needs modded exes 2026.10.11 or newer): the lens is off, the overlay still works")
 		end
 	end
-	local can_uint_osd = shader_bus and shader_bus.set_array_uint
-		and (not shader_bus.version or shader_bus.version() >= 7)
-	if tokens and not atlas_uploaded and can_uint_osd and zbc_osd_atlas and zbc_osd_atlas.ROWS then
+	if tokens and not atlas_uploaded and can_uint_osd and tokens.osd_atlas and zbc_osd_atlas and zbc_osd_atlas.ROWS then
 		shader_bus.set_array_uint(tokens.osd_atlas, 0, zbc_osd_atlas.ROWS)
 		-- Russian letters after the ASCII glyphs and the logo (rows 816.., see shaders\r3\zbc_osd.h)
 		if zbc_osd_atlas_cyr and zbc_osd_atlas_cyr.ROWS then
@@ -254,6 +271,7 @@ local function finite(v) return type(v) == "number" and v == v and v > -1e9 and 
 
 local function send(lane, x, y, z, w)
 	if not bus_ready() then return end
+	if not tokens[lane] then return end
 	if not (finite(x) and finite(y) and finite(z) and finite(w)) then return end
 	local c = sent_cache[lane]
 	if c and c[1] == x and c[2] == y and c[3] == z and c[4] == w then return end
@@ -315,29 +333,40 @@ local function sync_lens_settings()
 	end
 end
 
+local faces_was_on = false
 local function faces_off()
 	if not tokens then return end
 	send("faces", 0, 0, 0, 0)
-	if zbc_faces and zbc_faces.reset then zbc_faces.reset() end
+	if faces_was_on then
+		if zbc_faces and zbc_faces.reset then zbc_faces.reset() end
+		faces_was_on = false
+	end
 end
 
 -- NPC faces the camera sees: squares sent to the shader, which pixelates them before the lens warp.
 -- Independent of the lens, so it also works with the lens turned off. Needs Shader Bus 7 (uint arrays).
 local face_rows = nil
 local function faces_update()
-	local can = shader_bus and shader_bus.set_array_uint
-		and (not shader_bus.version or shader_bus.version() >= 7)
-	if not (cfg.face_blur and can and zbc_faces and zbc_faces.update and db.actor and bus_ready()) then
+	local can = supports_uint_bus()
+	if not (cfg.face_blur and can and zbc_faces and zbc_faces.update and db.actor and bus_ready() and tokens.face_rows) then
 		faces_off()
 		return
 	end
-	local list, n = zbc_faces.update(db.actor, MAX_FACES)
+	faces_was_on = true
+	local list, n, asp = zbc_faces.update(db.actor, MAX_FACES)
 	if n > 0 then
 		face_rows = face_rows or {}
 		zbc_faces.pack_rows(list, n, face_rows)
 		shader_bus.set_array_uint(tokens.face_rows, 0, face_rows)
+		if zbc_faces.pack_bounds then
+			local cnt, pu, pv, pw = zbc_faces.pack_bounds(list, n, asp)
+			send("faces", cnt, pu, pv, pw)
+		else
+			send("faces", n, 0, 0, 0)
+		end
+	else
+		send("faces", 0, 0, 0, 0)
 	end
-	send("faces", n, 0, 0, 0)
 end
 
 local function fx_off()
@@ -987,7 +1016,7 @@ local osd_char_rows = nil
 -- (row 0: the four lengths; then 10 rows of 4 characters per line).
 local OSD_LINES = 4
 local function upload_osd_chars(s1, s2, s3, s4)
-	if not (bus_ready() and shader_bus.set_array_uint) then return end
+	if not (bus_ready() and supports_uint_bus() and tokens.osd_chars) then return end
 	if not osd_char_rows then
 		osd_char_rows = {}
 		for r = 1, 1 + OSD_LINES * 10 do osd_char_rows[r] = { 0, 0, 0, 0 } end
@@ -1454,10 +1483,16 @@ local function settings_changed()
 	if HUD then HUD:Apply() end
 end
 
+local fx_last = nil
+local dead = false
+
 function actor_on_first_update()
 	in_menu = false                          -- loading from the title menu may not fire main_menu_on_quit
 	dead = false
 	fx_last = nil
+	faces_was_on = false
+	if zbc_faces and zbc_faces.reset then zbc_faces.reset() end
+	if zbc_allies and zbc_allies.clear_known then zbc_allies.clear_known() end
 	if tokens then send("glitch", 0, 0, 0, 0) end
 	rec_on_first_update()
 	clear_send_cache()
@@ -1475,9 +1510,6 @@ end
 
 function fx_enabled() return cfg.enabled and powered() end
 function fx_option(id) return cfg[id] and true or false end
-
-local fx_last = nil
-local dead = false
 
 local function fx_update()
 	if not (zbc_fx and zbc_fx.frame and bus_ready()) then return end
@@ -1507,11 +1539,28 @@ function signal_lost(death_t)
 end
 
 function actor_on_update()
-	if not cfg.enabled or in_menu or dead then return end
+	if not cfg.enabled or in_menu then return end
+	if dead then
+		if db.actor and db.actor:alive() then
+			dead = false
+			fx_last = nil
+			if tokens then send("glitch", 0, 0, 0, 0) end
+			hud_add()
+			if HUD then HUD.osd_dirty = true end
+		else
+			return
+		end
+	end
 	rec_tick()                               -- keeps recording while the camera has no power
 	if not powered() then
 		if was_powered then power_down() end
 		was_powered = false
+		if zbc_fx and zbc_fx.frame then
+			local now = time_global() / 1000
+			local dt = fx_last and (now - fx_last) or 0
+			fx_last = now
+			zbc_fx.frame(cfg, dt, false)
+		end
 		return
 	end
 	if not was_powered then
@@ -1548,6 +1597,11 @@ function actor_on_update()
 end
 
 function actor_on_net_destroy()
+	dead = false
+	fx_last = nil
+	faces_was_on = false
+	if zbc_faces and zbc_faces.reset then zbc_faces.reset() end
+	if zbc_allies and zbc_allies.clear_known then zbc_allies.clear_known() end
 	hud_remove()
 	clear_send_cache()
 	lens_off()

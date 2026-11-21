@@ -15,7 +15,7 @@ uniform float4 bus_zbc_vig_occ;  // x: horizontal chest/shoulder occlusion (-1 l
 uniform float4 bus_zbc_sensor;   // x: highlight blowout & auto-exposure punch (0..1)  y: digital compression crispness (0..1)  z: signed rolling-shutter horizontal shear  w: CMOS color grade (0..1)
 
 // Face pixelation (scripts\zbc_faces.script). Squares in rendered-image uv, independent of the lens.
-uniform float4 bus_zbc_faces;    // x: number of faces in use (0..64)
+uniform float4 bus_zbc_faces;    // x: number of faces in use (0..64), y/z: packed 12-bit union AABB (u, v), w: >0.5 if valid
 
 // Camera effects (scripts\zbc_fx.script), independent of the lens.
 uniform float4 bus_zbc_glitch;   // x: interference 0..1  y: hit burst 0..1  z: time of death (timers.x clock, 0 alive)
@@ -46,11 +46,11 @@ float3 zbc_hash3(float2 p)
 	return frac((p3.xxy + p3.yzz) * p3.zyx);
 }
 
-// Snaps src to the centre of its mosaic block when it falls inside face f. ax: aspect.
-bool zbc_face_snap_one(float4 f, inout float2 src, float ax)
+// Snaps src to the centre of its mosaic block when it falls inside face f. rcp_ax: 1 / aspect.
+bool zbc_face_snap_one(float4 f, inout float2 src, float rcp_ax)
 {
-	float2 blk     = float2(f.w / ax, f.w);
-	float2 half_sz = float2(f.z / ax, f.z);
+	float2 blk     = float2(f.w * rcp_ax, f.w);
+	float2 half_sz = float2(f.z * rcp_ax, f.z);
 	float2 d       = src - f.xy;
 	if (f.w <= 0.0 || abs(d.x) >= half_sz.x || abs(d.y) >= half_sz.y)
 		return false;
@@ -75,18 +75,38 @@ float4 zbc_face_unpack(uint2 p)
 // Pixelates faces: true when src was snapped to a mosaic block.
 bool zbc_face_snap(inout float2 src)
 {
-	[branch] if (!ZBC_FACES)
-		return false;
-	float ax = zbc_aspect().x;
-	uint  n  = min((uint)bus_zbc_faces.x, ZBC_FACE_ROWS * 2u);
-	[loop] for (uint i = 0u; i < n; i++)
+	bool hit = false;
+	[branch] if (ZBC_FACES)
 	{
-		uint4 row = bus_zbc_face_rows[i >> 1u];
-		uint2 p   = (i & 1u) ? row.zw : row.xy;
-		if (zbc_face_snap_one(zbc_face_unpack(p), src, ax))
-			return true;
+		bool in_aabb = true;
+		if (bus_zbc_faces.w > 0.5)
+		{
+			float py    = bus_zbc_faces.y, pz = bus_zbc_faces.z;
+			float max_u = floor(py * (1.0 / 4096.0));
+			float min_u = (py - max_u * 4096.0) * (1.0 / 4095.0);
+			max_u      *= (1.0 / 4095.0);
+			float max_v = floor(pz * (1.0 / 4096.0));
+			float min_v = (pz - max_v * 4096.0) * (1.0 / 4095.0);
+			max_v      *= (1.0 / 4095.0);
+			in_aabb     = !(src.x < min_u || src.x > max_u || src.y < min_v || src.y > max_v);
+		}
+		[branch] if (in_aabb)
+		{
+			float rcp_ax = 1.0 / zbc_aspect().x;
+			uint  n      = min((uint)bus_zbc_faces.x, ZBC_FACE_ROWS * 2u);
+			[loop] for (uint i = 0u; i < n; i++)
+			{
+				uint4 row = bus_zbc_face_rows[i >> 1u];
+				uint2 p   = (i & 1u) ? row.zw : row.xy;
+				if (zbc_face_snap_one(zbc_face_unpack(p), src, rcp_ax))
+				{
+					hit = true;
+					break;
+				}
+			}
+		}
 	}
-	return false;
+	return hit;
 }
 #else
 bool zbc_face_snap(inout float2 src) { return false; }
@@ -187,8 +207,8 @@ float2 zbc_drop_offset(float2 uv, out float rim)
 		return float2(0.0, 0.0);
 	float life = frac(timers.x * (0.04 + 0.08 * zbc_hash(cell + 1.7)) + zbc_hash(cell + 2.3));
 	float fade = smoothstep(0.0, 0.15, life) * (1.0 - smoothstep(0.75, 1.0, life));
-	float2 c   = cell + 0.5 + (float2(zbc_hash(cell + 3.1), zbc_hash(cell + 4.7)) - 0.5) * 0.3;
-	float  r   = lerp(0.12, 0.38, zbc_hash(cell + 5.9));
+	float2 c   = cell + 0.5 + (float2(zbc_hash(cell + 3.1), zbc_hash(cell + 4.7)) - 0.5) * 0.18;
+	float  r   = lerp(0.12, 0.34, zbc_hash(cell + 5.9));
 	float2 d   = p - c;
 	d.y *= 0.85;
 	float dist = length(d) / r;
@@ -217,11 +237,12 @@ float zbc_blood(float2 uv)
 		float2 hk  = float2(seed, (float)k * 13.7);
 		float  ang = zbc_hash(hk) * 6.2832;
 		float  rc  = lerp(0.22, 0.52, zbc_hash(hk + 1.3));
-		float2 c   = float2(cos(ang) * rc * asp.x * 0.8, sin(ang) * rc * 0.9);
+		float2 c   = float2(cos(ang) * rc * min(asp.x, 16.0 / 9.0) * 0.8, sin(ang) * rc * 0.9);
 		float  r   = lerp(0.03, 0.11, zbc_hash(hk + 2.9)) * ((k == 0) ? 1.6 : 1.0);
 		float2 d   = p - c;
-		float  wob = 1.0 + 0.25 * sin(atan2(d.y, d.x) * 5.0 + seed);
-		a = max(a, 1.0 - smoothstep(0.75, 1.0, length(d) / (r * wob)));
+		float  len = length(d);
+		float  wob = (len > 1e-5) ? (1.0 + 0.25 * sin(atan2(d.y, d.x) * 5.0 + seed)) : 1.0;
+		a = max(a, 1.0 - smoothstep(0.75, 1.0, len / (r * wob)));
 	}
 	return a * fade * 0.85;
 }
@@ -234,16 +255,17 @@ float2 zbc_fx_uv(float2 uv, float g, out float rim)
 }
 
 // colour effects on the picture (before the overlay): drop rims, blood, interference, infrared
-float3 zbc_fx_color(float3 c, float2 uv, float g, float rim)
+float3 zbc_fx_color(float3 c, float2 uv, float g, float rim, float scene_vis)
 {
 	c *= 1.0 - rim * 0.35;
-	float b = zbc_blood(uv);
+	float b = zbc_blood(uv) * scene_vis;
 	c = lerp(c, c * float3(0.35, 0.03, 0.03) + float3(0.06, 0.0, 0.0), b);
 	c = zbc_glitch_color(c, uv, g);
 	[branch] if (bus_zbc_ir.x > 0.001)
 		c = zbc_ir_pass(c, bus_zbc_ir.x);
 	return c;
 }
+float3 zbc_fx_color(float3 c, float2 uv, float g, float rim) { return zbc_fx_color(c, uv, g, rim, 1.0); }
 
 // body motion: roll about the centre, then shift (p centred, in screen heights)
 float2 zbc_motion(float2 p, float amount)
@@ -288,40 +310,47 @@ float3 zbc_lens_sample(Texture2D tex, float2 uv, out float2 out_src)
 	float2 asp = zbc_aspect();
 	float2 src = zbc_warp(uv);
 	out_src    = src;
-	[branch] if (zbc_face_snap(src))   // a face: one flat tap per mosaic block, no sharpening or fringing
-		return max(tex.SampleLevel(smp_rtlinear, src, 0).rgb, 0.0);
-	float  ca  = bus_zbc_lens.y * k;
-	float  sh  = saturate(bus_zbc_extra.y) * k;
-
-	float2 p_rad     = (uv - 0.5) * asp;
-	float  r2_norm   = saturate(dot(p_rad, p_rad) / max(0.25 * (asp.x * asp.x + 1.0), 0.25));
-	float  edge_soft = saturate(bus_zbc_lens.w) * k * r2_norm * 0.60;
-	float2 px_step   = screen_res.zw * (1.0 + 1.4 * edge_soft);
-
-	float3 c_g   = tex.SampleLevel(smp_rtlinear, src, 0).rgb;
-	float3 avg   = c_g;
-	float  d_lum = 0.0;
-	[branch] if (sh > 0.0001 || edge_soft > 0.0001)
+	float3 col = float3(0.0, 0.0, 0.0);
+	bool   hit = zbc_face_snap(src);
+	[branch] if (hit)   // a face: one flat tap per mosaic block, no sharpening or fringing
 	{
-		float3 n = tex.SampleLevel(smp_rtlinear, src + float2(px_step.x, 0.0), 0).rgb
-		         + tex.SampleLevel(smp_rtlinear, src - float2(px_step.x, 0.0), 0).rgb
-		         + tex.SampleLevel(smp_rtlinear, src + float2(0.0, px_step.y), 0).rgb
-		         + tex.SampleLevel(smp_rtlinear, src - float2(0.0, px_step.y), 0).rgb;
-		avg   = n * 0.25;
-		d_lum = dot(c_g - avg, float3(0.2126, 0.7152, 0.0722));
+		col = tex.SampleLevel(smp_rtlinear, src, 0).rgb;
 	}
-
-	float3 col = c_g;
-	[branch] if (ca > 0.0001)
+	else
 	{
-		float2 o = (src - 0.5) * (0.012 * ca);
-		col.r = tex.SampleLevel(smp_rtlinear, src + o, 0).r;
-		col.b = tex.SampleLevel(smp_rtlinear, src - o, 0).b;
-	}
+		float  ca  = bus_zbc_lens.y * k;
+		float  sh  = saturate(bus_zbc_extra.y) * k;
 
-	float sh_eff = sh * (1.0 - 0.65 * edge_soft);
-	col += clamp(d_lum, -0.08, 0.08) * (sh_eff * 1.6);
-	col  = lerp(col, avg, edge_soft);
+		float2 p_rad     = (uv - 0.5) * asp;
+		float  r2_norm   = saturate(dot(p_rad, p_rad) / max(0.25 * (asp.x * asp.x + 1.0), 0.25));
+		float  edge_soft = saturate(bus_zbc_lens.w) * k * r2_norm * 0.60;
+		float2 px_step   = screen_res.zw * (1.0 + 1.4 * edge_soft);
+
+		float3 c_g   = tex.SampleLevel(smp_rtlinear, src, 0).rgb;
+		float3 avg   = c_g;
+		float  d_lum = 0.0;
+		[branch] if (sh > 0.0001 || edge_soft > 0.0001)
+		{
+			float3 n = tex.SampleLevel(smp_rtlinear, src + float2(px_step.x, 0.0), 0).rgb
+			         + tex.SampleLevel(smp_rtlinear, src - float2(px_step.x, 0.0), 0).rgb
+			         + tex.SampleLevel(smp_rtlinear, src + float2(0.0, px_step.y), 0).rgb
+			         + tex.SampleLevel(smp_rtlinear, src - float2(0.0, px_step.y), 0).rgb;
+			avg   = n * 0.25;
+			d_lum = dot(c_g - avg, float3(0.2126, 0.7152, 0.0722));
+		}
+
+		col = c_g;
+		[branch] if (ca > 0.0001)
+		{
+			float2 o = (src - 0.5) * (0.012 * ca);
+			col.r = tex.SampleLevel(smp_rtlinear, src + o, 0).r;
+			col.b = tex.SampleLevel(smp_rtlinear, src - o, 0).b;
+		}
+
+		float sh_eff = sh * (1.0 - 0.65 * edge_soft);
+		col += clamp(d_lum, -0.08, 0.08) * (sh_eff * 1.6);
+		col  = lerp(col, avg, edge_soft);
+	}
 	return max(col, 0.0);
 }
 

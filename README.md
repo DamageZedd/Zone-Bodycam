@@ -25,13 +25,15 @@ Full history in [CHANGELOG.md](CHANGELOG.md).
 
 ## What you get
 
-- **Bodycam lens.** Fisheye view with the camera housing around the edges, a small-sensor look, grain and a slight wobble when you turn fast or get hit. The lens zooms in by itself, so stronger fisheye never leaves black edges.
+- **Bodycam lens.** Fisheye view with the camera housing around the edges, a small-sensor look, grain and a slight wobble when you turn fast or get hit. The lens zooms in by itself, so stronger fisheye never leaves black edges. Visible NPC faces are automatically pixelated into a coarse mosaic before the lens warp.
 - **Chest-mounted feel.** The lens housing and vignette lag behind your turns, bob with your steps, and jolt when you land, shoot or get hit. The image itself only sways slightly. Your view and aim stay where the game puts them; this mod doesn't detach the camera from your weapon.
 - **Bodycam overlay.**
-  - **Top right:** in-game date and time, device name and serial, your character's name and the logo.
-  - **Top left:** a flashing red dot and `REC 00:54:17`, showing how long you've been recording this playthrough. It counts real time and is kept in your save.
-- **Ally markers.** Friendly and neutral stalkers you can see get a box, so you know who not to shoot. Enemies are never marked.
+  - **Top right:** in-game date and time, device name and serial, your character's name, optional GPS coordinates, and the logo (in English and Russian).
+  - **Top left:** a flashing red dot and `REC 00:54:17` (plus `EVENT` when firing or taking a heavy hit), showing how long you've been recording this playthrough. It counts real time and is kept in your save.
+- **Camera effects.** Interference in emissions, psy storms, psy fields, radiation, near anomalies and on heavy hits; `SIGNAL LOST` feed cutoff on death; automatic low-light infrared mode at night and underground; rain drops and blood splatter on the lens.
+- **Entity markers.** Stalkers (friendly, neutral, companion and enemies) and mutants you can see get a box with their name/species and faction, decoding from scrambled text by distance and scope zoom (dots past a distance).
 - **Every screen shape.** 4:3, 16:9, ultrawide 21:9 and 32:9 all work out of the box.
+- **English & Russian.** Full localization for all MCM menus, overlay text, marker labels, mutant species, and the optional Body Camera item.
 
 Everything can be tuned or turned off in MCM.
 
@@ -60,7 +62,7 @@ Tick **Bodycam item (battery powered)** in the installer to make the bodycam a r
 ## Requirements
 
 - S.T.A.L.K.E.R. Anomaly 1.5.3. Made and tested on G.A.M.M.A.
-- **[Modded exes](https://github.com/themrdemonized/xray-monolith/releases) 2026.10.11 or newer** for the lens. They include the Shader Bus it needs. The [Bodycam exes](https://github.com/asuparabekon/xray-monolith-bodycam) (such as Slop-Ray) work too. On older exes the lens is off, while the overlay and markers still work.
+- **[Modded exes](https://github.com/themrdemonized/xray-monolith/releases) 2026.10.11 or newer** for the lens, face pixelation, and in-shader overlay/effects (Shader Bus 7). The [Bodycam exes](https://github.com/asuparabekon/xray-monolith-bodycam) (such as Slop-Ray) work too — G.A.M.M.A. users running the Bodycam exes also need the **Bodycam GAMMA Patch**. On older exes the lens and face pixelation are off (or Shader Bus <= 6 keeps the lens with the 2D HUD overlay fallback), while the overlay and markers still work.
 - **MCM** to change settings (recommended).
 
 ## Installation
@@ -74,10 +76,11 @@ Tick **Bodycam item (battery powered)** in the installer to make the bodycam a r
 
 | Section | What you can change |
 |---|---|
-| **Lens** | Strength, fisheye, zoom, chromatic aberration, sharpening, edge size and shape, vignette, grain, colour grade, rolling shutter |
+| **Lens** | Strength, fisheye, zoom, chromatic aberration, sharpening, edge size and shape, vignette, grain, colour grade, rolling shutter, blur faces |
+| **Camera effects** | Interference, signal lost on death, low-light mode (auto/always/off), lens dirt (rain & blood), EVENT marker, GPS coordinates |
 | **Body motion** | Overall amount, turn lag, walking bob, camera roll, impacts, breathing |
 | **Overlay** | Overlay on/off, recording timer on/off, device name, show your name, logo style, time zone, text size and opacity |
-| **Ally markers** | On/off, only NPCs you can see, style, colours, range, size, opacity |
+| **Ally markers** | On/off, only NPCs you can see, show names, mark enemies, mark mutants, style, friendly/enemy/companion colours, range, size, opacity |
 | **Item** (optional) | Battery life, hand animations on/off |
 
 ## Good to know
@@ -100,11 +103,11 @@ Tick **Bodycam item (battery powered)** in the installer to make the bodycam a r
 <br>
 
 - Lens, sensor and overlay are drawn in `postprocess.ps` / `postprocess_cm.ps` (`gamedata/shaders/r3/zbc_*.h`), with values sent through the modded exes' Shader Bus (version 7: `try_register`, `set_array_uint`). On Slop-Ray this pass runs after DLSS/FSR, so the upscaler never sees the warp.
-- Scripts: `zbc_bodycam.script` (settings, motion, overlay, timer), `zbc_allies.script` (markers), `zbc_bodycam_mcm.script` (menu).
+- Scripts: `zbc_bodycam.script` (settings, motion, overlay, timer), `zbc_allies.script` (markers & distance identification), `zbc_faces.script` (face pixelation), `zbc_fx.script` (interference, signal lost, low-light, lens dirt, GPS), `zbc_osd_atlas_cyr.script` (Cyrillic shader glyphs), `zbc_bodycam_mcm.script` (menu), plus optional `zbc_item.script`, `zbc_item_anim.script`, `zbc_item_mcm.script`.
 - The overlay font and logo textures are generated from `tools/source_assets`. To rebuild them (needs Python and Pillow):
 
   ```bash
-  py -I tools/make_overlay_assets.py tools/source_assets/KlartextMonoBold.ttf tools/source_assets/logo.png gamedata
+  py -I tools/make_overlay_assets.py tools/source_assets/KlartextMonoBold.ttf tools/source_assets/logo.png gamedata tools/source_assets/RobotoMono-VariableFont_wght.ttf
   ```
 
 </details>
