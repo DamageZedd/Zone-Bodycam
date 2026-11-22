@@ -38,6 +38,16 @@ Full history in [CHANGELOG.md](CHANGELOG.md).
 
 Everything can be tuned or turned off in MCM.
 
+## Screenshots
+
+| Front-only face blur, skeleton markers & AXON BODY 4 overlay | Automatic low-light infrared (IR) mode & aim-only labels |
+|---|---|
+| ![Front-only face blur and tactical markers](docs/images/face_blur_markers.jpg) | ![Night low-light infrared mode and tactical markers](docs/images/night_ir.jpg) |
+
+| 3DSS Picture-in-Picture scope target identification | Footage Review event timeline (`Delete`) |
+|---|---|
+| ![3DSS PiP scope marker and label](docs/images/pip_scope.jpg) | ![Footage Review timeline screen](docs/images/footage_review.jpg) |
+
 ![Recording timer, overlay and ally markers in game](docs/images/rec_timer.webp)
 
 ## Optional: Body Camera item
