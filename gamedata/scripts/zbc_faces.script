@@ -188,7 +188,8 @@ local function scan(actor)
 	end
 end
 
-local function project(vec)
+-- any_lens: the point only sizes the face square, so it may lie past the lens edge
+local function project(vec, any_lens)
 	local p = game.world2ui(vec, false)
 	if not p or p.x == -9999 then return nil end
 	local u, v = p.x / 1024, p.y / 768
@@ -197,7 +198,7 @@ local function project(vec)
 	if zbc_allies and zbc_allies.pip_map then
 		if zbc_allies.pip_refresh then zbc_allies.pip_refresh() end
 		local mu, mv, inside = zbc_allies.pip_map(u, v)
-		if not inside then return nil end
+		if not (inside or any_lens) then return nil end
 		return mu, mv
 	end
 	return u, v
@@ -243,7 +244,13 @@ function update(actor, max_n)
 	local a = max(W / H, 0.1)
 	local fov = tonumber(dev.fov) or 75
 	local tan_half = tan(rad(min(max(fov, 1), 170) * 0.5))
-	local max_dist = (HEAD_HALF * H * max(a, 1)) / (2 * MIN_FACE_PX * max(tan_half, 1e-4)) + 5
+	-- through a picture-in-picture scope faces show magnified, so far faces are big enough to blur there
+	local mag = 1
+	if zbc_allies and zbc_allies.pip_refresh then
+		local P = zbc_allies.pip_refresh()
+		mag = max(tonumber(P and P.m) or 1, 1)
+	end
+	local max_dist = (HEAD_HALF * H * max(a, 1) * mag) / (2 * MIN_FACE_PX * max(tan_half, 1e-4)) + 5
 	local max_d2 = max_dist * max_dist
 	-- the square's size comes from a point HEAD_HALF to the side of the face: a sideways offset stays
 	-- its full length on screen whatever the pitch (world up, only when looking straight up or down)
@@ -273,7 +280,7 @@ function update(actor, max_n)
 			local cu, cv = project(tmp_c)
 			if cu and cu > -0.1 and cu < 1.1 and cv > -0.1 and cv < 1.1 then
 				tmp_t:set(tmp_c.x + side.x * HEAD_HALF, tmp_c.y + side.y * HEAD_HALF, tmp_c.z + side.z * HEAD_HALF)
-				local tu, tv = project(tmp_t)
+				local tu, tv = project(tmp_t, true)   -- only sizes the square: may lie past the lens edge
 				local half, blk
 				if tu then half, blk = face_square(cu, cv, tu, tv, a, H) end
 				if half and visible(actor, obj, id, now, cam) then

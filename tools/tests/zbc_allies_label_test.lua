@@ -128,6 +128,18 @@ if type(ir) == "function" and type(rs) == "function" then
 	check(plain > 10 and plain < 12.5 and scoped > 2.5 and scoped < 3.2, ("100 m: %.1f s plain, %.1f s scoped"):format(plain, scoped))
 end
 
+-- skeleton boxes: the joints' bounds get a little room for the body around them
+local pj = rawget(env, "pad_joint_bounds")
+check(type(pj) == "function", "pad_joint_bounds exists")
+if type(pj) == "function" then
+	local u0, v0, u1, v1 = pj(0.50, 0.30, 0.52, 0.70, 16 / 9)
+	local h = 0.40
+	check(math.abs((v1 - v0) - h * (1 + 2 * env.BONE_PAD_H)) < 1e-9, "a little room above and below")
+	check(math.abs((u1 - u0) - (0.02 + 2 * h * env.BONE_PAD_W / (16 / 9))) < 1e-9, "room either side, in screen heights")
+	check(u1 - u0 < (v1 - v0) / (16 / 9), "a standing body's box stays taller than wide")
+	check(#env.BOX_BONES >= env.BONE_MIN, "enough bones to build a box")
+end
+
 -- info line: progress while unknown, rank and distance once known, KIA when dead
 local it = rawget(env, "info_text")
 check(type(it) == "function", "info_text exists")

@@ -567,8 +567,86 @@ local function bbox_screen(obj, L, a, W)
 	return u0, v0, u1, v1
 end
 
+-- The box from the skeleton: head, neck, pelvis, elbows, hands, knees and feet through the camera (and a
+-- scope), plus the top of the head and the ground, so it hugs the pose the body is in right now. (The
+-- engine's bounding box covers every pose the model can take, which made boxes far too big.) Bones a
+-- model does not have are skipped; with fewer than BONE_MIN found the caller falls back.
+BOX_BONES = { "bip01_head", "bip01_neck", "bip01_pelvis", "bip01_l_forearm", "bip01_r_forearm",
+	"bip01_l_hand", "bip01_r_hand", "bip01_l_calf", "bip01_r_calf", "bip01_l_foot", "bip01_r_foot" }
+BONE_MIN = 5
+BONE_PAD_W = 0.22            -- body width around the joints, as a share of the joints' height on screen
+BONE_PAD_H = 0.04            -- and above / below them
+HEAD_TOP = 0.14              -- metres from the head bone to the top of the head
+local bone_cache = {}        -- id -> bone names this model has
+local bone_cache_n = 0
+local tmp_bone_pt = nil
+
+local function read_bone_id(obj, name) return obj:get_bone_id(name) end
+local function model_bones(obj)
+	local id = obj:id()
+	local list = bone_cache[id]
+	if list then return list end
+	bone_cache_n = (bone_cache_n or 0) + 1
+	if bone_cache_n > 512 then                         -- ids get reused by new spawns: start over now and then
+		bone_cache, bone_cache_n = {}, 1
+	end
+	list = {}
+	for i = 1, #BOX_BONES do
+		local ok, b = pcall(read_bone_id, obj, BOX_BONES[i])
+		if ok and b and b ~= 65535 then list[#list + 1] = BOX_BONES[i] end
+	end
+	bone_cache[id] = list
+	return list
+end
+
+-- bounds of points in screen uv, then padded for the body around the joints: u0, v0, u1, v1
+function pad_joint_bounds(u0, v0, u1, v1, a)
+	local h = v1 - v0
+	local pw = h * BONE_PAD_W / max(a or 1, 0.1)
+	local ph = h * BONE_PAD_H
+	return u0 - pw, v0 - ph, u1 + pw, v1 + ph
+end
+
+local function read_bone_pos(obj, name) return obj:bone_position(name) end
+local function bone_screen(obj, L, a, W)
+	if not obj.bone_position then return nil end
+	local bones = model_bones(obj)
+	if #bones < BONE_MIN then return nil end
+	tmp_bone_pt = tmp_bone_pt or vector()
+	local u0, v0, u1, v1 = 1e9, 1e9, -1e9, -1e9
+	local n = 0
+	local function add(p)
+		local u, v = project(p)
+		if u then
+			u0, v0, u1, v1 = min(u0, u), min(v0, v), max(u1, u), max(v1, v)
+			n = n + 1
+		end
+	end
+	for i = 1, #bones do
+		local ok, p = pcall(read_bone_pos, obj, bones[i])
+		if ok and p then
+			add(p)
+			if bones[i] == "bip01_head" then
+				tmp_bone_pt:set(p.x, p.y + HEAD_TOP, p.z)
+				add(tmp_bone_pt)
+			end
+		end
+	end
+	add(obj:position())                                     -- the ground under the feet
+	if n < BONE_MIN then return nil end
+	u0, v0, u1, v1 = pad_joint_bounds(u0, v0, u1, v1, a)
+	-- through the lens warp: the four corners of the rectangle
+	local cu0, cv0 = unwarp(L, a, u0, v0, W)
+	local cu1, cv1 = unwarp(L, a, u1, v1, W)
+	local cu2, cv2 = unwarp(L, a, u0, v1, W)
+	local cu3, cv3 = unwarp(L, a, u1, v0, W)
+	return min(cu0, cu2), min(cv0, cv3), max(cu1, cu3), max(cv1, cv2)
+end
+
 local function project_box(obj, L, a, ux, uy, size, W, aspect, is_quad)
-	local bu0, bv0, bu1, bv1 = bbox_screen(obj, L, a, W)
+	-- the skeleton when the model has one; otherwise the head and feet below (the engine's bounding
+	-- box, bbox_screen, covers every pose the model can take and is far too big for a box)
+	local bu0, bv0, bu1, bv1 = bone_screen(obj, L, a, W)
 	if bu0 then
 		local w_ui = (bu1 - bu0) * 1024 * size
 		local h_ui = (bv1 - bv0) * 768 * size
