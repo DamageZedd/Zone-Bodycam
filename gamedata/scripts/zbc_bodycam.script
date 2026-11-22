@@ -58,6 +58,7 @@ defaults = {
 	face_blur         = true,   -- pixelate NPC faces (zbc_faces.script)
 	-- camera effects (zbc_fx.script)
 	fx_glitch         = true,   -- interference in emissions, psy fields, radiation, near anomalies, on big hits
+	fx_glitch_strength = 1.0,   -- how strong that interference gets (0..1)
 	signal_lost       = true,   -- on death: glitch, cut to black, "SIGNAL LOST"
 	night_mode        = 0,      -- low-light infrared look: 0 auto (night, underground), 1 always, 2 off
 	lens_dirt         = true,   -- blood on the lens
@@ -126,6 +127,7 @@ local CLAMPS = {
 	compression       = { 0, 1 },
 	rolling_shutter   = { 0, 1.5 },
 	sensor_grade      = { 0, 1 },
+	fx_glitch_strength = { 0, 1 },
 	motion            = { 0, 5 },
 	turn_lag          = { 0, 5 },
 	walk_bob          = { 0, 5 },

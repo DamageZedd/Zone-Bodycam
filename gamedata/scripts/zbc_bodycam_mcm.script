@@ -40,6 +40,7 @@ function on_mcm_load()
 
 			{ id = "hdr_fx",         type = "line" },
 			{ id = "fx_glitch",      type = "check", val = 1, def = d("fx_glitch") },
+			{ id = "fx_glitch_strength", type = "track", val = 2, min = 0, max = 1, step = 0.05, def = d("fx_glitch_strength") },
 			{ id = "signal_lost",    type = "check", val = 1, def = d("signal_lost") },
 			{ id = "night_mode",     type = "list",  val = 2, def = d("night_mode"),
 				content = { { 0, "zbc_night_auto" }, { 1, "zbc_night_always" }, { 2, "zbc_night_off" } } },

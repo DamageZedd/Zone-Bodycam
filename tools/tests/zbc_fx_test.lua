@@ -53,6 +53,21 @@ check(fx.interference(0, 0, 0.2, 0) == 0, "light radiation: none")
 check(fx.interference(0, 0, 1, 0) > 0.4, "heavy radiation: some")
 check(fx.interference(1, 1, 1, 1) <= 1, "never above 1")
 
+-- a steady psy field (Yantar's lab area) only flickers the picture; heavy only near the end
+check(fx.interference(0, 0.3, 0, 0) <= 0.2, "light psy damage: a light flicker")
+check(fx.interference(0, 0.5, 0, 0) <= 0.31, "half psy health gone: still mild")
+check(fx.interference(0, 0.75, 0, 0) <= 0.31, "three quarters gone: still mild")
+check(fx.interference(0, 0.95, 0, 0) > 0.6, "psy health nearly gone: heavy")
+local prev = -1
+for i = 0, 20 do
+	local v = fx.psy_interference(i / 20)
+	check(v >= prev, "psy interference never drops as psy damage grows (" .. i .. ")")
+	prev = v
+end
+check(fx.interference(1, 1, 1, 1, 0) == 0, "strength 0: no interference at all")
+check(near(fx.interference(1, 0, 0, 0, 0.5), 0.275), "strength halves it")
+check(fx.interference(1, 0, 0, 0, 3) == fx.interference(1, 0, 0, 0), "strength above 1 is capped")
+
 check(fx.night_hours(22) and fx.night_hours(2) and not fx.night_hours(12) and not fx.night_hours(5), "night is 21:00-05:00")
 check(fx.ir_target(0, 23, false) == 1 and fx.ir_target(0, 12, false) == 0, "auto follows the time of day")
 check(fx.ir_target(0, 12, true) == 1, "auto: always on underground")
@@ -162,6 +177,11 @@ do
 	check(ok_nil, "frame(nil) does not error")
 	local st_storm = fx_env.frame({ fx_glitch = true }, 0.05)
 	check(st_storm.glitch > 0, "surge with nil psi_storm_manager still builds glitch")
+	local function settle(c) fx_env.reset(); for _ = 1, 30 do fx_env.frame(c, 0.1) end; return st_storm.glitch end
+	local g_full = settle({ fx_glitch = true })
+	local g_half = settle({ fx_glitch = true, fx_glitch_strength = 0.5 })
+	check(g_half > 0 and near(g_half, g_full * 0.5), "strength slider scales the storm interference")
+	check(settle({ fx_glitch = true, fx_glitch_strength = 0 }) == 0, "strength 0: no storm interference")
 	fx_env.surge_manager = nil
 	fx_env.psi_storm_manager = nil
 
@@ -235,6 +255,41 @@ do
 	le.update_rain_droplets()
 	check(smoother_calls == 1 and smoother_seen == true, "a droplet mod swapped in later is wrapped on the next update")
 	check(fx_env.actor_effects.is_mask_on() == false, "and the real mask state is back after it")
+
+	-- the engine draws the drops only inside the mask glass pass: with no mask on screen the intact
+	-- glass (r2_mask_control 1,...) is switched on, refreshed every second, and off again afterwards
+	local cmds = {}
+	fx_env.exec_console_cmd = function(c) cmds[#cmds + 1] = c end
+	local function last() return cmds[#cmds] end
+	cbs.actor_on_update()
+	check(last() == fx_env.GLASS_ON, "drops wanted, no mask: intact glass on")
+	local n = #cmds
+	t_ms = t_ms + 500
+	cbs.actor_on_update()
+	check(#cmds == n, "not sent again within a second")
+	t_ms = t_ms + 600
+	cbs.actor_on_update()
+	check(#cmds == n + 1 and last() == fx_env.GLASS_ON, "sent again after a second (another script may have reset it)")
+	mask_on = true
+	n = #cmds
+	cbs.actor_on_update()
+	check(#cmds == n, "a real mask took over: its glass is left alone")
+	mask_on = false
+	cbs.actor_on_update()
+	check(last() == fx_env.GLASS_ON, "mask off again: intact glass back on")
+	opts.lens_rain = false
+	cbs.actor_on_update()
+	check(last() == fx_env.GLASS_OFF, "drops no longer wanted: glass off")
+	n = #cmds
+	cbs.actor_on_update()
+	check(#cmds == n, "and nothing more while off")
+	opts.lens_rain = true
+	cbs.actor_on_update()
+	cbs.actor_on_net_destroy()
+	check(last() == fx_env.GLASS_OFF, "leaving the game turns the glass off")
+	check(fx.glass_needed(true, false) == true and fx.glass_needed(true, true) == false
+		and fx.glass_needed(false, false) == false, "glass only for wanted drops without a mask")
+	fx_env.exec_console_cmd = nil
 
 	-- the mask-wipe key (T = cam_zoom_in) wipes the drops: the visor drops' own wipe without a mask,
 	-- the game's animated wipe (not ours) with one

@@ -44,10 +44,18 @@ function anomaly_interference(d)
 	return clamp01((ANOMALY_RANGE - d) / (ANOMALY_RANGE - 1.5)) * 0.6
 end
 
--- overall interference 0..1 from its sources (each 0..1)
-function interference(storm, psy, rad, anomaly)
-	local v = max(storm * 0.55, psy * 0.9, (rad - 0.25) * 0.6, anomaly)
-	return clamp01(v)
+-- interference from psy damage (0 healthy .. 1 none left): a light flicker in a steady psy field,
+-- heavy only once psy health is nearly gone
+function psy_interference(psy)
+	psy = clamp01(tonumber(psy) or 0)
+	local deep = clamp01((psy - 0.75) / 0.25)
+	return 0.3 * clamp01(psy / 0.5) + 0.6 * deep * deep
+end
+
+-- overall interference 0..1 from its sources (each 0..1), times the MCM strength (default 1)
+function interference(storm, psy, rad, anomaly, strength)
+	local v = max(storm * 0.55, psy_interference(psy), (rad - 0.25) * 0.6, anomaly)
+	return clamp01(v * clamp01(strength or 1))
 end
 
 -- Auto-exposure, like a small camera sensor: the gain the light where you stand needs (luminocity 0..1,
@@ -120,6 +128,7 @@ local F = {
 	event = false,       -- show EVENT after REC
 }
 local event_until = 0
+glitch_strength = 1    -- MCM interference strength, kept from the last frame for hit bursts
 local next_anom_scan = 0
 local anom_near = 0
 
@@ -181,13 +190,14 @@ function frame(cfg, dt, is_powered)
 
 	-- interference
 	local target = 0
+	glitch_strength = clamp01(tonumber(cfg.fx_glitch_strength) or 1)
 	if on and cfg.fx_glitch then
 		local ok_p, psy = pcall(read_psy, actor)
 		local ok_r, radv = pcall(read_rad, actor)
 		target = interference(storm_active() and 1 or 0,
 			1 - clamp01(ok_p and tonumber(psy) or 1),
 			clamp01(ok_r and tonumber(radv) or 0),
-			scan_anomalies(actor, now))
+			scan_anomalies(actor, now), glitch_strength)
 	elseif not cfg.fx_glitch then
 		F.burst = 0
 	end
@@ -241,7 +251,7 @@ local function read_power(shit) return shit.power end
 local function actor_on_before_hit(shit)
 	local ok, p = pcall(read_power, shit)
 	p = ok and tonumber(p) or 0.3
-	F.burst = max(F.burst, clamp01(p * 1.6))
+	F.burst = max(F.burst, clamp01(p * 1.6) * glitch_strength)
 	if p >= 0.25 then flag_event() end
 end
 
@@ -274,10 +284,11 @@ function actor_on_before_death(who, flags)
 end
 
 -- Rain on the lens is the game's own visor drops: level_environment.update_rain_droplets (Dynamic
--- Visor Drops, or the base game) works out the water and the engine draws it whenever
--- r2_drops_control.x > 0, mask or not. That update only runs its drops while a mask is on and the
--- game's rain droplets option is on, so while the bodycam wants drops it is told both are, for the
--- length of the call. With a mask on there is still just the one effect, so nothing doubles up.
+-- Visor Drops, or the base game) works out the water. That update only runs its drops while a mask
+-- is on and the game's rain droplets option is on, so while the bodycam wants drops it is told both
+-- are, for the length of the call. With a mask on there is still just the one effect.
+-- The engine draws the drops only inside the mask glass pass (r2_mask_control.x > 0, the crack
+-- texture index), so with no mask on screen the intact glass (index 1) is switched on too.
 local function read_want_drops()
 	return drops_wanted(enabled(), zbc_bodycam.fx_option("lens_enabled"), zbc_bodycam.fx_option("lens_rain"))
 end
@@ -326,11 +337,52 @@ local function on_key_release(key)
 	if key_bindings and dik_to_bind and dik_to_bind(key) == key_bindings.kCAM_ZOOM_IN then wipe_drops() end
 end
 
+-- The mask glass pass for the drops: on while drops are wanted and no mask is on screen, sent again
+-- every GLASS_REFRESH ms in case another script reset it; off again only if no mask took over.
+GLASS_ON, GLASS_OFF, GLASS_REFRESH = "r2_mask_control 1,0,0,0", "r2_mask_control 0,0,0,0", 1000
+function glass_needed(want, mask_on)
+	return (want and not mask_on) and true or false
+end
+
+local glass_set, glass_next = false, 0
+local function mask_on_screen()
+	local ok, mask = pcall(read_mask_on)
+	return ok and mask and true or false
+end
+
+local function send_cmd(cmd)
+	return exec_console_cmd and pcall(exec_console_cmd, cmd) or false
+end
+
+local function update_glass()
+	local mask = mask_on_screen()
+	if glass_needed(want_drops(), mask) then
+		local now = time_global()
+		if (not glass_set or now >= glass_next) and send_cmd(GLASS_ON) then
+			glass_set, glass_next = true, now + GLASS_REFRESH
+		end
+	elseif glass_set then
+		glass_set = false
+		if not mask then send_cmd(GLASS_OFF) end
+	end
+end
+
+local function glass_off()
+	if glass_set and not mask_on_screen() then send_cmd(GLASS_OFF) end
+	glass_set, glass_next = false, 0
+end
+
 -- Other droplet mods (Dynamic Smoother Droplets) swap the drops update in on game load, whichever
 -- order the callbacks run; wrap whatever version is in place, again if it changes.
 local function actor_on_update()
 	local le = level_environment
 	if le and drops_hook and le.update_rain_droplets ~= drops_hook then pcall(hook_visor_drops) end
+	update_glass()
+end
+
+local function actor_on_net_destroy()
+	glass_off()
+	reset()
 end
 
 local function actor_on_first_update()
@@ -340,7 +392,7 @@ end
 
 function on_game_start()
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
-	RegisterScriptCallback("actor_on_net_destroy", reset)
+	RegisterScriptCallback("actor_on_net_destroy", actor_on_net_destroy)
 	RegisterScriptCallback("actor_on_weapon_fired", actor_on_weapon_fired)
 	RegisterScriptCallback("actor_on_before_hit", actor_on_before_hit)
 	RegisterScriptCallback("npc_on_hit_callback", npc_on_hit_callback)

@@ -360,6 +360,12 @@
   <string id="ui_mcm_zone_bodycam_fx_glitch_desc">
     <text>The picture tears and breaks up during emissions and psy storms, in psy fields, in strong radiation, next to anomalies, and briefly when you are hit hard.</text>
   </string>
+  <string id="ui_mcm_zone_bodycam_fx_glitch_strength">
+    <text>Interference strength</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_fx_glitch_strength_desc">
+    <text>How hard the picture breaks up. A steady psy field only flickers it; it gets heavy once your psy health is nearly gone, in emissions and psy storms, and right next to anomalies.</text>
+  </string>
   <string id="ui_mcm_zone_bodycam_signal_lost">
     <text>Signal lost on death</text>
   </string>
@@ -376,7 +382,7 @@
     <text>Rain on the lens</text>
   </string>
   <string id="ui_mcm_zone_bodycam_lens_rain_desc">
-    <text>The game's own visor rain drops (Dynamic Visor Drops in GAMMA) on the camera, with or without a mask, even with the game's rain droplets option off. The mask-wipe key wipes them.</text>
+    <text>The game's own visor rain drops (Dynamic Visor Drops in GAMMA) on the camera, with or without a mask, even with the game's rain droplets option off. Without a mask the game's intact visor glass is switched on too, which the drops need (a faint glass edge). The mask-wipe key wipes them.</text>
   </string>
   <string id="ui_mcm_zone_bodycam_lens_dirt">
     <text>Blood on the lens</text>

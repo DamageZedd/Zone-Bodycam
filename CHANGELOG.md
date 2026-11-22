@@ -4,11 +4,14 @@
 
 ### Changed
 - **Rain on the lens is now the game's own visor drops** (`zbc_fx.script`): our procedural lens drops are removed. While the camera records with **Rain on the lens** on, the game's visor rain (Dynamic Visor Drops in GAMMA, or the base game's) is shown on the camera with or without a mask, and even with the game's rain droplets option off; it is still that mod that decides when rain builds up, slides and dries. With a mask on it is the same single effect, so nothing doubles up.
+  - The game draws visor drops only inside the mask glass pass, so without a mask (or with Mask HUD off) the intact visor glass is switched on for them; it can add a faint glass edge and some speckle in the screen corners. The bodycam overlay, markers and labels stay on top of the drops.
   - Needs **Dynamic Smoother Droplets** disabled: it replaces the visor drops' update with one whose values Dynamic Visor Drops' shader cannot read.
   - Glossy dripping blood from v1.2.0 is unchanged.
+- **Interference toned down in psy fields** (`zbc_fx.script`): a steady psy field (such as around the Yantar lab) now only flickers the picture; it breaks up heavily only once psy health is nearly gone. Before, it rose straight with psy damage to about 90%, so the picture was torn apart the whole time you stood in the field. Emissions, psy storms, radiation and anomalies are unchanged.
 
 ### Added
 - **Wipe the drops with the mask-wipe key** (Zoom in, T by default): with a mask on the game's animated wipe runs as before; without one (or with Mask HUD off) the visor drops' own wipe clears them.
+- **Interference strength** slider (MCM, under Interference, default full): scales all camera interference, hit bursts included; 0 turns it off while keeping signal lost on death.
 - **Every effect can be switched off in the MCM**: new switches for **Rain on the lens**, the **Lens housing edge** (the picture fills the screen; the vignette keeps its own slider) and the **Battery gauge**. **Lens dirt** is now **Blood on the lens** (blood only; your saved setting carries over). Everything else already had a switch, an Off choice or a slider down to 0.
 - Tests: driving the visor drops (forced only during their update and always restored), the wipe key, and every setting being in the MCM with English and Russian labels (`tools/tests/zbc_fx_test.lua`).
 
