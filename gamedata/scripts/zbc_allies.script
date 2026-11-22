@@ -216,8 +216,8 @@ end
 -- while a far NPC's identification is paused. Returns the text and whether it is fully decoded.
 -- Spaces stay spaces.
 local SCRAMBLE = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+=/<>#%"
-DECODE_DELAY = 0.12          -- seconds of pure scramble before the first letter locks
-DECODE_STEP  = 0.035         -- seconds between letters locking
+DECODE_DELAY = 0.40          -- seconds of pure scramble before the first letter locks
+DECODE_STEP  = 0.08          -- seconds between letters locking (a 10-letter name: about 1.2 s)
 DECODE_HZ    = 20            -- scramble changes per second
 
 local decode_buf = {}
@@ -548,6 +548,8 @@ local function has_los(actor, obj, obj_id, check_los, cam_vec)
 end
 
 local frame_dir = nil        -- camera direction this frame, set by update()
+local aim_target = nil       -- id of the stalker or mutant you are aiming at (any distance, like the
+                             -- Identification UI mod's crosshair target), kept while you stay on them
 local ID_LENIENCE_COS = 0.984   -- = ID_LENIENCE (defined with the identification below)
 
 -- is the camera looking at this stalker (their upper body within ID_LENIENCE of the view centre)?
@@ -605,11 +607,17 @@ local function step_entity(
 	end
 
 	local dist = obj:position():distance_to(apos)
-	local in_range = in_cand and (dist <= range)
+	-- the one you are aiming at gets a full box at any distance (through a scope, say)
+	local is_target = (id == aim_target)
+	local in_range = in_cand and (dist <= range or is_target)
+	local function alpha_at(d)
+		if is_target then return cfg.allies_opacity end
+		return cfg.allies_opacity * (1 - smoothstep(range * 0.85, range, d))
+	end
 
 	if not ent then
 		if not in_range then return false end
-		local init_dot = (dist > dot_dist) and 1 or 0
+		local init_dot = (dist > dot_dist and not is_target) and 1 or 0
 		local kind = (not IsStalker(obj)) and mutant_kind(obj) or nil
 		local asp = box_aspect(obj, kind)
 		local is_quad = kind and QUADRUPED[kind] or false
@@ -638,7 +646,7 @@ local function step_entity(
 			id = id,
 			dist = dist,
 			aimed = aimed_at(obj, cam_vec),
-			base_alpha = cfg.allies_opacity * (1 - smoothstep(range * 0.85, range, dist)),
+			base_alpha = alpha_at(dist),
 			bcx = bcx, bcy = bcy, bw = bw, bh = bh,
 			dcx = dcx, dcy = dcy, dw = dot_w, dh = dot_h,
 		}
@@ -653,11 +661,13 @@ local function step_entity(
 	ent.id = id
 	ent.dist = dist
 	ent.aimed = aimed_at(obj, cam_vec)
-	if dist <= range then
-		ent.base_alpha = cfg.allies_opacity * (1 - smoothstep(range * 0.85, range, dist))
+	if dist <= range or is_target then
+		ent.base_alpha = alpha_at(dist)
 	end
 
-	if in_range then
+	if is_target then
+		ent.target_dot = 0
+	elseif in_range then
 		if ent.target_dot == 0 then
 			if dist > dot_dist * HYST_HIGH then ent.target_dot = 1 end
 		else
@@ -790,7 +800,7 @@ end
 
 -- Box colour while it "identifies" the NPC: white until the name has decoded, then it fades to the
 -- relation colour. t: seconds since the box appeared; name_len: letters in the name.
-REVEAL_MIN  = 0.6            -- seconds before the colour starts to change, at the least
+REVEAL_MIN  = 1.0            -- seconds before the colour starts to change, at the least
 COLOR_FADE  = 0.35           -- seconds the change from white takes
 function reveal_mix(t, name_len)
 	local start = max(REVEAL_MIN, DECODE_DELAY + (name_len or 0) * DECODE_STEP)
@@ -804,7 +814,7 @@ end
 -- stalker stays identified for the session; their box just replays the quick decode.
 ID_INSTANT  = 50             -- metres
 ID_LENIENCE = 0.984          -- cos of the largest angle from the view centre that counts as looking at them
-ID_SPEED    = 0.2            -- the mod's default identification speed
+ID_SPEED    = 0.5            -- the mod's speed as GAMMA sets it (targetID/speedID = 0.5)
 local known = {}             -- id -> true once identified
 local id_progress = {}       -- id -> 0..1, how far a not yet identified stalker has got
 
@@ -824,16 +834,21 @@ end
 
 -- share of a full identification gained per second at dist metres and fov degrees: the mod adds
 -- 100 / ((d^2 - 2500) * 0.1) / fov * 20 * speed every 0.2 s
+-- Nobody is identified instantly: it always takes at least ID_MIN_TIME seconds of looking at them,
+-- also inside the mod's 50 m instant zone; further out the mod's rate takes over once it is slower.
+ID_MIN_TIME = 2.0
 function identify_rate(dist, fov)
-	if dist <= ID_INSTANT then return math.huge end
+	local cap = 1 / ID_MIN_TIME
+	if dist <= ID_INSTANT then return cap end
 	fov = max(fov or 75, 1)
-	return 5 * 20 * ID_SPEED * 100 / ((dist * dist - ID_INSTANT * ID_INSTANT) * 0.1 * fov)
+	return min(cap, 5 * 20 * ID_SPEED * 100 / ((dist * dist - ID_INSTANT * ID_INSTANT) * 0.1 * fov))
 end
 
--- how fast the decode time runs (1 = the quick decode near you, 0 = paused)
--- t_full: decode time until the name is fully readable
+-- how fast the decode time runs (1 = the quick decode of someone already identified, 0 = paused)
+-- t_full: decode time until the name is fully readable. Unknown stalkers only decode while you look
+-- at them, at any distance.
 function reveal_speed(t_full, is_known, dist, aimed, fov)
-	if is_known or dist <= ID_INSTANT then return 1 end
+	if is_known then return 1 end
 	if not aimed then return 0 end
 	return min(1, identify_rate(dist, fov) * t_full)
 end
@@ -845,7 +860,10 @@ local function step_reveal(ent)
 	local id = ent.id
 	local is_known = id and known[id]
 	if not ent.reveal_t then
-		ent.reveal_t = is_known and 0 or (id and id_progress[id] or 0) * t_full
+		-- someone already identified keeps their name, faction and colour: shown at once when the box
+		-- comes back after you looked away; someone half identified carries on from where they were
+		ent.reveal_t = is_known and (max(t_full, REVEAL_MIN) + COLOR_FADE + FACTION_DELAY + 1)
+			or (id and id_progress[id] or 0) * t_full
 	end
 	local s = reveal_speed(t_full, is_known, ent.dist or 0, ent.aimed, LG.fov)
 	ent.reveal_t = ent.reveal_t + (LG.dt or 0) * s
@@ -1043,8 +1061,27 @@ function update(pool, cfg, L, visible)
 		LG.rect = LG.rect or Frect()
 	end
 
+	-- the crosshair target, at any distance (Identification UI's level.get_target_obj); kept while you
+	-- stay within ID_LENIENCE of them, dropped when you look away
+	local tobj = level.get_target_obj and level.get_target_obj()
+	if tobj and tobj:id() ~= 0 and tobj.alive and tobj:alive()
+		and (IsStalker(tobj) or (scan_mutants and IsMonster and IsMonster(tobj)))
+		and (scan_enemies or tobj:relation(actor) ~= game_object.enemy)
+	then
+		aim_target = tobj:id()
+	end
+	if aim_target then
+		local o = level.object_by_id(aim_target)
+		if not (o and o:alive() and aimed_at(o, cam_vec)) then aim_target = nil end
+	end
+
 	for k in pairs(cand_set) do cand_set[k] = nil end
 	local n_proc = 0
+	if aim_target then
+		cand_set[aim_target] = true
+		n_proc = 1
+		proc_ids[1] = aim_target
+	end
 	for i = 1, #candidates do
 		local id = candidates[i]
 		if not cand_set[id] then

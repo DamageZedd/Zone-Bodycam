@@ -11,7 +11,10 @@
   - Test: `tools/tests/zbc_faces_test.lua`.
 - **Names above the ally boxes** (MCM **Ally markers > Show names**, on by default): each box shows the stalker's name and, in smaller text under it, their faction, in the overlay font and the box colour, fading with the box. Hidden while the marker is a dot.
   - Each time a box appears, the text decodes from scrambled characters, letter by letter from the left (about a second for a long name).
-  - **Identification by distance**, after the Identification UI mod: within 50 m a stalker is identified as soon as their box appears. Further out the name, faction and colour stay unknown (white, scrambled) and only decode while you look at them, at that mod's rate (about 4 s at 60 m, 28 s at 100 m, 7 s at 100 m through a 4x scope). Identified stalkers stay identified for the session.
+  - **Identification by distance**, after the Identification UI mod at GAMMA's speed (0.5). Nobody is identified instantly: the name, faction and colour stay unknown (white, scrambled) and only decode while you look at them, taking at least 2 s up close and that mod's rate further out (about 11 s at 100 m, 3 s at 100 m through a 4x scope). Look away and the progress waits for you.
+  - **Identified stalkers are remembered** for the session: look away and back and their name, faction and box colour are there at once.
+  - **The one you aim at** (Identification UI's crosshair target) gets a full box and label at any distance, through a scope too, and keeps it while you stay on them.
+  - The decode itself is slower and easier to follow: about 1.2 s for a 10-letter name, with the colour changing after it.
   - Through a scope the marker range grows with the zoom, so far allies you're aiming at get a box and a name too.
 - **Camera effects** (new MCM section, everything on by default):
   - **Interference**: the picture tears, jitters, rolls and drops frames during emissions and psy storms, in psy fields, in strong radiation, within 7 m of anomalies, and briefly when you take a big hit.

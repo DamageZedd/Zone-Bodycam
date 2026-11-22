@@ -103,23 +103,29 @@ local ir, rs = rawget(env, "identify_rate"), rawget(env, "reveal_speed")
 check(type(ir) == "function" and type(rs) == "function", "identification functions exist")
 if type(ir) == "function" and type(rs) == "function" then
 	local function near(a, b) return math.abs(a - b) < 1e-6 end
-	check(ir(30, 75) == math.huge and ir(50, 75) == math.huge, "within 50 m: identified at once")
-	-- the mod: 100 / ((d^2 - 2500) * 0.1) / fov * 20 * 0.2 per 0.2 s tick
-	local per_tick = 100 / ((60 * 60 - 2500) * 0.1) / 75 * 20 * 0.2
-	check(near(ir(60, 75), per_tick * 5), "60 m matches the mod's per-tick gain x 5 ticks a second")
-	check(ir(100, 75) < ir(60, 75), "further away identifies slower")
+	-- nobody is identified instantly: never faster than ID_MIN_TIME, even up close
+	check(env.ID_MIN_TIME >= 1.5, "a minimum identification time")
+	check(near(1 / ir(5, 75), env.ID_MIN_TIME) and near(1 / ir(50, 75), env.ID_MIN_TIME), "close up: the minimum time, not instant")
+	check(near(1 / ir(60, 10), env.ID_MIN_TIME), "a strong scope can't beat the minimum either")
+	-- beyond that, the mod: 100 / ((d^2 - 2500) * 0.1) / fov * 20 * speed per 0.2 s tick, at GAMMA's speed 0.5
+	check(env.ID_SPEED == 0.5, "GAMMA's Identification UI speed")
+	local per_tick = 100 / ((80 * 80 - 2500) * 0.1) / 75 * 20 * env.ID_SPEED
+	check(near(ir(80, 75), per_tick * 5), "80 m matches the mod's per-tick gain x 5 ticks a second")
+	check(ir(100, 75) < ir(80, 75), "further away identifies slower")
 	check(ir(100, 18) > ir(100, 75), "through a scope (smaller fov) identifies faster")
 	check(ir(100, nil) > 0, "missing fov falls back to 75")
-	local t_full = 0.5
-	check(rs(t_full, true, 300, false, 75) == 1, "known stalker: quick decode wherever they are")
-	check(rs(t_full, false, 40, false, 75) == 1, "near stalker: quick decode even when not looked at")
+	local t_full = 1.2
+	check(rs(t_full, true, 300, false, 75) == 1, "already identified: quick decode wherever they are")
+	check(rs(t_full, false, 10, false, 75) == 0, "close stalker you are not looking at: not identified")
 	check(rs(t_full, false, 120, false, 75) == 0, "far stalker you are not looking at: paused")
+	local s_near = rs(t_full, false, 10, true, 75)
+	check(s_near < 1 and near(s_near, t_full / env.ID_MIN_TIME), "close stalker you look at: takes ID_MIN_TIME")
 	local s = rs(t_full, false, 120, true, 75)
 	check(s > 0 and s < 1 and near(s, ir(120, 75) * t_full), "far stalker you look at: decodes at the mod's rate")
-	check(rs(t_full, false, 51, true, 1) == 1, "never faster than the quick decode")
-	-- seconds to identify at 100 m: about 28 s plain, about 7 s through a 4x scope
-	local plain, scoped = 1 / ir(100, 75), 1 / ir(100, 75 / 4)
-	check(plain > 25 and plain < 31 and scoped > 6 and scoped < 8, ("100 m: %.1f s plain, %.1f s scoped"):format(plain, scoped))
+	-- seconds to identify: 2 s up to about 60 m, 11 s at 100 m, 3 s at 100 m through a 4x scope
+	local at60, plain, scoped = 1 / ir(60, 75), 1 / ir(100, 75), 1 / ir(100, 75 / 4)
+	check(near(at60, env.ID_MIN_TIME), ("60 m: %.2f s"):format(at60))
+	check(plain > 10 and plain < 12.5 and scoped > 2.5 and scoped < 3.2, ("100 m: %.1f s plain, %.1f s scoped"):format(plain, scoped))
 end
 
 -- scope zoom
@@ -172,6 +178,7 @@ do
 		position = function() return actor_pos end,
 		see = function() return true end,
 	}
+	local last_rgb = nil          -- colour of the last GetARGB call (the box)
 	local ae
 	ae = setmetatable({
 		db = { actor = actor, storage = { [42] = { object = npc } } },
@@ -191,7 +198,7 @@ do
 		vector = make_vec,
 		vector2 = make_vec,
 		Frect = make_vec,
-		GetARGB = function() return 0 end,
+		GetARGB = function(a, r, g, b) last_rgb = { r, g, b }; return 0 end,
 		RegisterScriptCallback = function(name, fn) cbs[name] = fn end,
 	}, { __index = _G })
 	local c = assert(loadfile(PATH))
@@ -214,7 +221,8 @@ do
 	now_ms = 1080
 	ae.update(pool, cfg, lens, true)
 	check(ae.id_progress_for(42) ~= nil and ae.id_progress_for(42) > 0, "partial identification tracks id_progress")
-	for step = 1, 5 do
+	check(ae.is_known_id(42) == false, "a nearby NPC is not identified instantly")
+	for step = 1, 40 do                     -- 3.2 s of looking at them: past ID_MIN_TIME
 		now_ms = now_ms + 80
 		ae.update(pool, cfg, lens, true)
 	end
@@ -224,6 +232,15 @@ do
 	ae.update(pool, cfg, lens, false)
 	check(ae.is_known_id(42) == true, "visible == false preserves known")
 
+	-- looking back at someone identified: their colour is there at once, no white decode again
+	last_rgb = nil
+	ae.update(pool, cfg, lens, true)
+	check(last_rgb ~= nil, "the box is drawn again")
+	if last_rgb then
+		check(not (last_rgb[1] == 255 and last_rgb[2] == 255 and last_rgb[3] == 255),
+			"identified NPC keeps their colour when the box comes back")
+	end
+
 	-- actor_on_first_update clears known
 	cbs.actor_on_first_update()
 	check(ae.is_known_id(42) == false and ae.id_progress_for(42) == nil, "actor_on_first_update clears known and id_progress")
@@ -231,7 +248,7 @@ do
 	-- Re-identify, then actor_on_net_destroy clears known
 	now_ms = now_ms + 80
 	ae.update(pool, cfg, lens, true)
-	for step = 1, 5 do
+	for step = 1, 40 do
 		now_ms = now_ms + 80
 		ae.update(pool, cfg, lens, true)
 	end
