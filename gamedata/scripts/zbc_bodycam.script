@@ -61,7 +61,7 @@ defaults = {
 	signal_lost       = true,   -- on death: glitch, cut to black, "SIGNAL LOST"
 	night_mode        = 0,      -- low-light infrared look: 0 auto (night, underground), 1 always, 2 off
 	lens_dirt         = true,   -- blood on the lens
-	lens_rain         = true,   -- rain drops on the lens (zbc_fx.script), wiped with the mask-wipe key
+	lens_rain         = true,   -- the game's visor rain drops on the camera, mask or not (zbc_fx.script)
 	event_marker      = true,   -- "EVENT" after REC when you fire or take a big hit
 	gps_line          = true,   -- coordinates line in the overlay
 	event_log         = true,   -- SHOTS FIRED, CONTACT n... under the recording timer (zbc_eventlog.script)
@@ -218,8 +218,8 @@ local LANES = {
 	faces      = "zbc_faces",
 	face_rows  = "zbc_face_rows",
 	glitch     = "zbc_glitch",     -- x interference, y hit burst, z time of death (0 alive)
-	ir         = "zbc_ir",         -- x low-light mix, y auto-exposure gain, z time a lens wipe started (0 none)
-	dirt       = "zbc_dirt",       -- x rain on the lens, y blood seed, z time blood hit (0 none), w rain arrivals marker
+	ir         = "zbc_ir",         -- x low-light mix, y auto-exposure gain
+	dirt       = "zbc_dirt",       -- y blood seed, z time blood hit (0 none)
 	event      = "zbc_event",      -- x EVENT shown after REC
 }
 local UINT_LANES = {
@@ -1565,8 +1565,8 @@ local function fx_update()
 	local F = zbc_fx.frame(cfg, dt)
 	fx_event = F.event and cfg.rec_timer or false
 	send("glitch", F.glitch, F.burst, F.death_t, 0)
-	send("ir",     F.ir, F.exposure or 1, F.wipe_t or 0, 0)
-	send("dirt",   F.wet, F.blood_seed, F.blood_t, F.rain_mark or 0)
+	send("ir",     F.ir, F.exposure or 1, 0, 0)
+	send("dirt",   0, F.blood_seed, F.blood_t, 0)
 	send("event",  fx_event and 1 or 0, 0, 0, 0)
 end
 

@@ -165,127 +165,107 @@ do
 	fx_env.surge_manager = nil
 	fx_env.psi_storm_manager = nil
 
-	-- Unpowered decay: glitch, ir, and wet decay toward 0/rain instead of freezing
+	-- Unpowered decay: glitch and ir decay instead of freezing
 	fx_env.level = { get_time_hours = function() return 23 end, rain_factor = function() return 1 end }
 	local cfg_fx = { fx_glitch = false, night_mode = 1, lens_dirt = true, lens_rain = true }
 	for _ = 1, 20 do fx_env.frame(cfg_fx, 0.1, true) end
-	check(st.ir > 0.5 and st.wet > 0.1, "powered frame builds up ir and wet")
-	fx_env.level = { get_time_hours = function() return 23 end, rain_factor = function() return 0 end }
-	local ir_before, wet_before = st.ir, st.wet
+	check(st.ir > 0.5, "powered frame builds up ir")
+	local ir_before = st.ir
 	fx_env.frame(cfg_fx, 0.1, false)
-	check(st.ir < ir_before and st.wet < wet_before, "unpowered frame continues decaying ir and wet")
-
-	-- rain under a roof (rain_hemi low) does not reach the lens: no build-up, marker set
-	fx_env.reset()
-	fx_env.level = { get_time_hours = function() return 12 end, rain_factor = function() return 1 end,
-		rain_hemi = function() return 0.05 end }
-	for _ = 1, 20 do fx_env.frame(cfg_fx, 0.1, true) end
-	check(st.wet == 0 and st.rain_mark > 0, "covered: lens stays dry and arrivals are stopped")
-	fx_env.level.rain_hemi = function() return 1 end
-	fx_env.frame(cfg_fx, 0.1, true)
-	check(st.wet > 0 and st.rain_mark < 0, "back in the rain: water builds, marker says uncovered")
-	fx_env.frame({ lens_dirt = false, lens_rain = true }, 0.1, true)
-	check(st.wet > 0, "blood option off leaves the rain alone")
+	check(st.ir < ir_before, "unpowered frame continues decaying ir")
+	check(st.wet == nil and st.wipe_t == nil and st.rain_mark == nil, "no rain of our own any more")
 	st.blood_t = 5
-	fx_env.frame({ lens_dirt = true, lens_rain = false }, 0.1, true)
-	check(st.wet == 0 and st.rain_mark == 0 and st.blood_t == 5, "rain option off clears the rain at once, blood stays")
+	fx_env.frame({ lens_dirt = false }, 0.1, true)
+	check(st.blood_t == 0, "blood option off clears the blood")
 
-	-- a mask that shows its own visor rain switches our lens drops off; a mask without it does not
-	fx_env.reset()
-	local mask_on, droplets_opt = true, true
+	-- rain on the lens is the game's visor drops: while the bodycam wants them, the drops update is
+	-- told a mask is on and the droplets option is on (only for that call), mask or not
+	local opts = { lens_enabled = true, lens_rain = true }
+	local fx_on, mask_on = true, false
+	fx_env.zbc_bodycam.fx_enabled = function() return fx_on end
+	fx_env.zbc_bodycam.fx_option = function(id) return opts[id] and true or false end
 	fx_env.actor_effects = { is_mask_on = function() return mask_on end }
-	fx_env.ui_options = { get = function(k) if k == "video/player/rain_droplets" then return droplets_opt end end }
-	for _ = 1, 10 do fx_env.frame(cfg_fx, 0.1, true) end
-	check(st.wet == 0, "mask with visor rain: no lens drops")
-	droplets_opt = false
-	for _ = 1, 10 do fx_env.frame(cfg_fx, 0.1, true) end
-	check(st.wet > 0, "mask without visor rain (droplets option off): lens drops")
-	mask_on, droplets_opt = false, true
-	local w0 = st.wet
-	fx_env.frame(cfg_fx, 0.1, true)
-	check(st.wet > w0, "no mask: lens drops keep building")
-	mask_on = true
-	fx_env.frame(cfg_fx, 0.1, true)
-	check(st.wet == 0 and st.rain_mark == 0, "putting on a visor-rain mask clears the lens drops at once")
-
-	-- the mask-wipe key wipes the lens: hooked into actor_effects.Hit_MaskCleaning, works without a mask
-	mask_on = false
-	local mask_wipes = 0
-	fx_env.actor_effects.Hit_MaskCleaning = function() mask_wipes = mask_wipes + 1 end
-	fx_env.reset()
-	for _ = 1, 10 do fx_env.frame(cfg_fx, 0.1, true) end
+	local le = { effects_droplets_enabled = false }
+	local seen_mask, seen_opt, updates, resets, fail = nil, nil, 0, 0, false
+	le.update_rain_droplets = function(a, b)
+		updates = updates + 1
+		seen_mask, seen_opt = fx_env.actor_effects.is_mask_on(), le.effects_droplets_enabled
+		if fail then error("boom") end
+		return a, b
+	end
+	le.droplets_reset = function() resets = resets + 1 end
+	fx_env.level_environment = le
 	local cbs = {}
 	fx_env.RegisterScriptCallback = function(name, fn) cbs[name] = fn end
 	fx_env.on_game_start()
 	cbs.actor_on_first_update()
 	cbs.actor_on_first_update()   -- loading a save again must not hook twice
-	for _ = 1, 10 do fx_env.frame(cfg_fx, 0.1, true) end
-	check(st.wet > 0 and st.wipe_t == 0, "wet lens before the wipe")
-	fx_env.actor_effects.Hit_MaskCleaning()
-	check(mask_wipes == 1, "the game's own mask wipe still runs, once")
-	check(st.wipe_t == t_ms / 1000, "wipe key starts the lens wipe sweep")
-	local wet_mid = st.wet
-	t_ms = t_ms + 300
-	fx_env.frame(cfg_fx, 0.3, true)
-	check(st.wipe_t > 0 and st.wet == wet_mid, "mid-sweep: water held while the hand passes")
-	t_ms = t_ms + 400
-	fx_env.frame(cfg_fx, 0.4, true)
-	check(st.wet == 0 and st.wipe_t == 0 and st.rain_mark < 0, "after the sweep: lens clean, only new drops fall")
-	fx_env.frame(cfg_fx, 0.1, true)
-	check(st.wet > 0, "rain builds up again after the wipe")
-	fx_env.wipe_lens()
-	fx_env.reset()
-	fx_env.wipe_lens()
-	check(st.wipe_t == 0, "wiping a dry lens does nothing")
+	local r1, r2 = le.update_rain_droplets(1, 2)
+	check(updates == 1, "the drops update runs once per call (hooked once)")
+	check(r1 == 1 and r2 == 2, "arguments and results pass through")
+	check(seen_mask == true and seen_opt == true, "bodycam on, no mask: the drops update sees a mask and the option on")
+	check(fx_env.actor_effects.is_mask_on() == false and le.effects_droplets_enabled == false,
+		"after the update the real mask state and option are back")
+	opts.lens_rain = false
+	le.update_rain_droplets()
+	check(seen_mask == false and seen_opt == false, "Rain on the lens off: the game decides as usual")
+	opts.lens_rain, opts.lens_enabled = true, false
+	le.update_rain_droplets()
+	check(seen_mask == false, "lens look off: no drops forced")
+	opts.lens_enabled, fx_on = true, false
+	le.update_rain_droplets()
+	check(seen_mask == false, "bodycam off or without power: no drops forced")
+	fx_on, mask_on = true, true
+	le.update_rain_droplets()
+	check(seen_mask == true and fx_env.actor_effects.is_mask_on() == true, "with a mask on: one effect, mask state kept")
+	mask_on, fail = false, true
+	local ok_err = pcall(le.update_rain_droplets)
+	fail = false
+	check(not ok_err and fx_env.actor_effects.is_mask_on() == false and le.effects_droplets_enabled == false,
+		"an error in the drops update still restores the mask state and option")
 
-	-- the wipe key (T = cam_zoom_in) wipes on its own, even when the game's handler gives up
-	-- (Mask HUD off, so it never sees a mask) or a mod replaced it after our hook
+	-- another droplet mod (Dynamic Smoother Droplets) swaps in its own update after us: wrapped too
+	local smoother_seen, smoother_calls = nil, 0
+	le.update_rain_droplets = function()
+		smoother_calls = smoother_calls + 1
+		smoother_seen = fx_env.actor_effects.is_mask_on() and le.effects_droplets_enabled
+	end
+	cbs.actor_on_update()
+	cbs.actor_on_update()   -- already wrapped: not wrapped twice
+	le.update_rain_droplets()
+	check(smoother_calls == 1 and smoother_seen == true, "a droplet mod swapped in later is wrapped on the next update")
+	check(fx_env.actor_effects.is_mask_on() == false, "and the real mask state is back after it")
+
+	-- the mask-wipe key (T = cam_zoom_in) wipes the drops: the visor drops' own wipe without a mask,
+	-- the game's animated wipe (not ours) with one
 	local DIK_T, DIK_Y = 20, 21
 	fx_env.key_bindings = { kCAM_ZOOM_IN = 7 }
 	fx_env.dik_to_bind = function(k) return (k == DIK_T) and 7 or 99 end
-	fx_env.actor_effects.Hit_MaskCleaning = function() end   -- bails out, no lens wipe in it
-	for _ = 1, 10 do fx_env.frame(cfg_fx, 0.1, true) end
-	check(st.wet > 0 and st.wipe_t == 0, "wet lens before the key press")
 	cbs.on_key_release(DIK_Y)
-	check(st.wipe_t == 0, "another key does not wipe")
+	check(resets == 0, "another key does not wipe")
 	cbs.on_key_release(DIK_T)
-	check(st.wipe_t == t_ms / 1000, "the wipe key starts the sweep without the game's handler")
-	t_ms = t_ms + 100
+	check(resets == 1, "T without a mask wipes the drops")
+	mask_on = true
 	cbs.on_key_release(DIK_T)
-	check(st.wipe_t == (t_ms - 100) / 1000, "a second press during the sweep does not restart it")
+	check(resets == 1, "T with a mask: the game's own wipe handles it")
+	mask_on, opts.lens_rain = false, false
+	cbs.on_key_release(DIK_T)
+	check(resets == 1, "Rain on the lens off: T leaves the visor drops to the game")
+	opts.lens_rain = true
+	le.droplets_reset = nil
+	check(fx_env.wipe_drops() == false, "no visor drops wipe available: nothing, no error")
 	fx_env.key_bindings, fx_env.dik_to_bind = nil, nil
 	cbs.on_key_release(DIK_T)   -- missing engine globals: no error
+	fx_env.level_environment = nil
+	cbs.actor_on_first_update()  -- no visor drops script: no error
 end
 
--- lens rain timing (the shader's drop population and arrivals follow these)
+-- when the bodycam drives the visor drops
 do
-	local w = 0
-	w = fx.lens_water(w, 1, true, 0.2)
-	check(near(w, 0.1), "first drops arrive fast")
-	for _ = 1, 10 do w = fx.lens_water(w, 1, true, 0.1) end
-	check(w > 0.18 and w < 0.25, "then the water builds slowly")
-	check(fx.lens_water(0.5, 0.3, true, 1) < 0.5 and fx.lens_water(0.5, 0.3, true, 1) > 0.3, "lighter rain: dries toward it")
-	check(near(fx.lens_water(0.5, 1, false, 18), 0.5 * math.exp(-1)), "under cover: dries with an 18 s time constant")
-	check(fx.lens_water(0.001, 1, false, 0.1) == 0, "nearly dry snaps to dry")
-	check(fx.lens_water(0.4, 0.4, true, 1) == 0.4, "steady rain holds")
-	check(fx.lens_water(0, 0, true, 1) == 0, "no rain stays dry")
-
-	check(fx.rain_mark(0, true, 100) == 0, "raining on the lens: marker 0")
-	check(fx.rain_mark(0, false, 100) == 100, "covered: marker is the time cover began")
-	check(fx.rain_mark(100, false, 105) == 100, "staying covered keeps the start time")
-	check(fx.rain_mark(100, true, 110) == -110, "uncovered: negative time it ended")
-	check(fx.rain_mark(-110, true, 112) == -110, "within one drop life the marker holds")
-	check(fx.rain_mark(-110, true, 110 + fx.RAIN_LIFE) == 0, "after one drop life back to 0")
-	check(fx.rain_mark(-110, false, 111) == 111, "covered again: new start time")
-	check(fx.rain_mark(0, false, 0) > 0, "time 0 still marks cover")
-
-	local wv, wm, wt = fx.lens_wipe(0.5, 0, 10, 10.3)
-	check(wv == 0.5 and wm == 0 and wt == 10, "during the sweep nothing changes")
-	wv, wm, wt = fx.lens_wipe(0.5, 0, 10, 10 + fx.WIPE_TIME)
-	check(wv == 0 and wm == -(10 + fx.WIPE_TIME) and wt == 0, "sweep done: clean lens, fresh drops only")
-	check(fx.lens_wipe(0.5, 7, 0, 99) == 0.5, "no wipe: untouched")
-	check(fx.lens_rain_allowed(true, false) and not fx.lens_rain_allowed(true, true)
-		and not fx.lens_rain_allowed(false, false), "lens rain: option on and no visor rain")
+	check(fx.drops_wanted(true, true, true) == true, "recording, lens on, rain on: drops")
+	check(fx.drops_wanted(false, true, true) == false and fx.drops_wanted(true, false, true) == false
+		and fx.drops_wanted(true, true, false) == false and fx.drops_wanted(nil, nil, nil) == false,
+		"any of them off: no drops")
 end
 
 -- zbc_bodycam.script: dead/fx_last reload recovery & Shader Bus <= 6 uint4 gating
@@ -316,7 +296,7 @@ do
 		zbc_font_metrics = load("gamedata/scripts/zbc_font_metrics.script", false),
 		zbc_allies = { build = function() return {} end, update = function() end, clear_known = function() end, upper_cp1251 = function(s) return s end },
 		zbc_faces = { reset = function() end, update = function() return {}, 0, 16 / 9 end },
-		zbc_fx = { frame = function() return { glitch = 0, burst = 0, death_t = 0, ir = 0, wet = 0, blood_seed = 0, blood_t = 0, event = false } end },
+		zbc_fx = { frame = function() return { glitch = 0, burst = 0, death_t = 0, ir = 0, blood_seed = 0, blood_t = 0, event = false } end },
 		load_var = function(_, _, d) return d end,
 		save_var = function() end,
 		get_hud = function() return { AddDialogToRender = function() hud_adds = hud_adds + 1 end, RemoveDialogToRender = function() end } end,

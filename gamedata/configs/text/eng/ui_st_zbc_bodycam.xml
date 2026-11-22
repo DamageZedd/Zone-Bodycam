@@ -376,7 +376,7 @@
     <text>Rain on the lens</text>
   </string>
   <string id="ui_mcm_zone_bodycam_lens_rain_desc">
-    <text>Rain drops gather on the lens while rain reaches it, run off and dry under cover. The mask-wipe key wipes them off. Off while a mask shows its own visor rain.</text>
+    <text>The game's own visor rain drops (Dynamic Visor Drops in GAMMA) on the camera, with or without a mask, even with the game's rain droplets option off. The mask-wipe key wipes them.</text>
   </string>
   <string id="ui_mcm_zone_bodycam_lens_dirt">
     <text>Blood on the lens</text>
