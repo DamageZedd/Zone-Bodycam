@@ -195,13 +195,13 @@ do
 	setfenv(fchunk, fenv)
 	fchunk()
 
-	-- 1) Close-up off-screen-center NPC (cu = -0.15, half = 0.30 -> overlaps [0,1])
+	-- 1) Close-up off-screen-center NPC (cu = -0.08, half/a = 0.105 -> overlaps [0,1])
 	-- 2) Dead NPC lying with origin at z = -0.8 (behind cam) but head at z = 0.9, y = 1.53 (head + HEAD_UP = 1.60)
-	-- 3) Edge NPC at x = 0.92: +side (0.92 + 0.17 = 1.09 > 0.99) fails to project, -side (0.75) succeeds
+	-- 3) Edge NPC at x = 0.92: +side (0.92 + 0.105 = 1.025 > 0.99) fails to project, -side (0.815) succeeds
 	npcs[10] = {
 		alive = function() return true end,
-		position = function() return mkvec(-0.15, 0, 1.0) end,
-		_head = mkvec(-0.15, 1.53, 1.0),
+		position = function() return mkvec(-0.08, 0, 1.0) end,
+		_head = mkvec(-0.08, 1.53, 1.0),
 	}
 	npcs[20] = {
 		alive = function() return false end,
@@ -226,7 +226,7 @@ do
 	if n == 3 then
 		local found_closeup, found_dead, found_edge = false, false, false
 		for i = 1, n do
-			if math.abs(rows[i][1] - (-0.15)) < 1e-6 then found_closeup = true end
+			if math.abs(rows[i][1] - (-0.08)) < 1e-6 then found_closeup = true end
 			if math.abs(rows[i][1] - 0.5) < 1e-6 then found_dead = true end
 			if math.abs(rows[i][1] - 0.92) < 1e-6 then found_edge = true end
 		end
@@ -319,11 +319,11 @@ do
 		check(far_row ~= nil, "far face inside PiP lens is placed at magnified cu=0.54")
 		check(near_row ~= nil, "nearby face outside PiP lens is placed at 1x cu=0.80")
 		if far_row then
-			local exp_half = fenv.face_square(0.54, 0.5, 0.54 + 4 * 0.5 * (0.17 / 20), 0.5, 16 / 9, 1080)
+			local exp_half = fenv.face_square(0.54, 0.5, 0.54 + 4 * 0.5 * (0.105 / 20), 0.5, 16 / 9, 1080)
 			check(near(far_row[3], exp_half), "in-lens face square is magnified")
 		end
 		if near_row then
-			local exp_half = fenv.face_square(0.80, 0.5, 0.80 + 0.5 * (0.17 / 2.0), 0.5, 16 / 9, 1080)
+			local exp_half = fenv.face_square(0.80, 0.5, 0.80 + 0.5 * (0.105 / 2.0), 0.5, 16 / 9, 1080)
 			check(near(near_row[3], exp_half), "outside-lens face square is 1x unmagnified")
 		end
 	end
@@ -443,7 +443,7 @@ do
 	check(n == 4, "facing filter blurs only the 4 facing NPCs (201, 203, 205, 207), got n=" .. tostring(n))
 	if n == 4 then
 		local exp_201 = 0.5 + (-1.0 / 2.92) * 0.5
-		local exp_203 = 0.5 + (0.3 / 3.07) * 0.5
+		local exp_203 = 0.5 + (0.3 / (3.07 * 0.65 + 2.97 * 0.35)) * 0.5
 		local exp_205 = 0.5 + (1.5 / 2.92) * 0.5
 		local exp_207 = 0.5 + (-1.8 / 2.92) * 0.5
 		local got_201, got_203, got_205, got_207 = false, false, false, false

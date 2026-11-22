@@ -23,7 +23,7 @@ local POOL          = 256    -- nearest online NPCs kept as candidates (only tho
 local SCAN_INTERVAL = 0.25   -- seconds between candidate rescans
 local LOS_INTERVAL  = 0.1    -- seconds between line-of-sight checks per NPC
 local HEAD_UP       = 0.07   -- metres from the head bone up to the middle of the face
-local HEAD_HALF     = 0.17   -- half the side of the square around the face, metres
+local HEAD_HALF     = 0.105  -- half the side of the square around the face, metres (~21 cm face-sized)
 local FACE_FWD      = 0.08   -- metres forward from head bone to face plane when eye bones are absent
 FACING_COS          = 0.15   -- min dot(face_dir, to_cam) to blur (~81 deg; skips back and back-3/4)
 BLOCKS              = 8      -- blocks across the square on a near face (even)
@@ -263,11 +263,15 @@ local function face_pose(obj, head)
 				local ex = 0.5 * (el.x + er.x)
 				local ey = 0.5 * (el.y + er.y)
 				local ez = 0.5 * (el.z + er.z)
+				local cx, cy, cz = ex, ey, ez
 				local dx, dy, dz = ex - head.x, ey - head.y, ez - head.z
 				local j_id = obj:get_bone_id("jaw_1")
 				if j_id and j_id ~= 65535 then
 					local jaw = obj:bone_position("jaw_1")
 					if jaw then
+						cx = ex * 0.65 + jaw.x * 0.35
+						cy = ey * 0.65 + jaw.y * 0.35
+						cz = ez * 0.65 + jaw.z * 0.35
 						local ux, uy, uz = ex - jaw.x, ey - jaw.y, ez - jaw.z
 						local ulen = sqrt(ux * ux + uy * uy + uz * uz)
 						if ulen > 1e-4 then
@@ -280,7 +284,7 @@ local function face_pose(obj, head)
 						end
 					end
 				end
-				return ex, ey, ez, dx, dy, dz
+				return cx, cy, cz, dx, dy, dz
 			end
 		end
 	end
