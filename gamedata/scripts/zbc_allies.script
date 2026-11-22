@@ -40,6 +40,9 @@ local HYST_HIGH = 1.04
 -- when the box appears (decode_text).
 LABEL_CHARS         = 24     -- longest name drawn
 FACTION_CHARS       = 20     -- longest faction drawn
+INFO_CHARS          = 24     -- longest info line drawn ("IDENT 45%  142 M", "VETERAN  87 M", "KIA")
+DEAD_HOLD           = 5      -- seconds a body keeps its grey KIA box before it fades
+DEAD_COL            = { 150, 150, 150 }
 local LABEL_VW      = 0.85   -- name height in % of the effective 16:9 width (the overlay is 1.2)
 local FACTION_SCALE = 0.72   -- faction line size relative to the name
 local LABEL_GAP     = 0.30   -- space between the faction line and the top of the box, in name ems
@@ -180,6 +183,7 @@ local function hide_label(lbl)
 	if not lbl then return end
 	hide_line(lbl.name)
 	hide_line(lbl.fac)
+	hide_line(lbl.info)
 end
 
 local function hide(slot)
@@ -293,7 +297,7 @@ function build(hud, xml)
 				end
 				return { glyphs = glyphs, text = nil, shown = true, argb = nil }
 			end
-			pool[i].lbl = { name = new_line(LABEL_CHARS), fac = new_line(FACTION_CHARS) }
+			pool[i].lbl = { name = new_line(LABEL_CHARS), fac = new_line(FACTION_CHARS), info = new_line(INFO_CHARS) }
 		end
 		hide(pool[i])
 	end
@@ -342,11 +346,29 @@ local function scan(actor, range)
 	for i = n + 1, #candidates do candidates[i] = nil end
 end
 
+-- Picture-in-picture scopes (3DSS, the engine's second viewport): the lens shows a magnified view
+-- while the main camera does not zoom, so a point seen inside the lens is placed (and its box sized)
+-- through the scope's magnification about the view centre. PIP.m: magnification relative to the main
+-- view (1 = no scope view), PIP.r: lens radius in screen heights, PIP.a: aspect. Set by pip_refresh().
+PIP = { m = 1, r = 0.13, a = 16 / 9, t = -1 }
+
+-- screen uv as the camera shows the point: magnified when it shows up inside the lens; nil when it is
+-- hidden behind the scope (in the lens area unmagnified, but magnified out of the lens)
+function pip_map(u, v, P)
+	P = P or PIP
+	if not u or P.m <= 1.01 then return u, v end
+	local dx, dy = (u - 0.5) * P.a, v - 0.5
+	local r0 = sqrt(dx * dx + dy * dy)
+	if r0 * P.m <= P.r then return 0.5 + (u - 0.5) * P.m, 0.5 + (v - 0.5) * P.m end
+	if r0 <= P.r then return nil end
+	return u, v
+end
+
 local function project(vec)
 	if not vec then return nil end
 	local p = game.world2ui(vec, false)
 	if not p or p.x == -9999 then return nil end
-	return p.x / 1024, p.y / 768
+	return pip_map(p.x / 1024, p.y / 768)
 end
 
 local function project_dot(obj, L, a, W)
@@ -391,6 +413,15 @@ local function npc_name(obj)
 	local s = key and game.translate_string(key)
 	if not s or s == key then s = kind or "" end            -- no string: the class name itself
 	return label_text((s:gsub("_", " ")))
+end
+
+-- a stalker's rank as the game names it ("st_rank_veteran"), as Identification UI shows it; none for mutants
+local function read_rank(obj) return ranks.get_obj_rank_name(obj) end
+local function npc_rank(obj)
+	if not (IsStalker(obj) and ranks and ranks.get_obj_rank_name) then return "" end
+	local ok, r = pcall(read_rank, obj)
+	if not (ok and type(r) == "string" and r ~= "") then return "" end
+	return label_text(game.translate_string("st_rank_" .. r), INFO_CHARS)
 end
 
 local function npc_faction(obj)
@@ -593,10 +624,17 @@ local function step_entity(
 
 	if not obj:alive() then
 		if not ent then return false end
-		ent.target_vis = 0
+		-- killed while marked: a grey KIA box for DEAD_HOLD seconds, then it fades
+		if not ent.dead_t then
+			ent.dead_t = now
+			ent.target_vis = (ent.vis > 0.05) and 1 or 0
+		end
+		if now - ent.dead_t >= DEAD_HOLD then ent.target_vis = 0 end
 		ent.los_grace = 0
 		ent.col = col
+		ent.dist = obj:position():distance_to(apos)
 		refresh_projections(ent, obj, L, a, ux, uy, cfg.allies_size, dot_w, dot_h, W)
+		if ent.target_vis == 1 then return ent.bcx ~= nil or ent.dcx ~= nil end
 		ent.vis = move_toward(ent.vis, 0, DEAD_OUT_RATE * dt)
 		ent.dot_t = move_toward(ent.dot_t, ent.target_dot, MORPH_RATE * dt)
 		if ent.vis <= 0 then
@@ -658,6 +696,8 @@ local function step_entity(
 	if not ent.name then ent.name = npc_name(obj) end
 	if not ent.faction then ent.faction = npc_faction(obj) end
 	if not ent.seed then ent.seed = id % 9973 end
+	if not ent.rank then ent.rank = npc_rank(obj) end
+	ent.is_target = is_target
 	ent.id = id
 	ent.dist = dist
 	ent.aimed = aimed_at(obj, cam_vec)
@@ -773,29 +813,126 @@ local function draw_line(line, text, cx, y, argb, M)
 	line.shown = true
 end
 
--- name and faction centred above a box whose top edge is at top (UI units), in the box colour,
--- decoding from scrambled characters each time the label appears
-local function draw_label(slot, ent, cx, top, alpha, r, g, b)
+---------------------------------------------------------------------------------------------------
+-- Labels: name, faction and an info line (identification progress, then rank and distance, or KIA),
+-- laid out together once a frame so they stay on screen and never overlap each other
+---------------------------------------------------------------------------------------------------
+
+LABEL_MARGIN = 4             -- UI units kept clear of the screen edges
+STACK_PAD    = 2             -- UI units between stacked labels
+local label_queue, label_n = {}, 0
+
+local STR = nil              -- translated words for the info line, read once
+local function words()
+	if not STR then
+		local function tr(id, def)
+			local s = game and game.translate_string and game.translate_string(id)
+			if type(s) ~= "string" or s == "" or s == id then s = def end
+			return label_text(s, INFO_CHARS)
+		end
+		STR = { kia = tr("st_zbc_kia", "KIA"), ident = tr("st_zbc_ident", "IDENT"), m = tr("st_zbc_m", "M") }
+	end
+	return STR
+end
+
+-- the info line: identification progress while unknown, rank and distance once known, KIA when dead
+function info_text(dead, is_known, pct, rank, dist, W)
+	W = W or { kia = "KIA", ident = "IDENT", m = "M" }
+	if dead then return W.kia end
+	local d = dist and (tostring(floor(dist + 0.5)) .. " " .. W.m) or ""
+	if not is_known then
+		return W.ident .. " " .. floor(clamp01(pct or 0) * 100) .. "%" .. ((d ~= "") and ("  " .. d) or "")
+	end
+	if rank and rank ~= "" then return rank .. ((d ~= "") and ("  " .. d) or "") end
+	return d
+end
+
+-- Places label blocks (w, h centred on cx) above their boxes, below them when there is no room above
+-- (someone close whose head is off the top of the screen), inside the screen edges, and stacked so they
+-- never overlap: the aimed-at target first, then nearest first. Each q gets q.x (centre) and q.y (top).
+-- Pure, so it is tested on its own.
+function layout_labels(list, n, gap, scr_w, scr_h)
+	scr_w, scr_h = scr_w or 1024, scr_h or 768
+	for i = 2, n do                                        -- insertion sort by priority (n <= 20)
+		local q = list[i]
+		local j = i - 1
+		while j >= 1 and list[j].prio > q.prio do
+			list[j + 1] = list[j]
+			j = j - 1
+		end
+		list[j + 1] = q
+	end
+	local placed = {}
+	for i = 1, n do
+		local q = list[i]
+		local y = q.top - gap - q.h
+		if y < LABEL_MARGIN then
+			local below = q.bottom + gap
+			y = (below + q.h <= scr_h - LABEL_MARGIN) and below or LABEL_MARGIN
+		end
+		local half = q.w * 0.5
+		local x = min(max(q.cx, LABEL_MARGIN + half), scr_w - LABEL_MARGIN - half)
+		for _ = 1, 8 do
+			local hit = nil
+			for k = 1, #placed do
+				local p = placed[k]
+				if abs(x - p.x) < (q.w + p.w) * 0.5 + STACK_PAD
+					and y < p.y + p.h + STACK_PAD and y + q.h + STACK_PAD > p.y then
+					hit = p
+					break
+				end
+			end
+			if not hit then break end
+			local up = hit.y - STACK_PAD - q.h
+			y = (up >= LABEL_MARGIN) and up or (hit.y + hit.h + STACK_PAD)
+		end
+		q.x, q.y = x, min(max(y, LABEL_MARGIN), scr_h - LABEL_MARGIN - q.h)
+		placed[#placed + 1] = q
+	end
+end
+
+-- queues a label for a box whose top and bottom edges are at top / bottom (UI units), in the box colour
+local function queue_label(slot, ent, cx, top, bottom, alpha, r, g, b)
 	local lbl = slot.lbl
 	if not (lbl and zbc_font_metrics and LG.on) then return hide_label(lbl) end
 	local a = floor(255 * clamp01(alpha))
 	if a <= 0 then return hide_label(lbl) end
 	local t = ent.reveal_t or 0
-	local argb = GetARGB(a, r, g, b)
-
-	local fac_y = top - LG.gap - LG.f.line_h
-	local name_y = fac_y - LG.line_gap - LG.n.line_h
-	if name_y < 0 then
-		name_y = 0
-		fac_y = LG.n.line_h + LG.line_gap
-	end
-	if fac_y + LG.f.line_h > 768 then
-		fac_y = max(768 - LG.f.line_h, 0)
-		name_y = max(fac_y - LG.line_gap - LG.n.line_h, 0)
-	end
 	local seed = ent.seed or 0
-	draw_line(lbl.name, (decode_text(ent.name or "", t, seed, LG.now)), cx, name_y, argb, LG.n)
-	draw_line(lbl.fac, (decode_text(ent.faction or "", t - FACTION_DELAY, seed + 17, LG.now)), cx, fac_y, argb, LG.f)
+	label_n = label_n + 1
+	local q = label_queue[label_n]
+	if not q then
+		q = {}
+		label_queue[label_n] = q
+	end
+	q.slot = slot
+	q.name = (decode_text(ent.name or "", t, seed, LG.now))
+	q.fac = (decode_text(ent.faction or "", t - FACTION_DELAY, seed + 17, LG.now))
+	q.info = lbl.info and ent.info or ""                -- a slot without an info line just has two
+	q.argb = GetARGB(a, r, g, b)
+	q.cx, q.top, q.bottom = cx, top, bottom
+	q.prio = ent.is_target and -1 or (ent.dist or 0)
+	q.w = max(#q.name * LG.n.adv, #q.fac * LG.f.adv, #q.info * LG.f.adv)
+	q.h = LG.n.line_h + LG.line_gap + LG.f.line_h + ((#q.info > 0) and (LG.line_gap + LG.f.line_h) or 0)
+end
+
+-- lays out and draws every label queued this frame
+local function flush_labels()
+	layout_labels(label_queue, label_n, LG.gap or 0)
+	for i = 1, label_n do
+		local q = label_queue[i]
+		local lbl = q.slot.lbl
+		local fac_y = q.y + LG.n.line_h + LG.line_gap
+		draw_line(lbl.name, q.name, q.x, q.y, q.argb, LG.n)
+		draw_line(lbl.fac, q.fac, q.x, fac_y, q.argb, LG.f)
+		if #q.info > 0 then
+			draw_line(lbl.info, q.info, q.x, fac_y + LG.f.line_h + LG.line_gap, q.argb, LG.f)
+		else
+			hide_line(lbl.info)
+		end
+		q.slot = nil
+	end
+	label_n = 0
 end
 
 -- Box colour while it "identifies" the NPC: white until the name has decoded, then it fades to the
@@ -867,6 +1004,7 @@ local function step_reveal(ent)
 	end
 	local s = reveal_speed(t_full, is_known, ent.dist or 0, ent.aimed, LG.fov)
 	ent.reveal_t = ent.reveal_t + (LG.dt or 0) * s
+	ent.id_pct = is_known and 1 or clamp01(ent.reveal_t / t_full)
 	if id and not is_known then
 		if ent.reveal_t >= t_full then
 			known[id] = true
@@ -882,10 +1020,14 @@ local function draw_slot(slot, ent, dot_w, dot_h, style)
 	local col = ent.col
 	local m = smoothstep(0, 1, ent.dot_t)
 	local r, g, b = col[1], col[2], col[3]
-	if m < 0.98 then
+	if ent.dead_t then
+		r, g, b = DEAD_COL[1], DEAD_COL[2], DEAD_COL[3]
+		ent.info = info_text(true, nil, nil, nil, nil, words())
+	elseif m < 0.98 then
 		-- a box: white while unknown, decoding to its colour as the stalker is identified
 		local k = step_reveal(ent)
 		r, g, b = floor(lerp(255, r, k) + 0.5), floor(lerp(255, g, k) + 0.5), floor(lerp(255, b, k) + 0.5)
+		ent.info = info_text(false, ent.id and known[ent.id], ent.id_pct, ent.rank, ent.dist, words())
 	end
 	local vis_e = (ent.target_vis == 1) and ease_out3(ent.vis) or smoothstep(0, 1, ent.vis)
 	local pop_alpha = ent.base_alpha * vis_e
@@ -914,7 +1056,7 @@ local function draw_slot(slot, ent, dot_w, dot_h, style)
 		apply_wnd(st, bx, by, bw * box_pop_scale, bh * box_pop_scale, argb)
 		other:Show(false)
 		slot.dot:Show(false)
-		draw_label(slot, ent, bx, by - bh * box_pop_scale * 0.5, pop_alpha, r, g, b)
+		queue_label(slot, ent, bx, by - bh * box_pop_scale * 0.5, by + bh * box_pop_scale * 0.5, pop_alpha, r, g, b)
 	elseif m >= 0.98 then
 		local argb = GetARGB(floor(255 * clamp01(pop_alpha)), r, g, b)
 		apply_wnd(slot.dot, dx, dy, dw * dot_pop_scale, dh * dot_pop_scale, argb)
@@ -931,7 +1073,7 @@ local function draw_slot(slot, ent, dot_w, dot_h, style)
 		local box_a = (1 - smoothstep(0.15, 0.95, m)) * pop_alpha
 		apply_wnd(st, mcx, mcy, box_w, box_h, GetARGB(floor(255 * clamp01(box_a)), r, g, b))
 		other:Show(false)
-		draw_label(slot, ent, mcx, mcy - box_h * 0.5, box_a, r, g, b)
+		queue_label(slot, ent, mcx, mcy - box_h * 0.5, mcy + box_h * 0.5, box_a, r, g, b)
 
 		local d_scale = lerp(0.55, 1.0, m) * dot_pop_scale
 		local dot_a = smoothstep(0.10, 0.85, m) * pop_alpha
@@ -966,6 +1108,41 @@ end
 function view_zoom()
 	local dev = device and device()
 	return zoom_factor(console_fov(), dev and dev.fov)
+end
+
+-- magnification of a picture-in-picture scope view relative to the main view: the scope camera's
+-- fov is 2 atan(tan(base / 2) / zf) (zf: the weapon's GetZoomFactor), the main view has cur_deg
+function pip_magnification(zf, base_deg, cur_deg)
+	zf = tonumber(zf)
+	if not zf or zf <= 1 then return 1 end
+	base_deg = tonumber(base_deg) or 75
+	cur_deg = tonumber(cur_deg) or base_deg
+	local r = math.rad
+	local m = math.tan(r(cur_deg) * 0.5) * zf / math.tan(r(min(base_deg, 170)) * 0.5)
+	if not (m == m) then return 1 end
+	return min(max(m, 1), MAX_ZOOM)
+end
+
+local function read_zoom(w) return w:GetZoomFactor() end
+
+-- updates PIP once a frame (shared with zbc_faces.script)
+function pip_refresh()
+	local now = time_global()
+	if PIP.t == now then return PIP end
+	PIP.t = now
+	PIP.m = 1
+	local dev = device and device()
+	if dev and dev.width and dev.height and dev.height > 0 then PIP.a = dev.width / dev.height end
+	if type(is_svp_active) ~= "function" then return PIP end   -- engine without picture-in-picture scopes
+	local ok, on = pcall(is_svp_active)
+	if not (ok and on) then return PIP end
+	local actor = db.actor
+	local wpn = actor and actor:active_item()
+	local w = wpn and wpn.cast_Weapon and wpn:cast_Weapon()
+	if not w then return PIP end
+	local ok2, zf = pcall(read_zoom, w)
+	PIP.m = pip_magnification(ok2 and zf, console_fov(), dev and dev.fov)
+	return PIP
 end
 
 local function fill_metrics(M, F, em, ux, uy)
@@ -1003,7 +1180,7 @@ function update(pool, cfg, L, visible)
 
 	-- through a scope the range (and the box/dot switch) grows with the zoom, so an ally that looks as
 	-- big as one at the normal range still gets a box and a name
-	local range = max(cfg.allies_range, 2) * view_zoom()
+	local range = max(cfg.allies_range, 2) * max(view_zoom(), pip_refresh().m)
 	local now = time_global() / 1000
 	scan_enemies = cfg.allies_enemies and true or false
 	scan_mutants = cfg.allies_mutants and true or false
@@ -1115,10 +1292,12 @@ function update(pool, cfg, L, visible)
 		table.sort(draw_list, cmp_draw)
 	end
 
+	label_n = 0
 	local n_shown = min(n_draw, #pool)
 	for i = 1, n_shown do
 		draw_slot(pool[i], states[draw_list[i]], dot_w, dot_h, cfg.allies_style)
 	end
+	flush_labels()                                       -- every label at once: on screen, no overlaps
 	for i = n_shown + 1, #pool do hide(pool[i]) end
 end
 

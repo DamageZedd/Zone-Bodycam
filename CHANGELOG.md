@@ -12,6 +12,10 @@
 - **Names above the ally boxes** (MCM **Ally markers > Show names**, on by default): each box shows the stalker's name and, in smaller text under it, their faction, in the overlay font and the box colour, fading with the box. Hidden while the marker is a dot.
   - Each time a box appears, the text decodes from scrambled characters, letter by letter from the left (about a second for a long name).
   - **Identification by distance**, after the Identification UI mod at GAMMA's speed (0.5). Nobody is identified instantly: the name, faction and colour stay unknown (white, scrambled) and only decode while you look at them, taking at least 2 s up close and that mod's rate further out (about 11 s at 100 m, 3 s at 100 m through a 4x scope). Look away and the progress waits for you.
+  - **Picture-in-picture scopes** (3DSS): seen through the lens, boxes, labels and face blur are magnified by the scope's power about the view centre, so the box fits the magnified body and the label sits above its head instead of on it. Anything hidden behind the scope body gets no box.
+  - **Info line** under the faction: identification progress while unknown ("IDENT 45%  142 M"), then rank and distance ("VETERAN  88 M", distance only for mutants), in English or Russian.
+  - **Labels stay readable**: all labels are laid out together each frame. They move below the box when someone is so close their head is off the top of the screen, stay inside the screen edges, and stack instead of overlapping (the aimed-at target first, then nearest first).
+  - **KIA**: someone killed while marked keeps a grey box with KIA for 5 s before it fades.
   - **Identified stalkers are remembered** for the session: look away and back and their name, faction and box colour are there at once.
   - **The one you aim at** (Identification UI's crosshair target) gets a full box and label at any distance, through a scope too, and keeps it while you stay on them.
   - The decode itself is slower and easier to follow: about 1.2 s for a 10-letter name, with the colour changing after it.

@@ -390,4 +390,13 @@
   <string id="st_zbc_signal_lost">
     <text>Нет сигнала</text>
   </string>
+  <string id="st_zbc_kia">
+    <text>Убит</text>
+  </string>
+  <string id="st_zbc_ident">
+    <text>Опозн.</text>
+  </string>
+  <string id="st_zbc_m">
+    <text>м</text>
+  </string>
 </string_table>

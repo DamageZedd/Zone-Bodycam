@@ -128,6 +128,92 @@ if type(ir) == "function" and type(rs) == "function" then
 	check(plain > 10 and plain < 12.5 and scoped > 2.5 and scoped < 3.2, ("100 m: %.1f s plain, %.1f s scoped"):format(plain, scoped))
 end
 
+-- info line: progress while unknown, rank and distance once known, KIA when dead
+local it = rawget(env, "info_text")
+check(type(it) == "function", "info_text exists")
+if type(it) == "function" then
+	check(it(false, false, 0.456, "VETERAN", 142.4) == "IDENT 45%  142 M", "unknown: progress and distance")
+	check(it(false, true, 1, "VETERAN", 87.6) == "VETERAN  88 M", "known: rank and distance")
+	check(it(false, true, 1, "", 30) == "30 M", "known mutant (no rank): distance only")
+	check(it(true, true, 1, "VETERAN", 10) == "KIA", "dead: KIA")
+	check(it(false, false, nil, nil, nil) == "IDENT 0%", "no progress or distance yet")
+	check(#it(false, false, 1, "", 99999) <= env.INFO_CHARS, "fits INFO_CHARS")
+	local W = { kia = "\219\225\232\242", ident = "\206\239\238\231\237.", m = "\236" }
+	check(it(true, nil, nil, nil, nil, W) == W.kia, "translated words are used")
+end
+
+-- label layout: on screen, below the box when there is no room above, stacked without overlaps
+local ll = rawget(env, "layout_labels")
+check(type(ll) == "function", "layout_labels exists")
+if type(ll) == "function" then
+	local function q(cx, top, bottom, prio) return { cx = cx, top = top, bottom = bottom, w = 80, h = 30, prio = prio } end
+	local function overlap(a, b)
+		return math.abs(a.x - b.x) < (a.w + b.w) * 0.5 and a.y < b.y + b.h and a.y + a.h > b.y
+	end
+	-- plenty of room: sits just above the box
+	local L1 = { q(512, 300, 500, 10) }
+	ll(L1, 1, 4)
+	check(L1[1].y == 300 - 4 - 30 and L1[1].x == 512, "above the box")
+	-- someone close: box top off the screen, so the label goes below the box
+	local L2 = { q(512, -50, 400, 5) }
+	ll(L2, 1, 4)
+	check(L2[1].y == 404, "no room above: below the box")
+	-- huge box filling the screen: pinned inside the top edge
+	local L3 = { q(512, -50, 900, 5) }
+	ll(L3, 1, 4)
+	check(L3[1].y == env.LABEL_MARGIN, "no room above or below: inside the top edge")
+	-- at the screen edge: pulled in so it is fully visible
+	local L4 = { q(1020, 300, 500, 5) }
+	ll(L4, 1, 4)
+	check(L4[1].x + 40 <= 1024 - env.LABEL_MARGIN + 1e-9, "kept inside the right edge")
+	-- two people side by side: the nearer keeps its place, the other stacks above it
+	local far, near = q(520, 300, 500, 60), q(500, 300, 500, 20)
+	local L5 = { far, near }
+	ll(L5, 2, 4)
+	check(near.y == 300 - 4 - 30, "nearer label stays above its box")
+	check(not overlap(near, far), "labels never overlap")
+	check(far.y < near.y, "the further one stacks above")
+	-- the aimed-at target wins its spot even when further away
+	local tgt, close = q(500, 300, 500, -1), q(505, 300, 500, 5)
+	local L6 = { close, tgt }
+	ll(L6, 2, 4)
+	check(tgt.y == 300 - 4 - 30 and not overlap(tgt, close), "aimed target first, others move")
+	-- a crowd of six in one spot: none overlap, all on screen
+	local L7 = {}
+	for i = 1, 6 do L7[i] = q(500 + i, 200, 400, i * 10) end
+	ll(L7, 6, 4)
+	local ok = true
+	for i = 1, 6 do
+		if L7[i].y < 0 or L7[i].y + L7[i].h > 768 then ok = false end
+		for j = i + 1, 6 do if overlap(L7[i], L7[j]) then ok = false end end
+	end
+	check(ok, "a crowd stacks with no overlaps, all on screen")
+end
+
+-- picture-in-picture scopes: points inside the lens are magnified about the view centre
+local pm, pmag = rawget(env, "pip_map"), rawget(env, "pip_magnification")
+check(type(pm) == "function" and type(pmag) == "function", "scope view functions exist")
+if type(pm) == "function" and type(pmag) == "function" then
+	local function near(a, b) return math.abs(a - b) < 1e-6 end
+	local P = { m = 4, r = 0.13, a = 16 / 9 }
+	local u, v = pm(0.5 + 0.01, 0.5 + 0.02, P)
+	check(near(u, 0.54) and near(v, 0.58), "inside the lens: 4x further from the centre")
+	local cu, cv = pm(0.5, 0.5, P)
+	check(near(cu, 0.5) and near(cv, 0.5), "the centre stays the centre")
+	check(pm(0.5 + 0.05, 0.5, P) == nil, "in the lens area but magnified out of it: hidden behind the scope")
+	local ou, ov = pm(0.9, 0.2, P)
+	check(ou == 0.9 and ov == 0.2, "outside the lens: unchanged")
+	local nu, nv = pm(0.51, 0.52, { m = 1, r = 0.13, a = 16 / 9 })
+	check(nu == 0.51 and nv == 0.52, "no scope view: unchanged")
+	-- a box's height grows with the magnification (head and feet both inside the lens)
+	local _, top = pm(0.5, 0.49, P)
+	local _, bot = pm(0.5, 0.51, P)
+	check(near(bot - top, 0.08), "box height x4 inside the lens")
+	check(pmag(4, 75, 75) > 3.99 and pmag(4, 75, 75) < 4.01, "4x scope, main view unzoomed: 4x")
+	check(pmag(4, 75, 60) < pmag(4, 75, 75), "main view already zoomed a little: less relative magnification")
+	check(pmag(nil, 75, 75) == 1 and pmag(0.5, 75, 75) == 1, "no or bad zoom factor: 1")
+end
+
 -- scope zoom
 local zf = rawget(env, "zoom_factor")
 check(type(zf) == "function", "zoom_factor exists")

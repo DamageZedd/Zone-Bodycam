@@ -390,4 +390,13 @@
   <string id="st_zbc_signal_lost">
     <text>Signal lost</text>
   </string>
+  <string id="st_zbc_kia">
+    <text>KIA</text>
+  </string>
+  <string id="st_zbc_ident">
+    <text>Ident</text>
+  </string>
+  <string id="st_zbc_m">
+    <text>m</text>
+  </string>
 </string_table>

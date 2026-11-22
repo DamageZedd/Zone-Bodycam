@@ -153,7 +153,13 @@ end
 local function project(vec)
 	local p = game.world2ui(vec, false)
 	if not p or p.x == -9999 then return nil end
-	return p.x / 1024, p.y / 768
+	local u, v = p.x / 1024, p.y / 768
+	-- inside a picture-in-picture scope the face shows magnified (zbc_allies.pip_map)
+	if zbc_allies and zbc_allies.pip_map then
+		if zbc_allies.pip_refresh then zbc_allies.pip_refresh() end
+		return zbc_allies.pip_map(u, v)
+	end
+	return u, v
 end
 
 local function visible(actor, obj, id, now, cam)
