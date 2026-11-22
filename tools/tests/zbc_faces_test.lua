@@ -340,7 +340,7 @@ if type(fv) == "function" then
 	-- camera at (0, 1.6, 0), face at (0, 1.6, 5) -> to_cam is (0, 0, -1)
 	check(fv(0, 1.6, 5, 0, 0, -1, 0, 1.6, 0), "facing camera (dot = 1.0) -> blurred")
 	check(fv(0, 1.6, 5, 0.866, 0, -0.5, 0, 1.6, 0), "3/4 front (dot = 0.5) -> blurred")
-	check(not fv(0, 1.6, 5, 1, 0, 0, 0, 1.6, 0), "exact side (dot = 0.0) -> not blurred")
+	check(fv(0, 1.6, 5, 1, 0, 0, 0, 1.6, 0), "side profile (dot = 0.0) -> blurred")
 	check(not fv(0, 1.6, 5, 0.866, 0, 0.5, 0, 1.6, 0), "3/4 back (dot = -0.5) -> not blurred")
 	check(not fv(0, 1.6, 5, 0, 0, 1, 0, 1.6, 0), "back of head (dot = -1.0) -> not blurred")
 	check(fv(0, 1.6, 5, nil, nil, nil, 0, 1.6, 0), "missing direction defaults to blurred")
