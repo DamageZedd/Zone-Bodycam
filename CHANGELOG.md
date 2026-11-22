@@ -1,11 +1,9 @@
 # Changelog
 
-## Unreleased
-
-### Changed
-- **Upgraded lens raindrops & blood splatter (`zbc_lens.h`)**: replaced static dark-rimmed rain circles and flat red blood circles with multi-layer stick-slip sliding raindrop streams (tapered liquid trails, wake micro-beads, stationary 2×2 micro-beads, analytic surface-gradient refraction, and glass meniscus glint) and glossy, refractive, gravity-dripping blood splatter with Beer-Lambert crimson absorption, wet specular highlights, and gradual drying.
-
 ## v1.2.0 - 2026-11-22
+
+### Hotfix
+- **Upgraded lens raindrops & blood splatter (`zbc_lens.h`)**: replaced static dark-rimmed rain circles and flat red blood circles with multi-layer stick-slip sliding raindrop streams (tapered liquid trails, wake micro-beads, stationary 2×2 micro-beads, analytic surface-gradient refraction, and glass meniscus glint) and glossy, refractive, gravity-dripping blood splatter with Beer-Lambert crimson absorption, wet specular highlights, and gradual drying.
 
 ### Added
 - **Blur faces** (MCM **Lens > Blur faces**, on by default): the faces of stalkers the camera sees are pixelated into a coarse mosaic, like released bodycam footage.
