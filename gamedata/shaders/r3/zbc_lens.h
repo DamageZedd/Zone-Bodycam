@@ -8,7 +8,7 @@
 
 uniform float4 bus_zbc_motion;   // x: intensity 0..1  y/z: world shift (screen heights)  w: world roll (rad)
 uniform float4 bus_zbc_lens;     // x: barrel k1  y: radial CA  z: zoom  w: peripheral edge softness (0..1)
-uniform float4 bus_zbc_edge;     // x: edge radius (0.4..1.35)  y: edge softness (>0)  z: optical vignette (0..1)  w: edge shape (0=circle .. 1=screen)
+uniform float4 bus_zbc_edge;     // x: edge radius (0.4..1.35, negative: housing off)  y: edge softness (>0)  z: optical vignette (0..1)  w: edge shape (0=circle .. 1=screen)
 uniform float4 bus_zbc_extra;    // x: vignette follow scale  y: sharpen (0..1)  z: CMOS grain (0..1)  w: >=0.5 image, <0.5 HUD ring
 uniform float4 bus_zbc_vig;      // x/y: independent vignette & housing center offset (screen heights)  z: dynamic tightening (0..1)  w: housing/vignette roll (rad)
 uniform float4 bus_zbc_vig_occ;  // x: horizontal chest/shoulder occlusion (-1 left .. +1 right)  y: vertical rig/chin occlusion (-1 top .. +1 bottom)  z: occlusion strength (0..1+)  w: superellipse power (2.0..6.0)
@@ -19,8 +19,8 @@ uniform float4 bus_zbc_faces;    // x: number of faces in use (0..64), y/z: pack
 
 // Camera effects (scripts\zbc_fx.script), independent of the lens.
 uniform float4 bus_zbc_glitch;   // x: interference 0..1  y: hit burst 0..1  z: time of death (timers.x clock, 0 alive)
-uniform float4 bus_zbc_ir;       // x: low-light (infrared) mix 0..1  y: auto-exposure gain (0 = off, 1 = neutral)
-uniform float4 bus_zbc_dirt;     // x: rain on the lens 0..1  y: blood seed  z: time the blood hit (0 none)
+uniform float4 bus_zbc_ir;       // x: low-light (infrared) mix 0..1  y: auto-exposure gain (0 = off, 1 = neutral)  z: lens wipe start (timers.x, 0 none)
+uniform float4 bus_zbc_dirt;     // x: rain on the lens 0..1  y: blood seed  z: time the blood hit (0 none)  w: rain arrivals marker
 
 #define ZBC_INTENSITY (saturate(bus_zbc_motion.x))
 #define ZBC_ACTIVE    (bus_zbc_motion.x > 0.0005)
@@ -192,6 +192,161 @@ float3 zbc_ir_pass(float3 c, float k)
 // Lens dirt: dynamic sliding rain drops (with trails & micro-beads) and glossy dripping blood
 //------------------------------------------------------------------------------------------------
 
+// Rain is a water height field on the glass: sliding drops with short wet trails, plus resting
+// beads. Only its slope matters: it bends the picture (no tint, no highlight), capped at 12 px at
+// 1080p. Look and timing follow the Dynamic Visor Drops mod (IgnisRaptorem), which builds on
+// "Heartfelt" by Martijn Steinrucken (BigWings, 2017); this is an independent implementation.
+// bus_zbc_dirt.x: water on the lens 0..1 (how many drops)  w: arrivals marker, see zbc_fx.script:
+// 0 raining on the lens, +t lens covered since shader time t, -t uncovered again since t.
+#define ZBC_RAIN_LIFE   4.0    // seconds a sliding drop takes to run off the bottom edge
+#define ZBC_RAIN_TRAIL  0.3    // seconds of wet trail left behind a moving drop
+#define ZBC_RAIN_PX     12.0   // refraction cap, pixels at 1080p
+
+// soft bump (value, d/dx, d/dy): 1 at the centre down to 0 at distance r, axes stretch it
+float3 zbc_bump(float2 d, float2 axes, float r)
+{
+	float2 q = d * axes;
+	float  l = max(length(q), 1e-5);
+	float  x = saturate(1.0 - l / r);
+	float  s = -6.0 * x * (1.0 - x) / r;
+	return float3(x * x * (3.0 - 2.0 * x), s * q * axes / l);
+}
+
+// a drop shows once the water reaches its own threshold, so drops appear and dry one by one
+float zbc_rain_pop(float seed, float water)
+{
+	float th = lerp(0.03, 0.95, seed);
+	return smoothstep(th - 0.03, th + 0.03, water);
+}
+
+// stick-slip run 0..1 over one life: three surges with pauses between; s varies the timing
+float zbc_rain_run(float k, float s)
+{
+	float j = (s - 0.5) * 0.08;
+	return 0.25 * smoothstep(0.02, 0.20 + j, k)
+	     + 0.30 * smoothstep(0.33 + j, 0.52, k)
+	     + 0.45 * smoothstep(0.62 - j, 0.84 + j, k);
+}
+
+// sideways position of a drop (column units) after running distance d of its whole run
+float zbc_rain_path(float d, float run, float3 s)
+{
+	return (s.x - 0.5) * 0.3 + (s.y - 0.5) * 0.24 * d / run
+	     + 0.07 * sin(d * (3.0 + 2.0 * s.z) + s.z * 6.2832) * smoothstep(0.0, 0.3, d);
+}
+
+// one sliding drop: column c, birth row b of n; q and the results in column units of a layer
+// that is H columns high. heads: the drop (thresholded later), wake: its thin trail
+void zbc_rain_drop(float2 q, float c, float b, float n, float H, float t, float water, float mark,
+                   inout float3 heads, inout float3 wake)
+{
+	float3 s = zbc_hash3(float2(c * 1.37 + H, b * 7.91 + 0.5));
+	float3 u = zbc_hash3(float2(c * 2.11 + 9.7, b * 3.17 + H));
+	float  pop = zbc_rain_pop(u.x, water);
+	if (pop <= 0.0)
+		return;
+	float phase = frac(t / ZBC_RAIN_LIFE + u.y * 7.13);
+	float born  = t - phase * ZBC_RAIN_LIFE;
+	if ((mark > 0.0 && born >= mark) || (mark < 0.0 && born < -mark))
+		return;                                          // fell while covered / was on the glass before
+	float y0   = (b + 0.25 + 0.5 * s.x) / n * H;
+	float run  = H * 1.06 - y0;
+	float d1   = run * zbc_rain_run(phase, s.y);
+	float d0   = run * zbc_rain_run(max(phase - ZBC_RAIN_TRAIL / ZBC_RAIN_LIFE, 0.0), s.y);
+	if (q.y < y0 + d0 - 0.3 || q.y > y0 + d1 + 0.3)
+		return;
+	float  k    = pop * smoothstep(0.0, 0.015, phase);
+	float2 head = float2(c + 0.5 + zbc_rain_path(d1, run, s), y0 + d1);
+	float2 tail = float2(c + 0.5 + zbc_rain_path(d0, run, s), y0 + d0);
+	heads += zbc_bump(q - head, float2(1.0, 1.8), lerp(0.22, 0.28, u.z)) * k;   // wide, flat bead of water
+	float2 seg = head - tail;
+	float  L2  = dot(seg, seg);
+	if (L2 < 1e-4)
+		return;
+	float  a    = saturate(dot(q - tail, seg) / L2);      // 0 at the old end .. 1 at the head
+	float2 off  = q - (tail + seg * a);
+	float  fade = smoothstep(0.0, 0.6, a);
+	wake  += zbc_bump(off, float2(1.0, 1.0), 0.07 * lerp(0.55, 1.0, a)) * (fade * k);
+	// a few small beads strung along the wet trail
+	float  L     = sqrt(L2);
+	float2 side  = float2(seg.y, -seg.x) / L;
+	float  along = (frac(a * L * 9.0 + s.z) - 0.5) / 9.0;
+	float3 bead  = zbc_bump(float2(dot(off, side), along), float2(1.0, 1.0), 0.05);
+	bead.yz      = bead.y * side + bead.z * seg / L;
+	heads += bead * (0.45 * fade * k);
+}
+
+// one layer of sliding drops, cols columns per screen height, n birth rows; gradients per screen height
+void zbc_rain_layer(float2 p, float cols, float n, float t, float water, float mark, float w,
+                    inout float3 heads, inout float3 wake)
+{
+	float2 q  = p * cols;
+	float  c0 = floor(q.x);
+	float  c1 = c0 + ((frac(q.x) < 0.5) ? -1.0 : 1.0);   // drops stay within one column of home
+	float3 h  = float3(0.0, 0.0, 0.0);
+	float3 tr = float3(0.0, 0.0, 0.0);
+	[loop] for (float b = 0.0; b < n; b += 1.0)
+	{
+		if (q.y < (b + 0.25) / n * cols - 0.3)
+			break;                                       // later rows are all born below this pixel
+		zbc_rain_drop(q, c0, b, n, cols, t, water, mark, h, tr);
+		zbc_rain_drop(q, c1, b, n, cols, t, water, mark, h, tr);
+	}
+	heads += float3(h.x, h.yz * cols) * w;
+	wake  += float3(tr.x, tr.yz * cols) * w;
+}
+
+// resting beads: a third of the cells of a 26 x 26 screen grid hold one, each fully inside its cell
+float3 zbc_rain_beads(float2 p, float water)
+{
+	float2 G    = float2(26.0 / zbc_aspect().x, 26.0);
+	float2 q    = p * G;
+	float2 cell = floor(q);
+	float3 s    = zbc_hash3(cell + 71.3);
+	float3 u    = zbc_hash3(cell + 19.7);
+	if (u.x > 0.35)
+		return float3(0.0, 0.0, 0.0);
+	float  r = lerp(0.3, 0.5, u.y);
+	float2 c = cell + 0.5 + (s.xy - 0.5) * (1.0 - 2.0 * r);
+	float3 b = zbc_bump(q - c, float2(1.0, 1.0), r) * (zbc_rain_pop(s.z, water) * 2.0 * u.z);
+	return float3(b.x, b.yz * G);
+}
+
+// lens wipe (mask-wipe key): a slightly curved hand edge sweeps left to right over ZBC_RAIN_WIPE s
+// from bus_zbc_ir.z; 0 where it has wiped. The script clears the water once the sweep is done.
+#define ZBC_RAIN_WIPE   0.6
+float zbc_rain_wipe(float2 uv)
+{
+	float t0 = bus_zbc_ir.z;
+	if (t0 <= 0.0)
+		return 1.0;
+	float k     = saturate((timers.x - t0) / ZBC_RAIN_WIPE);
+	float front = lerp(-0.15, 1.25, k);
+	return smoothstep(front - 0.035, front + 0.035, uv.x + 0.1 * sin(uv.y * 3.14159));
+}
+
+// uv offset that rain on the lens adds to the picture (pure refraction, no tint or glint)
+float2 zbc_rain_offset(float2 uv)
+{
+	float water = saturate(bus_zbc_dirt.x);
+	if (water < 0.002)
+		return float2(0.0, 0.0);
+	float2 p     = uv * zbc_aspect();
+	float  t     = timers.x;
+	float  mark  = bus_zbc_dirt.w;
+	float3 heads = zbc_rain_beads(p, water);
+	float3 wake  = float3(0.0, 0.0, 0.0);
+	zbc_rain_layer(p, 7.0, 3.0, t, water, mark, 1.0, heads, wake);
+	zbc_rain_layer(p, 12.0, 5.0, t + 1.7, water, mark, 0.7, heads, wake);
+	// touching water merges into one surface; only what stands above the thin film shows
+	float  x     = saturate((heads.x - 0.3) / 0.7);
+	float2 slope = heads.yz * (6.0 * x * (1.0 - x) / 0.7) + wake.yz * 0.22;
+	float  sc    = screen_res.y / 1080.0;
+	float2 px    = slope * 5.0 * sc;
+	px *= min(1.0, ZBC_RAIN_PX * sc / max(length(px), 1e-4));
+	return px * screen_res.zw * smoothstep(0.0, 0.06, water) * zbc_rain_wipe(uv);
+}
+
 // Smooth radial droplet height + analytic gradient in (value, d/dx, d/dy)
 float3 zbc_drop_profile(float2 d, float r)
 {
@@ -203,114 +358,6 @@ float3 zbc_drop_profile(float2 d, float r)
 	float dh_dr = -6.0 * t * (1.0 - t) / max(r, 1e-4);
 	float2 grad = (len > 1e-5) ? (d / len) * dh_dr : float2(0.0, 0.0);
 	return float3(h, grad);
-}
-
-// Stick-slip gravity descent: drops pause, slide, pause, slide
-float zbc_slide_progress(float phase, float seed)
-{
-	float s = (seed - 0.5) * 0.06;
-	return 0.22 * smoothstep(0.04, 0.26 + s, phase)
-	     + 0.36 * smoothstep(0.34 + s, 0.56 + s, phase)
-	     + 0.42 * smoothstep(0.62 + s, 0.86, phase);
-}
-
-// One layer of sliding raindrop streams (head + tapered wet trail + wake micro-beads),
-// evaluated across horizontal neighbor columns so wandering drops never clip at cell edges.
-float3 zbc_rain_streams(float2 uv, float2 asp, float wet, float scale, float t_clock)
-{
-	float2 grid = float2(14.0 * asp.x, 3.2) * scale;
-	float2 p    = uv * grid;
-	float2 base = floor(p);
-	float3 acc  = float3(0.0, 0.0, 0.0);
-
-	[unroll] for (int ox = -1; ox <= 1; ox++)
-	{
-		float col = base.x + (float)ox;
-		float col_seed = zbc_hash(float2(col * 17.3, scale * 31.7));
-		float y_shift  = p.y + col_seed * 6.0;
-		float row      = floor(y_shift);
-		float3 h3      = zbc_hash3(float2(col * 37.1 + scale * 11.3, row * 91.7));
-
-		// Population gate: denser as wet increases
-		float pop = smoothstep(lerp(0.05, 0.92, h3.z) - 0.04, lerp(0.05, 0.92, h3.z) + 0.04, wet);
-		if (pop <= 0.001)
-			continue;
-
-		float life  = 4.2 + h3.y * 2.4;
-		float phase = frac(t_clock / life + h3.z);
-		float slide = zbc_slide_progress(phase, h3.y);
-		float fade  = smoothstep(0.0, 0.04, phase) * (1.0 - smoothstep(0.88, 1.0, phase));
-
-		float2 local = float2(p.x - col - 0.5, frac(y_shift));
-		// Gentle organic horizontal wander as the drop descends
-		float wander = sin(local.y * 6.2832 + h3.x * 6.2832) * 0.14 * (0.4 + 0.6 * h3.y);
-		float hx     = (h3.x - 0.5) * 0.45 + wander;
-		float hy     = lerp(0.08, 0.92, slide);
-
-		// 1. Main teardrop head (slightly elongated vertically)
-		float2 hd = local - float2(hx, hy);
-		hd.y *= 1.35;
-		float3 head = zbc_drop_profile(hd, lerp(0.14, 0.22, h3.y));
-		head.z *= 1.35;
-
-		// 2. Tapered wet trail behind the descending head
-		float behind = hy - local.y;
-		float3 trail = float3(0.0, 0.0, 0.0);
-		if (behind > 0.0 && behind < 0.55)
-		{
-			float tfade = smoothstep(0.55, 0.02, behind) * smoothstep(0.0, 0.05, behind);
-			float tr    = lerp(0.045, 0.095, tfade);
-			float tx    = local.x - hx;
-			if (abs(tx) < tr)
-			{
-				float tt = 1.0 - abs(tx) / tr;
-				float th = tt * tt * (3.0 - 2.0 * tt) * tfade * 0.26;
-				float tg = -sign(tx) * 6.0 * tt * (1.0 - tt) / max(tr, 1e-4) * tfade * 0.26;
-				trail = float3(th, tg, 0.0);
-			}
-			// Tiny micro-beads left along the trail wake
-			float bead_y = frac(local.y * 7.0 + h3.y * 5.0) - 0.5;
-			float2 bd    = float2(tx, bead_y / 7.0);
-			float3 bead  = zbc_drop_profile(bd, 0.055) * tfade * 0.45;
-			trail += bead;
-		}
-
-		float w = pop * fade;
-		float3 combined = (head + trail) * w;
-		combined.yz *= grid;
-		acc += combined;
-	}
-	return acc;
-}
-
-// Stationary fine micro-beads across 2x2 neighbor cells (zero cell-edge clipping)
-float3 zbc_rain_static(float2 uv, float2 asp, float wet, float t_clock)
-{
-	float2 grid = float2(26.0 * asp.x, 26.0);
-	float2 p    = uv * grid;
-	float2 base = floor(p);
-	float2 side = float2((frac(p.x) < 0.5) ? -1.0 : 1.0, (frac(p.y) < 0.5) ? -1.0 : 1.0);
-	float3 acc  = float3(0.0, 0.0, 0.0);
-
-	[unroll] for (int ix = 0; ix <= 1; ix++)
-	{
-		[unroll] for (int iy = 0; iy <= 1; iy++)
-		{
-			float2 cell  = base + float2((float)ix, (float)iy) * side;
-			float3 h3    = zbc_hash3(cell + 13.7);
-			float  pop   = smoothstep(lerp(0.08, 0.96, h3.z) - 0.05, lerp(0.08, 0.96, h3.z) + 0.05, wet);
-			if (pop <= 0.001)
-				continue;
-			float life  = frac(t_clock * (0.025 + 0.04 * h3.x) + h3.z);
-			float fade  = smoothstep(0.0, 0.12, life) * (1.0 - smoothstep(0.80, 1.0, life));
-			float2 ctr  = cell + 0.5 + (h3.xy - 0.5) * 0.65;
-			float  r    = lerp(0.14, 0.32, frac(h3.z * 9.7));
-			float3 drop = zbc_drop_profile(p - ctr, r) * (pop * fade * 0.55);
-			drop.yz    *= grid;
-			acc        += drop;
-		}
-	}
-	return acc;
 }
 
 // Organic glossy dripping blood height + surface gradient (value, d/du, d/dv)
@@ -393,28 +440,11 @@ float3 zbc_blood_field(float2 uv)
 	return acc * fade;
 }
 
-// uv offset of rain drops + blood refraction; spec: subtle wet meniscus glint for zbc_fx_color
+// uv offset of rain drops + blood refraction; spec: unused, always 0 (kept for the callers)
 float2 zbc_drop_offset(float2 uv, out float spec)
 {
 	spec = 0.0;
-	float2 offset = float2(0.0, 0.0);
-	float2 asp    = zbc_aspect();
-
-	float wet = saturate(bus_zbc_dirt.x);
-	[branch] if (wet > 0.01)
-	{
-		float3 d1 = zbc_rain_streams(uv, asp, wet, 1.0, timers.x);
-		float3 d2 = zbc_rain_streams(uv + float2(0.37, 0.19), asp, wet * 0.85, 1.45, timers.x * 0.82 + 11.3);
-		float3 ds = zbc_rain_static(uv, asp, wet, timers.x);
-		float3 rain = d1 + d2 * 0.65 + ds;
-		// Clamp refraction smoothly so droplets bend light crisply without tearing
-		float2 n_rain = clamp(-rain.yz * 0.0022, -0.022, 0.022);
-		offset += n_rain;
-		// Subtle glossy water meniscus highlight (top-left light direction)
-		float3 N = normalize(float3(-rain.y * 0.08, -rain.z * 0.08, 1.0));
-		float  hl = pow(saturate(dot(N, normalize(float3(-0.35, -0.55, 0.76)))), 28.0);
-		spec = hl * saturate(rain.x * 2.5) * 0.28;
-	}
+	float2 offset = zbc_rain_offset(uv);
 
 	[branch] if (bus_zbc_dirt.z > 0.0)
 	{
@@ -466,12 +496,11 @@ float2 zbc_fx_uv(float2 uv, float g, out float spec)
 	return u + zbc_drop_offset(uv, spec);
 }
 
-// colour effects on the picture (before the overlay): auto-exposure, rain glint, glossy blood, interference, infrared
+// colour effects on the picture (before the overlay): auto-exposure, glossy blood, interference, infrared
 float3 zbc_fx_color(float3 c, float2 uv, float g, float spec, float scene_vis)
 {
 	c *= (bus_zbc_ir.y > 0.01) ? bus_zbc_ir.y : 1.0;   // auto-exposure gain
-	c += spec * scene_vis;
-	c = zbc_blood_shade(c, uv, scene_vis);
+	c = zbc_blood_shade(c, uv, scene_vis);   // spec stays 0: rain is pure refraction
 	c = zbc_glitch_color(c, uv, g);
 	[branch] if (bus_zbc_ir.x > 0.001)
 		c = zbc_ir_pass(c, bus_zbc_ir.x);
@@ -709,10 +738,10 @@ float zbc_render(float2 uv)
 
 	// 4. Rounded housing bezel first: early out on dead-black corners before optical cos() / occlusion
 	float tighten = saturate(bus_zbc_vig.z) * k;
-	float R_base  = max(bus_zbc_edge.x, 0.05);
+	float R_base  = max(abs(bus_zbc_edge.x), 0.05);
 	float R_eff   = max(R_base * (1.0 - 0.05 * tighten), 0.10);
 	float b       = max(bus_zbc_edge.y, 0.001);
-	float housing = 1.0 - smoothstep(R_eff - b, R_eff, r);
+	float housing = (bus_zbc_edge.x < 0.0) ? 1.0 : 1.0 - smoothstep(R_eff - b, R_eff, r);   // < 0: housing off
 	if (housing <= 0.0001)
 		return 0.0;
 

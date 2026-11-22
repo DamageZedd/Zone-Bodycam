@@ -15,7 +15,7 @@
 	lanes (bus_zbc_glitch, bus_zbc_ir, bus_zbc_dirt, bus_zbc_event in shaders\r3\zbc_lens.h / zbc_osd.h).
 ]]
 
-local floor, min, max, abs, sqrt, cos, rad = math.floor, math.min, math.max, math.abs, math.sqrt, math.cos, math.rad
+local floor, min, max, abs, sqrt, cos, rad, exp = math.floor, math.min, math.max, math.abs, math.sqrt, math.cos, math.rad, math.exp
 
 local function clamp01(v) return min(max(v, 0), 1) end
 
@@ -28,6 +28,53 @@ function approach(v, target, rate, dt)
 	local step = rate * dt
 	if v < target then return min(v + step, target) end
 	return max(v - step, target)
+end
+
+-- Rain on the lens, timed like the Dynamic Visor Drops mod: while rain reaches the lens the water
+-- (0..rain strength) quickly gets a first scattering of drops, then builds slowly; otherwise it
+-- dries exponentially. The shader shows more drops the more water there is.
+RAIN_FIRST, RAIN_FIRST_RATE, RAIN_BUILD_RATE, RAIN_DRY_TAU = 0.18, 0.5, 0.03, 18
+RAIN_LIFE = 4   -- seconds a sliding drop takes to run off the lens (ZBC_RAIN_LIFE in zbc_lens.h)
+function lens_water(water, rain, exposed, dt)
+	local target = exposed and clamp01(rain or 0) or 0
+	if water < target then
+		local rate = (water < RAIN_FIRST * target) and RAIN_FIRST_RATE or RAIN_BUILD_RATE
+		return min(water + rate * dt, target)
+	end
+	water = target + (water - target) * exp(-dt / RAIN_DRY_TAU)
+	if water < 0.002 and target == 0 then water = 0 end
+	return water
+end
+
+-- Arrivals marker for the shader (bus_zbc_dirt.w): 0 while it rains on the lens; +t once covered at
+-- shader time t (drops already sliding finish their run, no new ones fall); -t once uncovered at t
+-- (drops that would be mid-run stay hidden until they start afresh), back to 0 after one drop life.
+function rain_mark(mark, exposed, now)
+	now = max(now or 0, 0.001)
+	if exposed then
+		if mark > 0 then return -now end
+		if mark < 0 and now + mark >= RAIN_LIFE then return 0 end
+		return mark
+	end
+	if mark <= 0 then return now end
+	return mark
+end
+
+-- Wiping the lens (the mask-wipe key): a hand pass sweeps the drops off left to right over
+-- WIPE_TIME seconds (the shader draws the sweep from F.wipe_t), then the lens is clean and only
+-- drops that start falling afterwards show. Returns water, mark, wipe_t.
+WIPE_TIME = 0.6
+function lens_wipe(water, mark, wipe_t, now)
+	if wipe_t > 0 and now >= wipe_t + WIPE_TIME then
+		return 0, -max(now, 0.001), 0
+	end
+	return water, mark, wipe_t
+end
+
+-- Our lens drops are left out while a mask whose visor shows its own rain is worn
+-- (visor_rain: mask on and the game's rain droplets option on, as the visor drops mods check).
+function lens_rain_allowed(lens_rain, visor_rain)
+	return (lens_rain and not visor_rain) and true or false
 end
 
 -- interference from an anomaly d metres away: full at 1.5 m, nothing past ANOMALY_RANGE
@@ -108,6 +155,8 @@ local F = {
 	burst = 0,           -- short hit burst 0..1, decays
 	ir = 0,              -- low-light mix 0..1
 	wet = 0,             -- rain on the lens 0..1
+	rain_mark = 0,       -- arrivals marker, see rain_mark()
+	wipe_t = 0,          -- time a lens wipe started (seconds, shader clock), 0 none
 	blood_t = 0,         -- time the last blood splatter hit the lens (seconds, shader clock), 0 none
 	blood_seed = 0,
 	death_t = 0,         -- time of death (seconds, shader clock), 0 alive
@@ -118,7 +167,7 @@ local next_anom_scan = 0
 local anom_near = 0
 
 function reset()
-	F.glitch, F.burst, F.ir, F.wet = 0, 0, 0, 0
+	F.glitch, F.burst, F.ir, F.wet, F.rain_mark, F.wipe_t = 0, 0, 0, 0, 0, 0
 	F.blood_t, F.blood_seed, F.death_t = 0, 0, 0
 	F.event = false
 	event_until, next_anom_scan, anom_near = 0, 0, 0
@@ -161,6 +210,33 @@ end
 local function underground()
 	local n = level and level.name and level.name()
 	return n and UNDERGROUND[n] or false
+end
+
+-- under a roof or in safe cover: no rain reaches the lens (same checks as the visor drops mods)
+local function read_cover()
+	if GetEvent and GetEvent("current_safe_cover") then return true end
+	return level.rain_hemi and level.rain_hemi() <= 0.15 or false
+end
+
+-- a worn mask draws its own rain on the visor (actor_effects HUD mask + game rain droplets option)
+local function read_visor_rain()
+	if not (actor_effects and actor_effects.is_mask_on and actor_effects.is_mask_on()) then return false end
+	local opt = ui_options and ui_options.get and ui_options.get("video/player/rain_droplets")
+	return opt ~= false
+end
+
+local function visor_rain()
+	local ok, on = pcall(read_visor_rain)
+	return ok and on or false
+end
+
+-- rain only lands on the lens when the camera is not under cover or pointed steeply down
+local function rain_reaches_lens()
+	local ok, covered = pcall(read_cover)
+	if ok and covered then return false end
+	local dev = device and device()
+	local dir = dev and dev.cam_dir
+	return not (dir and dir.y < -0.866)
 end
 
 -- cfg: zbc_bodycam settings; dt seconds; is_powered: false decays effects while off. Returns the state table (read only).
@@ -207,15 +283,19 @@ function frame(cfg, dt, is_powered)
 		F.exposure, F.exp_vel = 1, 0
 	end
 
-	-- rain on the lens: builds up while it rains, dries slowly
+	-- rain on the lens: builds up while rain reaches it, dries slowly otherwise
 	local rain = 0
-	if cfg.lens_dirt and not is_ug and level and level.rain_factor then
+	if cfg.lens_rain and not is_ug and level and level.rain_factor then
 		rain = clamp01(tonumber(level.rain_factor()) or 0)
 	end
-	if rain > F.wet then
-		F.wet = approach(F.wet, rain, 0.12, dt)
+	if not lens_rain_allowed(cfg.lens_rain, visor_rain()) then
+		F.wet, F.rain_mark, F.wipe_t = 0, 0, 0
+	elseif F.wipe_t > 0 then
+		F.wet, F.rain_mark, F.wipe_t = lens_wipe(F.wet, F.rain_mark, F.wipe_t, now)
 	else
-		F.wet = approach(F.wet, rain, 0.025, dt)
+		local exposed = rain > 0.001 and rain_reaches_lens()
+		F.wet = lens_water(F.wet, rain, exposed, dt)
+		F.rain_mark = rain_mark(F.rain_mark, exposed, now)
 	end
 	if not cfg.lens_dirt then F.blood_t = 0 end
 
@@ -277,7 +357,37 @@ function actor_on_before_death(who, flags)
 	if zbc_bodycam.signal_lost then zbc_bodycam.signal_lost(F.death_t) end
 end
 
-local function actor_on_first_update() reset() end
+-- the mask-wipe key also wipes the camera lens, with or without a mask on
+function wipe_lens()
+	if F.wet > 0.002 and F.wipe_t == 0 then F.wipe_t = max(now_s(), 0.001) end
+end
+
+-- Hook the game's mask-wipe handler (actor_effects.Hit_MaskCleaning, called by its wipe key, and
+-- replaced by FDDA / visor drops mods while scripts load), so one press wipes both and the key
+-- binding stays theirs. Done on the first update, after every script has installed its version.
+local wipe_hook
+local function hook_mask_wipe()
+	local ae = actor_effects
+	if not (ae and type(ae.Hit_MaskCleaning) == "function") or ae.Hit_MaskCleaning == wipe_hook then return end
+	local original = ae.Hit_MaskCleaning
+	wipe_hook = function(...)
+		wipe_lens()
+		return original(...)
+	end
+	ae.Hit_MaskCleaning = wipe_hook
+end
+
+-- The wipe key itself (cam_zoom_in, T by default) wipes the lens too, so it still works when the
+-- game's handler gives up (Mask HUD option off: it never sees a mask) or a mod swaps it out later.
+-- Both paths may fire on one press; wipe_lens ignores the second while the sweep runs.
+local function on_key_release(key)
+	if key_bindings and dik_to_bind and dik_to_bind(key) == key_bindings.kCAM_ZOOM_IN then wipe_lens() end
+end
+
+local function actor_on_first_update()
+	reset()
+	pcall(hook_mask_wipe)
+end
 
 function on_game_start()
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
@@ -287,4 +397,5 @@ function on_game_start()
 	RegisterScriptCallback("npc_on_hit_callback", npc_on_hit_callback)
 	RegisterScriptCallback("monster_on_hit_callback", monster_on_hit_callback)
 	RegisterScriptCallback("actor_on_before_death", actor_on_before_death)
+	RegisterScriptCallback("on_key_release", on_key_release)
 end

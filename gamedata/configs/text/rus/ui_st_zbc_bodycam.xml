@@ -72,6 +72,18 @@
   <string id="ui_mcm_zone_bodycam_overlay">
     <text>Оверлей камеры (справа вверху)</text>
   </string>
+  <string id="ui_mcm_zone_bodycam_lens_housing">
+    <text>Край корпуса объектива</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_lens_housing_desc">
+    <text>Чёрный скруглённый край корпуса камеры вокруг картинки. Выкл.: картинка на весь экран; у виньетки свой ползунок.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_battery_gauge">
+    <text>Индикатор батареи</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_battery_gauge_desc">
+    <text>Деления батареи в стиле VHS над точкой записи. Нужны компонент «предмет-камера» и таймер записи.</text>
+  </string>
   <string id="ui_mcm_zone_bodycam_rec_timer">
     <text>Таймер записи (слева вверху)</text>
   </string>
@@ -360,11 +372,17 @@
   <string id="ui_mcm_zone_bodycam_night_mode_desc">
     <text>Зернистая, почти чёрно-белая инфракрасная картинка, как у настоящей нательной камеры в темноте. Авто: ночью и под землёй.</text>
   </string>
+  <string id="ui_mcm_zone_bodycam_lens_rain">
+    <text>Дождь на объективе</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_lens_rain_desc">
+    <text>Капли дождя собираются на объективе, пока на него попадает дождь, стекают и высыхают в укрытии. Клавиша протирки маски стирает их. Отключается, когда маска показывает собственные капли на стекле.</text>
+  </string>
   <string id="ui_mcm_zone_bodycam_lens_dirt">
-    <text>Грязь на объективе</text>
+    <text>Кровь на объективе</text>
   </string>
   <string id="ui_mcm_zone_bodycam_lens_dirt_desc">
-    <text>В дождь на объективе собираются капли, а кровь брызгает на него, когда в кого-то стреляют прямо перед вами. Со временем всё стирается.</text>
+    <text>Кровь брызгает на объектив, когда в кого-то стреляют прямо перед вами, и со временем исчезает.</text>
   </string>
   <string id="ui_mcm_zone_bodycam_event_marker">
     <text>Метка события</text>

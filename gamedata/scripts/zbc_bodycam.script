@@ -45,6 +45,7 @@ defaults = {
 	edge_softness     = 0.22,
 	edge_shape        = 0.65,   -- 0 = circle, 1 = screen aspect
 	housing_roundness = 0.55,   -- 0..1 -> superellipse exponent 2.0..5.0
+	lens_housing      = true,   -- the black rounded edge of the lens housing (off: full frame, vignette stays)
 	vignette          = 0.55,
 	rig_occlusion     = 0.85,
 	grain             = 0.35,
@@ -59,7 +60,8 @@ defaults = {
 	fx_glitch         = true,   -- interference in emissions, psy fields, radiation, near anomalies, on big hits
 	signal_lost       = true,   -- on death: glitch, cut to black, "SIGNAL LOST"
 	night_mode        = 0,      -- low-light infrared look: 0 auto (night, underground), 1 always, 2 off
-	lens_dirt         = true,   -- rain drops and blood on the lens
+	lens_dirt         = true,   -- blood on the lens
+	lens_rain         = true,   -- rain drops on the lens (zbc_fx.script), wiped with the mask-wipe key
 	event_marker      = true,   -- "EVENT" after REC when you fire or take a big hit
 	gps_line          = true,   -- coordinates line in the overlay
 	event_log         = true,   -- SHOTS FIRED, CONTACT n... under the recording timer (zbc_eventlog.script)
@@ -84,6 +86,7 @@ defaults = {
 	text_opacity   = 1.0,
 	logo_opacity   = 0.75,
 	rec_timer      = true,   -- top-left: flashing red dot + time recorded
+	battery_gauge  = true,   -- VHS battery gauge above the REC dot (bodycam item component only)
 	-- ally markers (zbc_allies.script)
 	allies                 = true,
 	allies_los             = true,   -- only NPCs the actor can see
@@ -157,6 +160,11 @@ local LIST_OPTS = {
 	night_mode             = true,
 }
 
+-- edge lane x: the housing radius, sent negative to switch the housing edge off (vignette stays)
+function edge_lane(radius, housing_on)
+	return housing_on and radius or -radius
+end
+
 local cfg = {}
 local fx_event = false       -- EVENT shown after REC (zbc_fx.script), for the HUD-drawn timer
 
@@ -210,8 +218,8 @@ local LANES = {
 	faces      = "zbc_faces",
 	face_rows  = "zbc_face_rows",
 	glitch     = "zbc_glitch",     -- x interference, y hit burst, z time of death (0 alive)
-	ir         = "zbc_ir",         -- x low-light mix
-	dirt       = "zbc_dirt",       -- x rain on the lens, y blood seed, z time blood hit (0 none)
+	ir         = "zbc_ir",         -- x low-light mix, y auto-exposure gain, z time a lens wipe started (0 none)
+	dirt       = "zbc_dirt",       -- x rain on the lens, y blood seed, z time blood hit (0 none), w rain arrivals marker
 	event      = "zbc_event",      -- x EVENT shown after REC
 }
 local UINT_LANES = {
@@ -327,7 +335,7 @@ local cur_zoom = nil   -- lens_zoom() for the current settings and resolution, s
 local function push_settings()
 	cur_zoom = lens_zoom()
 	send("lens",    cfg.distortion, cfg.aberration, cur_zoom, cfg.edge_soft_blur)
-	send("edge",    cfg.edge_radius, max(cfg.edge_softness, 0.001), cfg.vignette, clamp01(cfg.edge_shape))
+	send("edge",    edge_lane(cfg.edge_radius, cfg.lens_housing), max(cfg.edge_softness, 0.001), cfg.vignette, clamp01(cfg.edge_shape))
 	send("extra",   min(max(cfg.edge_follow, 0), 3), clamp01(cfg.sharpen), clamp01(cfg.grain), cfg.edge_in_image and 1.0 or 0.0)
 	send("vig_occ", 0, 0, cfg.rig_occlusion, housing_power())
 	send("sensor",  cfg.highlight_blowout, cfg.compression, 0, cfg.sensor_grade)
@@ -1307,7 +1315,7 @@ function ZbcHud:RefreshRec(visible, lens_on)
 	end
 
 	-- VHS battery gauge, just above the dot (only with the bodycam item component)
-	local level = (cfg.rec_timer and visible) and battery_level() or nil
+	local level = (cfg.rec_timer and cfg.battery_gauge and visible) and battery_level() or nil
 	local bars = level and battery_bars(level) or 0
 	local last_on = not (level and battery_flashing(level)) or (time_global() % 1000) < 500   -- 1 Hz flash
 	local op = clamp01(cfg.text_opacity)
@@ -1557,8 +1565,8 @@ local function fx_update()
 	local F = zbc_fx.frame(cfg, dt)
 	fx_event = F.event and cfg.rec_timer or false
 	send("glitch", F.glitch, F.burst, F.death_t, 0)
-	send("ir",     F.ir, F.exposure or 1, 0, 0)
-	send("dirt",   F.wet, F.blood_seed, F.blood_t, 0)
+	send("ir",     F.ir, F.exposure or 1, F.wipe_t or 0, 0)
+	send("dirt",   F.wet, F.blood_seed, F.blood_t, F.rain_mark or 0)
 	send("event",  fx_event and 1 or 0, 0, 0, 0)
 end
 

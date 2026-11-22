@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- **Rain on the lens, reworked** (`zbc_lens.h`, `zbc_fx.script`): the v1.2.0 drops (dark "pie" shapes, hard vertical streaks, clipped beads) are replaced by drops in the style of the Dynamic Visor Drops mod (our own implementation; inspired by IgnisRaptorem's Dynamic Visor Drops and BigWings' "Heartfelt").
+  - Pure refraction like water on glass: no tint, no glint. Large drops slide down in stop-start runs, leaving short wet trails with small beads; bigger, fewer resting beads sit on the glass; touching drops merge. Capped at 12 px at 1080p.
+  - Builds up to a first scatter fast, then slowly, with the rain strength. Under a roof, in safe cover, underground or looking steeply down no new drops arrive: sliding drops run off and the rest dry over about 18 s.
+  - Off while you wear a mask that shows its own visor rain (mask on and the game's rain droplets option on), so the two never stack.
+  - Glossy dripping blood from v1.2.0 is unchanged.
+
+### Added
+- **Wipe the lens with the mask-wipe key** (Zoom in, T by default): a quick left-to-right sweep clears the rain, then it builds up again. Works with or without a mask and with Mask HUD off; the game's own mask wipe still runs.
+- **Every effect can be switched off in the MCM**: new switches for **Rain on the lens**, the **Lens housing edge** (the picture fills the screen; the vignette keeps its own slider) and the **Battery gauge**. **Lens dirt** is now **Blood on the lens** (blood only; your saved setting carries over). Everything else already had a switch, an Off choice or a slider down to 0.
+- Tests: lens water build-up and drying, cover, the mask rule, the wipe key and hook, and every setting being in the MCM with English and Russian labels (`tools/tests/zbc_fx_test.lua`).
+
 ## v1.2.0 - 2026-11-22
 
 ### Hotfix

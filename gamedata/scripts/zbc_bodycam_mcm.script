@@ -22,6 +22,7 @@ function on_mcm_load()
 			{ id = "aberration",     type = "track", val = 2, min = 0,    max = 1,    step = 0.05,  def = d("aberration") },
 			{ id = "sharpen",        type = "track", val = 2, min = 0,    max = 1,    step = 0.05,  def = d("sharpen") },
 			{ id = "edge_soft_blur", type = "track", val = 2, min = 0,    max = 1,    step = 0.05,  def = d("edge_soft_blur") },
+			{ id = "lens_housing",   type = "check", val = 1, def = d("lens_housing") },
 			{ id = "edge_radius",    type = "track", val = 2, min = 0.4,  max = 1.35, step = 0.005, def = d("edge_radius") },
 			{ id = "edge_shape",     type = "track", val = 2, min = 0,    max = 1,    step = 0.05,  def = d("edge_shape") },
 			{ id = "housing_roundness", type = "track", val = 2, min = 0, max = 1,    step = 0.05,  def = d("housing_roundness") },
@@ -42,6 +43,7 @@ function on_mcm_load()
 			{ id = "signal_lost",    type = "check", val = 1, def = d("signal_lost") },
 			{ id = "night_mode",     type = "list",  val = 2, def = d("night_mode"),
 				content = { { 0, "zbc_night_auto" }, { 1, "zbc_night_always" }, { 2, "zbc_night_off" } } },
+			{ id = "lens_rain",      type = "check", val = 1, def = d("lens_rain") },
 			{ id = "lens_dirt",      type = "check", val = 1, def = d("lens_dirt") },
 			{ id = "auto_exposure",  type = "check", val = 1, def = d("auto_exposure") },
 
@@ -57,6 +59,7 @@ function on_mcm_load()
 			{ id = "hdr_overlay",    type = "line" },
 			{ id = "overlay",        type = "check", val = 1, def = d("overlay") },
 			{ id = "rec_timer",      type = "check", val = 1, def = d("rec_timer") },
+			{ id = "battery_gauge",  type = "check", val = 1, def = d("battery_gauge") },
 			{ id = "event_marker",   type = "check", val = 1, def = d("event_marker") },
 			{ id = "gps_line",       type = "check", val = 1, def = d("gps_line") },
 			{ id = "event_log",      type = "check", val = 1, def = d("event_log") },

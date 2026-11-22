@@ -72,6 +72,18 @@
   <string id="ui_mcm_zone_bodycam_overlay">
     <text>Bodycam overlay (top right)</text>
   </string>
+  <string id="ui_mcm_zone_bodycam_lens_housing">
+    <text>Lens housing edge</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_lens_housing_desc">
+    <text>The black rounded edge of the camera housing around the picture. Off: the picture fills the screen; the vignette has its own slider.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_battery_gauge">
+    <text>Battery gauge</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_battery_gauge_desc">
+    <text>VHS-style battery bars above the recording dot. Needs the bodycam item component and the recording timer.</text>
+  </string>
   <string id="ui_mcm_zone_bodycam_rec_timer">
     <text>Recording timer (top left)</text>
   </string>
@@ -360,11 +372,17 @@
   <string id="ui_mcm_zone_bodycam_night_mode_desc">
     <text>A grainy, nearly black-and-white infrared look, like a real bodycam in the dark. Auto: at night and underground.</text>
   </string>
+  <string id="ui_mcm_zone_bodycam_lens_rain">
+    <text>Rain on the lens</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_lens_rain_desc">
+    <text>Rain drops gather on the lens while rain reaches it, run off and dry under cover. The mask-wipe key wipes them off. Off while a mask shows its own visor rain.</text>
+  </string>
   <string id="ui_mcm_zone_bodycam_lens_dirt">
-    <text>Lens dirt</text>
+    <text>Blood on the lens</text>
   </string>
   <string id="ui_mcm_zone_bodycam_lens_dirt_desc">
-    <text>Rain drops bead on the lens while it rains, and blood splatters it when someone is shot right in front of you. Both clear over time.</text>
+    <text>Blood splatters the lens when someone is shot right in front of you, and clears over time.</text>
   </string>
   <string id="ui_mcm_zone_bodycam_event_marker">
     <text>Event marker</text>
