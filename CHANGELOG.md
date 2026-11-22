@@ -79,6 +79,7 @@
   - Tests: `tools/tests/zbc_item_test.lua`, `tools/tests/zbc_battery_gauge_test.lua`.
 
 ### Changed
+- The default device name in the overlay is now **AXON BODY 4**, matching the Body Camera item. A name you set yourself in MCM is kept.
 - **Shader & Lua performance pass**:
   - Halved dynamic constant-buffer atlas reads (`4 -> 2` per bilinear glyph/logo sample) in `zbc_osd.h`, reducing `postprocess.ps` and `postprocess_cm.ps` DXBC size (`-660` bytes) and temp registers (`24 -> 23`), plus added square fast-rejects on the recording dot and glyph loop.
   - Made Shader Bus lane registration and 816-row atlas upload lazy when the mod or lens is disabled.

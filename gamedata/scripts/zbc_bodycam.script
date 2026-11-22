@@ -72,7 +72,7 @@ defaults = {
 	breathing      = 1.0,
 	-- overlay
 	overlay        = true,
-	device_label   = "AXON BODY 3",
+	device_label   = "AXON BODY 4",
 	logo_style     = 0,      -- 0 official logo texture, 1 swirl triangle, 2 plain triangle, 3 none
 	show_name      = true,
 	timezone       = 0,      -- 0 Zone time (+0200 / +0300 summer), 1 UTC
