@@ -394,16 +394,18 @@ do
 	setfenv(fchunk, fenv)
 	fchunk()
 
-	-- 201: Alive stalker with eye bones facing camera (-Z), at x = -1.0, z = 3.0 -> blurred at eye_mid
+	-- In X-Ray left-handed coords (+X right, +Y up, +Z forward):
+	-- Facing -Z (toward cam): stalker's eye_left is at +X (viewer's right), eye_right is at -X (viewer's left).
+	-- 201: Alive stalker with eye/jaw bones facing camera (-Z), at x = -1.0, z = 3.0 -> blurred
 	npcs[201] = mk_bone_npc(true, mkvec(-1.0, 0, 3.0),
-		mkvec(-1.0, 1.53, 3.0), mkvec(-1.03, 1.60, 2.92), mkvec(-0.97, 1.60, 2.92), mkvec(-1.0, 1.50, 2.92))
-	-- 202: Alive stalker with eye bones facing away (+Z), at x = -0.3, z = 3.0 -> NOT blurred
+		mkvec(-1.0, 1.53, 3.0), mkvec(-0.97, 1.60, 2.92), mkvec(-1.03, 1.60, 2.92), mkvec(-1.0, 1.50, 2.95))
+	-- 202: Alive stalker with eye/jaw bones facing away (+Z), at x = -0.3, z = 3.0 -> NOT blurred
 	npcs[202] = mk_bone_npc(true, mkvec(-0.3, 0, 3.0),
-		mkvec(-0.3, 1.53, 3.0), mkvec(-0.33, 1.60, 3.08), mkvec(-0.27, 1.60, 3.08), mkvec(-0.3, 1.50, 3.08))
-	-- 203: Corpse lying face-up (+Y) at x = 0.3, z = 3.0, y = 0.15 -> blurred
+		mkvec(-0.3, 1.53, 3.0), mkvec(-0.33, 1.60, 3.08), mkvec(-0.27, 1.60, 3.08), mkvec(-0.3, 1.50, 3.05))
+	-- 203: Corpse lying face-up (+Y, head toward +Z): eye_left at +X, eye_right at -X -> blurred
 	npcs[203] = mk_bone_npc(false, mkvec(0.3, 0, 3.0),
-		mkvec(0.3, 0.15, 3.0), mkvec(0.27, 0.23, 3.07), mkvec(0.33, 0.23, 3.07), mkvec(0.3, 0.23, 2.97))
-	-- 204: Corpse lying face-down (-Y) at x = 0.9, z = 3.0, y = 0.15 -> NOT blurred
+		mkvec(0.3, 0.15, 3.0), mkvec(0.33, 0.23, 3.07), mkvec(0.27, 0.23, 3.07), mkvec(0.3, 0.23, 2.97))
+	-- 204: Corpse lying face-down (-Y, head toward +Z): eye_left at -X, eye_right at +X -> NOT blurred
 	npcs[204] = mk_bone_npc(false, mkvec(0.9, 0, 3.0),
 		mkvec(0.9, 0.15, 3.0), mkvec(0.87, 0.07, 3.07), mkvec(0.93, 0.07, 3.07), mkvec(0.9, 0.07, 2.97))
 	-- 205: Alive stalker without eye bones, direction() facing camera (-Z) -> blurred
@@ -442,8 +444,8 @@ do
 	local rows, n = fenv.update(actor, 64)
 	check(n == 4, "facing filter blurs only the 4 facing NPCs (201, 203, 205, 207), got n=" .. tostring(n))
 	if n == 4 then
-		local exp_201 = 0.5 + (-1.0 / 2.92) * 0.5
-		local exp_203 = 0.5 + (0.3 / (3.07 * 0.65 + 2.97 * 0.35)) * 0.5
+		local exp_201 = 0.5 + (-1.0 / (2.92 * 0.70 + 2.95 * 0.30)) * 0.5
+		local exp_203 = 0.5 + (0.3 / (3.07 * 0.70 + 2.97 * 0.30)) * 0.5
 		local exp_205 = 0.5 + (1.5 / 2.92) * 0.5
 		local exp_207 = 0.5 + (-1.8 / 2.92) * 0.5
 		local got_201, got_203, got_205, got_207 = false, false, false, false

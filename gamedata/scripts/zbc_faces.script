@@ -249,46 +249,37 @@ function face_visible_to_cam(fx, fy, fz, dx, dy, dz, cx, cy, cz)
 	return (dx * vx + dy * vy + dz * vz) / (dlen * vlen) > FACING_COS
 end
 
--- Resolves face centre (fx, fy, fz) and forward direction (dx, dy, dz) from eye/jaw bones when
--- present (works for both alive head-turning stalkers and ragdolled corpses), falling back to
--- head_orientation() / direction() for alive NPCs without eye bones.
+-- Resolves face centre (fx, fy, fz) and forward direction (dx, dy, dz).
+-- For alive stalkers, obj:head_orientation() (or direction()) is the engine's exact world-space
+-- facing vector (immune to rig jaw-hinge offsets); eye/jaw bones place the mosaic on the face plane.
+-- For corpses, the triangle normal (eye_right - eye_left) x (eye_mid - jaw_1) gives the 3D face normal.
 local function face_pose(obj, head)
+	local cx, cy, cz = head.x, head.y + HEAD_UP, head.z
+	local el, er, jaw
 	if obj.get_bone_id and obj.bone_position then
 		local l_id = obj:get_bone_id("eye_left")
 		local r_id = obj:get_bone_id("eye_right")
 		if l_id and l_id ~= 65535 and r_id and r_id ~= 65535 then
-			local el = obj:bone_position("eye_left")
-			local er = obj:bone_position("eye_right")
+			el = obj:bone_position("eye_left")
+			er = obj:bone_position("eye_right")
 			if el and er then
-				local ex = 0.5 * (el.x + er.x)
-				local ey = 0.5 * (el.y + er.y)
-				local ez = 0.5 * (el.z + er.z)
-				local cx, cy, cz = ex, ey, ez
-				local dx, dy, dz = ex - head.x, ey - head.y, ez - head.z
+				cx = 0.5 * (el.x + er.x)
+				cy = 0.5 * (el.y + er.y)
+				cz = 0.5 * (el.z + er.z)
 				local j_id = obj:get_bone_id("jaw_1")
 				if j_id and j_id ~= 65535 then
-					local jaw = obj:bone_position("jaw_1")
+					jaw = obj:bone_position("jaw_1")
 					if jaw then
-						cx = ex * 0.65 + jaw.x * 0.35
-						cy = ey * 0.65 + jaw.y * 0.35
-						cz = ez * 0.65 + jaw.z * 0.35
-						local ux, uy, uz = ex - jaw.x, ey - jaw.y, ez - jaw.z
-						local ulen = sqrt(ux * ux + uy * uy + uz * uz)
-						if ulen > 1e-4 then
-							ux, uy, uz = ux / ulen, uy / ulen, uz / ulen
-							local proj = dx * ux + dy * uy + dz * uz
-							local fx, fy, fz = dx - proj * ux, dy - proj * uy, dz - proj * uz
-							if fx * fx + fy * fy + fz * fz > 1e-6 then
-								dx, dy, dz = fx, fy, fz
-							end
-						end
+						cx = cx * 0.70 + jaw.x * 0.30
+						cy = cy * 0.70 + jaw.y * 0.30
+						cz = cz * 0.70 + jaw.z * 0.30
 					end
 				end
-				return cx, cy, cz, dx, dy, dz
 			end
 		end
 	end
-	local fx, fy, fz = head.x, head.y + HEAD_UP, head.z
+
+	-- 1. Alive NPCs: engine head_orientation() (stalkers) or direction() is always true forward
 	if obj.alive and obj:alive() then
 		local d = (IsStalker and IsStalker(obj) and obj.head_orientation and obj:head_orientation())
 			or (obj.direction and obj:direction())
@@ -296,11 +287,30 @@ local function face_pose(obj, head)
 			local dlen = sqrt(d.x * d.x + d.y * d.y + d.z * d.z)
 			if dlen > 1e-4 then
 				local dx, dy, dz = d.x / dlen, d.y / dlen, d.z / dlen
-				return fx + dx * FACE_FWD, fy + dy * FACE_FWD, fz + dz * FACE_FWD, dx, dy, dz
+				if not (el and er) then
+					cx, cy, cz = cx + dx * FACE_FWD, cy + dy * FACE_FWD, cz + dz * FACE_FWD
+				end
+				return cx, cy, cz, dx, dy, dz
 			end
 		end
 	end
-	return fx, fy, fz, nil, nil, nil
+
+	-- 2. Corpses (or alive mocks with eye/jaw bones but no head_orientation/direction):
+	--    in X-Ray left-handed coords (+X right, +Y up, +Z forward), (eye_right - eye_left) x (eye_mid - jaw_1)
+	--    points straight out of the front of the face.
+	if el and er and jaw then
+		local rx, ry, rz = er.x - el.x, er.y - el.y, er.z - el.z
+		local ex, ey, ez = 0.5 * (el.x + er.x), 0.5 * (el.y + er.y), 0.5 * (el.z + er.z)
+		local ux, uy, uz = ex - jaw.x, ey - jaw.y, ez - jaw.z
+		local nx = ry * uz - rz * uy
+		local ny = rz * ux - rx * uz
+		local nz = rx * uy - ry * ux
+		if nx * nx + ny * ny + nz * nz > 1e-8 then
+			return cx, cy, cz, nx, ny, nz
+		end
+	end
+
+	return cx, cy, cz, nil, nil, nil
 end
 
 -- Returns rows, n, aspect: up to max_n squares { cu, cv, half_v, blk_v }, nearest first.
