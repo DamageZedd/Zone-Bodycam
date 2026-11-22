@@ -6,7 +6,7 @@
 
 *See the Zone through a chest-mounted police bodycam.*
 
-![Version](https://img.shields.io/badge/version-v1.2.0-e0a43c?style=for-the-badge) ![Author](https://img.shields.io/badge/by-Damage__Zedd-8fae5a?style=for-the-badge) ![Game](https://img.shields.io/badge/S.T.A.L.K.E.R.-Anomaly%201.5.3%20%2F%20GAMMA-555555?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-v1.3.0-e0a43c?style=for-the-badge) ![Author](https://img.shields.io/badge/by-Damage__Zedd-8fae5a?style=for-the-badge) ![Game](https://img.shields.io/badge/S.T.A.L.K.E.R.-Anomaly%201.5.3%20%2F%20GAMMA-555555?style=for-the-badge)
 
 [![Zone Bodycam gameplay](docs/images/gameplay.webp)](docs/images/gameplay.mp4)
 
@@ -14,13 +14,13 @@
 
 </div>
 
-## What's new in v1.2.0
+## What's new in v1.3.0
 
-- **Front-only Face Blur (Pixelation).** Pixelates visible human faces (front, 3/4, and side profiles — never the back of heads) at true face size before the lens warp, with dual-view 3DSS PiP scope support, frame-ahead motion prediction, and a model skip list (`configs/zbc_face_models.ltx`).
-- **Overhauled Entity Markers & Identification.** Skeleton-fit boxes for all stalkers and mutants, scoped head/spine fallback for partial bodies, dual-view 3DSS PiP scope magnification (keeping 1x boxes outside the lens), aim-only label text with smooth fade & quick re-decode (companions always on), lockstep name/faction decode, saved distance identification, `KIA` boxes, white-until-identified dots, and zero dots while scoped in.
-- **Camera Effects.** Interference (emissions, psy storms/fields, radiation, anomalies, heavy hits), `SIGNAL LOST` death cutoff, night/underground IR mode, rain drops & blood splatter on the lens, auto-exposure lag, `EVENT` tag, GPS coordinates, and low-battery warnings.
-- **Event Log & Footage Review.** Live 8 s evidence tags under `REC`, plus an interactive timeline review screen (`Delete` by default).
-- **Full Russian Localization** across all MCM menus, overlay text, marker labels, and the optional Body Camera item (plus default device name `AXON BODY 4`).
+- **Rain on the lens is the game's own visor drops.** Dynamic Visor Drops (or the base game's mask rain) now shows on the bodycam, with or without a mask. Our own drops are gone.
+- **Wipe with T.** The mask-wipe key (Zoom in) clears the drops, with or without a mask.
+- **Calmer psy fields.** A steady psy field (like around the Yantar lab) only flickers the picture now; it tears apart only when your psy health is nearly gone. New **Interference strength** slider.
+- **Every effect can be switched off in MCM**: new switches for rain on the lens, the lens housing edge and the battery gauge. *Lens dirt* is now *Blood on the lens*.
+- **Turn off Dynamic Smoother Droplets** if you use it: it breaks Dynamic Visor Drops, mask or not.
 
 Full history in [CHANGELOG.md](CHANGELOG.md).
 
@@ -31,7 +31,7 @@ Full history in [CHANGELOG.md](CHANGELOG.md).
 - **Bodycam overlay.**
   - **Top right:** in-game date and time, device name and serial, your character's name, optional GPS coordinates, and the logo (in English and Russian).
   - **Top left:** a flashing red dot and `REC 00:54:17` (plus `EVENT` when firing or taking a heavy hit), showing how long you've been recording this playthrough. It counts real time and is kept in your save.
-- **Camera effects.** Interference in emissions, psy storms, psy fields, radiation, near anomalies and on heavy hits; `SIGNAL LOST` feed cutoff on death; automatic low-light infrared mode at night and underground; rain drops and blood splatter on the lens.
+- **Camera effects.** Interference in emissions, psy storms, psy fields, radiation, near anomalies and on heavy hits; `SIGNAL LOST` feed cutoff on death; automatic low-light infrared mode at night and underground; the game's visor rain drops on the lens (mask or not, wiped with the mask-wipe key) and blood splatter.
 - **Entity markers.** Stalkers (friendly, neutral, companion and enemies) and mutants you can see get a box with their name/species and faction, decoding from scrambled text by distance and scope zoom (dots past a distance).
 - **Every screen shape.** 4:3, 16:9, ultrawide 21:9 and 32:9 all work out of the box.
 - **English & Russian.** Full localization for all MCM menus, overlay text, marker labels, mutant species, and the optional Body Camera item.
@@ -75,6 +75,7 @@ Tick **Bodycam item (battery powered)** in the installer to make the bodycam a r
 - S.T.A.L.K.E.R. Anomaly 1.5.3. Made and tested on G.A.M.M.A.
 - **[Modded exes](https://github.com/themrdemonized/xray-monolith/releases) 2026.10.11 or newer** for the lens, face pixelation, and in-shader overlay/effects (Shader Bus 7). The [Bodycam exes](https://github.com/asuparabekon/xray-monolith-bodycam) (such as Slop-Ray) work too — G.A.M.M.A. users running the Bodycam exes also need the **Bodycam GAMMA Patch**. On older exes the lens and face pixelation are off (or Shader Bus <= 6 keeps the lens with the 2D HUD overlay fallback), while the overlay and markers still work.
 - **MCM** to change settings (recommended).
+- For rain on the lens: the game's visor drops (Dynamic Visor Drops in G.A.M.M.A.). **Dynamic Smoother Droplets** must be off: it breaks Dynamic Visor Drops.
 
 ## Installation
 
@@ -87,10 +88,10 @@ Tick **Bodycam item (battery powered)** in the installer to make the bodycam a r
 
 | Section | What you can change |
 |---|---|
-| **Lens** | Strength, fisheye, zoom, chromatic aberration, sharpening, edge size and shape, vignette, grain, colour grade, rolling shutter, blur faces |
-| **Camera effects** | Interference, signal lost on death, low-light mode (auto/always/off), lens dirt (rain & blood), EVENT marker, GPS coordinates |
+| **Lens** | Strength, fisheye, zoom, chromatic aberration, sharpening, housing edge on/off, edge size and shape, vignette, grain, colour grade, rolling shutter, blur faces |
+| **Camera effects** | Interference on/off and strength, signal lost on death, low-light mode (auto/always/off), rain on the lens, blood on the lens, EVENT marker, GPS coordinates |
 | **Body motion** | Overall amount, turn lag, walking bob, camera roll, impacts, breathing |
-| **Overlay** | Overlay on/off, recording timer on/off, device name, show your name, logo style, time zone, text size and opacity |
+| **Overlay** | Overlay on/off, recording timer on/off, battery gauge on/off, device name, show your name, logo style, time zone, text size and opacity |
 | **Ally markers** | On/off, only NPCs you can see, show names, mark enemies, mark mutants, style, friendly/enemy/companion colours, range, size, opacity |
 | **Item** (optional) | Battery life, hand animations on/off |
 
@@ -99,6 +100,7 @@ Tick **Bodycam item (battery powered)** in the installer to make the bodycam a r
 - **Black edges or a broken screen after updating?** Clear `Anomaly\appdata\shaders_cache` and restart.
 - **Too much fisheye?** Lower **Fisheye distortion**. The zoom adjusts by itself. **Lens zoom** only adds extra crop on top.
 - **Using a run timer mod?** Run timers usually sit in the top-left corner too. Move them, or turn off the recording timer in MCM.
+- **No rain on the lens?** Turn off Dynamic Smoother Droplets, then clear the shader cache. Without a mask the bodycam switches on the game's intact visor glass, which the drops need; it can add a faint glass edge in the corners.
 - **Changes** are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## Credits
@@ -114,7 +116,7 @@ Tick **Bodycam item (battery powered)** in the installer to make the bodycam a r
 <br>
 
 - Lens, sensor and overlay are drawn in `postprocess.ps` / `postprocess_cm.ps` (`gamedata/shaders/r3/zbc_*.h`), with values sent through the modded exes' Shader Bus (version 7: `try_register`, `set_array_uint`). On Slop-Ray this pass runs after DLSS/FSR, so the upscaler never sees the warp.
-- Scripts: `zbc_bodycam.script` (settings, motion, overlay, timer), `zbc_allies.script` (markers & distance identification), `zbc_faces.script` (face pixelation), `zbc_fx.script` (interference, signal lost, low-light, lens dirt, GPS), `zbc_osd_atlas_cyr.script` (Cyrillic shader glyphs), `zbc_bodycam_mcm.script` (menu), plus optional `zbc_item.script`, `zbc_item_anim.script`, `zbc_item_mcm.script`.
+- Scripts: `zbc_bodycam.script` (settings, motion, overlay, timer), `zbc_allies.script` (markers & distance identification), `zbc_faces.script` (face pixelation), `zbc_fx.script` (interference, signal lost, low-light, visor rain drops, blood, GPS), `zbc_osd_atlas_cyr.script` (Cyrillic shader glyphs), `zbc_bodycam_mcm.script` (menu), plus optional `zbc_item.script`, `zbc_item_anim.script`, `zbc_item_mcm.script`.
 - The overlay font and logo textures are generated from `tools/source_assets`. To rebuild them (needs Python and Pillow):
 
   ```bash

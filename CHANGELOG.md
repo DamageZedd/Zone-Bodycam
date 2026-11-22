@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.3.0 - 2026-11-22
 
 ### Changed
 - **Rain on the lens is now the game's own visor drops** (`zbc_fx.script`): our procedural lens drops are removed. While the camera records with **Rain on the lens** on, the game's visor rain (Dynamic Visor Drops in GAMMA, or the base game's) is shown on the camera with or without a mask, and even with the game's rain droplets option off; it is still that mod that decides when rain builds up, slides and dries. With a mask on it is the same single effect, so nothing doubles up.
