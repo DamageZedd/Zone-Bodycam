@@ -317,6 +317,93 @@ local scan_enemies = true        -- cfg.allies_enemies, set by update()
 local scan_mutants = true        -- cfg.allies_mutants, set by update()
 local frame_cols = {}            -- relation -> colour, set by update()
 
+---------------------------------------------------------------------------------------------------
+-- Who a camera can mark, and where the gun points
+---------------------------------------------------------------------------------------------------
+
+-- Ghost zombies and poltergeists are never marked, and a bloodsucker only while it is not cloaked.
+function markable(obj)
+	if not obj then return false end
+	local sec = obj.section and obj:section()
+	if type(sec) == "string" and (sec == "zombie_ghost" or sec:match("_zombie_ghost$")) then return false end
+	if IsStalker(obj) then return true end
+	if not (IsMonster and IsMonster(obj)) then return false end
+	local c = clsid and obj.clsid and obj:clsid()
+	if c then
+		if c == clsid.poltergeist_s or c == clsid.poltergeist then return false end
+		if (c == clsid.bloodsucker_s or c == clsid.bloodsucker) and obj:alive()
+			and obj.get_visibility_state and obj:get_visibility_state() ~= 2 then
+			return false
+		end
+	end
+	return true
+end
+
+-- The Bodycam exes can decouple the camera from the gun; first_person's "camera_aim" pose is where the
+-- gun really points. Unarmed, sprinting, in freelook or while the weapon is busy, the camera centre
+-- counts instead. Returns position, direction or nil.
+local aim_pose = nil
+local function freelook_held()
+	local b = key_bindings and key_bindings.kFREELOOK
+	if not (b and bind_to_dik and key_state) then return false end
+	for i = 0, 1 do
+		local k = bind_to_dik(b, i)
+		if k and k > 0 and key_state(k) then return true end
+	end
+	return false
+end
+
+local function read_aim_pose(pose) return first_person.get_pose("camera_aim", -1, "", pose) end
+
+local function weapon_aim()
+	if not (first_person and first_person.pose and first_person.get_pose) then return nil end
+	local actor = db.actor
+	local item = actor and actor:active_item()
+	if not (item and IsWeapon and IsWeapon(item)) or item:section() == "rw_emptyhands" then return nil end
+	if IsMoveState and IsMoveState("mcSprint") then return nil end
+	local st = item.get_state and item:get_state()
+	if st == 2 or st == 3 then return nil end
+	if freelook_held() then return nil end
+	aim_pose = aim_pose or first_person.pose()
+	local ok, got = pcall(read_aim_pose, aim_pose)
+	if not (ok and got and aim_pose.position and aim_pose.forward) then return nil end
+	return aim_pose.position, aim_pose.forward
+end
+
+-- the first stalker or mutant along the gun's aim, through glass, foliage and other see-through
+-- materials (their transparency multiplies up; past a third of the light the trace stops)
+local trace_ray, tmp_trace = nil, nil
+local function trace_aim(actor, pos, dir)
+	if not ray_pick then return nil end
+	trace_ray = trace_ray or ray_pick()
+	tmp_trace = tmp_trace or vector()
+	trace_ray:set_flags(RQ_FLAGS)
+	trace_ray:set_ignore_object(actor)
+	trace_ray:set_direction(dir)
+	tmp_trace:set(pos.x, pos.y, pos.z)
+	local left, light = 1000, 1
+	for _ = 1, 16 do
+		trace_ray:set_position(tmp_trace)
+		trace_ray:set_range(left)
+		if not trace_ray:query() then return nil end
+		local o = trace_ray:get_object()
+		if o then return o end
+		local res = trace_ray:get_result()
+		local d = res and res.range
+		local tr = res and res.material_vis_transparency_factor
+		if not (d and d >= 0 and d < left and type(tr) == "number") then return nil end
+		light = light * tr
+		if light <= 0.34 then return nil end
+		local step = d + 0.01
+		left = left - step
+		if left <= 0 then return nil end
+		tmp_trace:set(tmp_trace.x + dir.x * step, tmp_trace.y + dir.y * step, tmp_trace.z + dir.z * step)
+	end
+	return nil
+end
+
+local frame_aim_pos, frame_aim_dir = nil, nil   -- the gun's aim this frame (nil: the camera's)
+
 local function scan(actor, range)
 	local apos = actor:position()
 	local r2 = range * range
@@ -324,7 +411,7 @@ local function scan(actor, range)
 	for id, st in pairs(db.storage) do
 		local obj = st and st.object
 		local is_mon = obj and IsMonster and IsMonster(obj)
-		if obj and id ~= 0 and (IsStalker(obj) or (scan_mutants and is_mon)) and obj:alive() then
+		if obj and id ~= 0 and (IsStalker(obj) or (scan_mutants and is_mon)) and obj:alive() and markable(obj) then
 			local d2 = obj:position():distance_to_sqr(apos)
 			if d2 <= r2 and (is_mon or scan_enemies or obj:relation(actor) ~= game_object.enemy) then
 				if n < POOL or d2 < scan_d2[POOL] then
@@ -347,21 +434,41 @@ local function scan(actor, range)
 end
 
 -- Picture-in-picture scopes (3DSS, the engine's second viewport): the lens shows a magnified view
--- while the main camera does not zoom, so a point seen inside the lens is placed (and its box sized)
--- through the scope's magnification about the view centre. PIP.m: magnification relative to the main
--- view (1 = no scope view), PIP.r: lens radius in screen heights, PIP.a: aspect. Set by pip_refresh().
-PIP = { m = 1, r = 0.13, a = 16 / 9, t = -1 }
+-- while the main camera does not zoom. While it is up, everything is placed (and boxes sized) through
+-- the scope's magnification about the view centre, and only what shows inside the lens is marked:
+-- the rest of the screen is the scope body and the blurred surroundings.
+-- PIP.m: magnification relative to the main view (1 = no scope view), PIP.r: lens radius on screen in
+-- screen heights (measured on GAMMA's 3DSS scopes), PIP.a: aspect. Set by pip_refresh().
+-- PIP.au / PIP.av: where the gun points on screen (the lens shows what is around that point, magnified,
+-- in the middle of the screen; with the camera decoupled from the gun that is not the view centre).
+PIP = { m = 1, r = 0.12, a = 16 / 9, t = -1, au = 0.5, av = 0.5 }
 
--- screen uv as the camera shows the point: magnified when it shows up inside the lens; nil when it is
--- hidden behind the scope (in the lens area unmagnified, but magnified out of the lens)
+function pip_active(P) return (P or PIP).m > 1.01 end
+
+-- screen uv of a point as the scope shows it (magnified about the aim point, placed at the lens
+-- centre); the third value says whether it is inside the lens
 function pip_map(u, v, P)
 	P = P or PIP
-	if not u or P.m <= 1.01 then return u, v end
-	local dx, dy = (u - 0.5) * P.a, v - 0.5
-	local r0 = sqrt(dx * dx + dy * dy)
-	if r0 * P.m <= P.r then return 0.5 + (u - 0.5) * P.m, 0.5 + (v - 0.5) * P.m end
-	if r0 <= P.r then return nil end
-	return u, v
+	if not u then return nil end
+	if P.m <= 1.01 then return u, v, true end
+	local mu, mv = 0.5 + (u - (P.au or 0.5)) * P.m, 0.5 + (v - (P.av or 0.5)) * P.m
+	local dx, dy = (mu - 0.5) * P.a, mv - 0.5
+	return mu, mv, dx * dx + dy * dy <= P.r * P.r
+end
+
+-- a box (centre and size, UI units 1024 x 768) as the lens shows it: nil when its centre is outside
+-- the lens, otherwise clipped to the lens so it never spills over the scope body
+function pip_clip_box(cx, cy, w, h, P)
+	P = P or PIP
+	if P.m <= 1.01 then return cx, cy, w, h end
+	local ry = P.r * 768
+	local rx = P.r / P.a * 1024
+	local dx, dy = (cx - 512) / rx, (cy - 384) / ry
+	if dx * dx + dy * dy > 1 then return nil end
+	local x0, x1 = max(cx - w * 0.5, 512 - rx), min(cx + w * 0.5, 512 + rx)
+	local y0, y1 = max(cy - h * 0.5, 384 - ry), min(cy + h * 0.5, 384 + ry)
+	if x1 - x0 < 2 or y1 - y0 < 2 then return nil end
+	return (x0 + x1) * 0.5, (y0 + y1) * 0.5, x1 - x0, y1 - y0
 end
 
 local function project(vec)
@@ -376,6 +483,7 @@ local function project_dot(obj, L, a, W)
 	if not su then return nil end
 	local u, v = unwarp(L, a, su, sv, W)
 	if u > 0 and u < 1 and v > 0 and v < 1 then
+		if pip_active() and not pip_clip_box(u * 1024, v * 768, 4, 4) then return nil end
 		return u * 1024, v * 768
 	end
 	return nil
@@ -435,7 +543,42 @@ function box_top_y(head_y, feet_y, is_quad)
 	return max(head_y, feet_y + min_h) + top_pad
 end
 
+-- The box from the object's own bounding box: all eight corners through the camera (and a scope), so
+-- it fits a crouching, prone or four-legged body. nil when the exes have no bounding_box / xform, or a
+-- corner is behind the camera; the caller then falls back to the head and feet.
+local tmp_corner = nil
+local function read_bbox(obj) return obj:bounding_box(false), obj:xform(false) end
+local function bbox_screen(obj, L, a, W)
+	if not (obj.bounding_box and obj.xform) then return nil end
+	local ok, box, xf = pcall(read_bbox, obj)
+	if not (ok and box and xf and box.min and box.max and xf.transform_tiny) then return nil end
+	tmp_corner = tmp_corner or vector()
+	local u0, v0, u1, v1 = 1e9, 1e9, -1e9, -1e9
+	for i = 0, 7 do
+		tmp_corner:set((i % 2 == 0) and box.min.x or box.max.x,
+			(floor(i / 2) % 2 == 0) and box.min.y or box.max.y,
+			(floor(i / 4) == 0) and box.min.z or box.max.z)
+		xf:transform_tiny(tmp_corner)
+		local su, sv = project(tmp_corner)
+		if not su then return nil end
+		local u, v = unwarp(L, a, su, sv, W)
+		u0, v0, u1, v1 = min(u0, u), min(v0, v), max(u1, u), max(v1, v)
+	end
+	return u0, v0, u1, v1
+end
+
 local function project_box(obj, L, a, ux, uy, size, W, aspect, is_quad)
+	local bu0, bv0, bu1, bv1 = bbox_screen(obj, L, a, W)
+	if bu0 then
+		local w_ui = (bu1 - bu0) * 1024 * size
+		local h_ui = (bv1 - bv0) * 768 * size
+		if h_ui <= 2 or w_ui <= 1 then return nil end
+		local cx, cy = (bu0 + bu1) * 0.5 * 1024, (bv0 + bv1) * 0.5 * 768
+		if cx + w_ui * 0.5 <= 0 or cx - w_ui * 0.5 >= 1024 or cy + h_ui * 0.5 <= 0 or cy - h_ui * 0.5 >= 768 then
+			return nil
+		end
+		return pip_clip_box(cx, cy, w_ui, h_ui)
+	end
 	local feet = obj:position()
 	local head = utils_obj.safe_bone_pos(obj, "bip01_head") or feet
 	tmp_top:set(head.x, box_top_y(head.y, feet.y, is_quad), head.z)
@@ -454,7 +597,8 @@ local function project_box(obj, L, a, ux, uy, size, W, aspect, is_quad)
 	if cx + w_ui * 0.5 <= 0 or cx - w_ui * 0.5 >= 1024 or cy + h_ui * 0.5 <= 0 or cy - h_ui * 0.5 >= 768 then
 		return nil
 	end
-	return cx, cy, w_ui, h_ui
+	-- through a picture-in-picture scope: only inside the lens, clipped to it
+	return pip_clip_box(cx, cy, w_ui, h_ui)
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -583,12 +727,14 @@ local aim_target = nil       -- id of the stalker or mutant you are aiming at (a
                              -- Identification UI mod's crosshair target), kept while you stay on them
 local ID_LENIENCE_COS = 0.984   -- = ID_LENIENCE (defined with the identification below)
 
--- is the camera looking at this stalker (their upper body within ID_LENIENCE of the view centre)?
+-- are you looking at this stalker (their upper body within ID_LENIENCE of where the gun points, or of
+-- the view centre when the camera counts)?
 local function aimed_at(obj, cam_vec)
-	local dir = frame_dir
-	if not (dir and cam_vec) then return true end
+	local dir = frame_aim_dir or frame_dir
+	local from = frame_aim_pos or cam_vec
+	if not (dir and from) then return true end
 	local p = obj:position()
-	local dx, dy, dz = p.x - cam_vec.x, p.y + 1.3 - cam_vec.y, p.z - cam_vec.z
+	local dx, dy, dz = p.x - from.x, p.y + 1.3 - from.y, p.z - from.z
 	local l = sqrt(dx * dx + dy * dy + dz * dz)
 	if l < 0.01 then return true end
 	return (dx * dir.x + dy * dir.y + dz * dir.z) / l >= (ID_LENIENCE or ID_LENIENCE_COS)
@@ -602,7 +748,8 @@ local function step_entity(
 	local obj = level.object_by_id(id)
 	local is_mon = obj and IsMonster and IsMonster(obj)
 	local rel = obj and obj.relation and obj:relation(actor) or nil
-	if not obj or (is_mon and not cfg.allies_mutants) or (not is_mon and rel == game_object.enemy and not cfg.allies_enemies) then
+	if not obj or (is_mon and not cfg.allies_mutants) or (not is_mon and rel == game_object.enemy and not cfg.allies_enemies)
+		or (obj:alive() and not markable(obj)) then                -- a bloodsucker that just cloaked, say
 		states[id] = nil
 		return false
 	end
@@ -610,7 +757,12 @@ local function step_entity(
 	-- the colour the box decodes to. White only means "not identified yet" (see draw_slot): once
 	-- decoded, everyone is either friendly (neutrals included) or an enemy
 	local col
-	if IsStalker(obj) and obj:has_info("npcx_is_companion") then
+	local companion = IsStalker(obj) and obj:has_info("npcx_is_companion")
+	if ent then
+		ent.companion = companion
+		ent.health = companion and tonumber(obj.health) or nil
+	end
+	if companion then
 		col = cols.companion
 	elseif rel == game_object.enemy or (is_mon and rel == nil) then
 		col = is_mon and (cols.enemy or COLORS[6]) or cols.enemy
@@ -953,12 +1105,60 @@ ID_INSTANT  = 50             -- metres
 ID_LENIENCE = 0.984          -- cos of the largest angle from the view centre that counts as looking at them
 ID_SPEED    = 0.5            -- the mod's speed as GAMMA sets it (targetID/speedID = 0.5)
 local known = {}             -- id -> true once identified
+local known_order = {}       -- ids, oldest first (the save keeps the last KNOWN_LIMIT)
 local id_progress = {}       -- id -> 0..1, how far a not yet identified stalker has got
+KNOWN_LIMIT = 256
+
+local function remember_known(id)
+	if known[id] then
+		for i = 1, #known_order do
+			if known_order[i] == id then table.remove(known_order, i) break end
+		end
+	end
+	known[id] = true
+	known_order[#known_order + 1] = id
+	while #known_order > KNOWN_LIMIT do
+		known[table.remove(known_order, 1)] = nil
+	end
+end
 
 function clear_known()
-	known = {}
+	known, known_order = {}, {}
 	id_progress = {}
 	reset_state()
+end
+
+-- Identified people are kept in the save (m_data.zbc_known: ids, oldest first), so they stay
+-- identified after loading. A game started or loaded without that data starts with nobody known.
+local pending_clear = true
+function save_state(m_data)
+	local list = {}
+	for i = 1, #known_order do list[i] = known_order[i] end
+	m_data.zbc_known = list
+end
+
+function load_state(m_data)
+	known, known_order, id_progress = {}, {}, {}
+	local list = m_data and m_data.zbc_known
+	if type(list) == "table" then
+		for i = max(1, #list - KNOWN_LIMIT + 1), #list do
+			local id = list[i]
+			if type(id) == "number" and id >= 0 and id < 65535 then remember_known(id) end
+		end
+	end
+	pending_clear = false
+	reset_state()
+end
+
+local function on_first_update()
+	if pending_clear then clear_known() else reset_state() end
+	id_progress = {}
+	pending_clear = true
+end
+
+local function on_net_destroy()
+	reset_state()
+	pending_clear = true
 end
 
 function is_known_id(id)
@@ -1007,7 +1207,7 @@ local function step_reveal(ent)
 	ent.id_pct = is_known and 1 or clamp01(ent.reveal_t / t_full)
 	if id and not is_known then
 		if ent.reveal_t >= t_full then
-			known[id] = true
+			remember_known(id)
 			id_progress[id] = nil
 		else
 			id_progress[id] = ent.reveal_t / t_full
@@ -1024,6 +1224,13 @@ local function draw_slot(slot, ent, dot_w, dot_h, style)
 		r, g, b = DEAD_COL[1], DEAD_COL[2], DEAD_COL[3]
 		ent.info = info_text(true, nil, nil, nil, nil, words())
 	elseif m < 0.98 then
+		-- a hurt companion's colour runs toward grey with their health
+		if ent.companion and ent.health then
+			local hurt = 1 - clamp01(ent.health)
+			r = floor(lerp(r, DEAD_COL[1], hurt) + 0.5)
+			g = floor(lerp(g, DEAD_COL[2], hurt) + 0.5)
+			b = floor(lerp(b, DEAD_COL[3], hurt) + 0.5)
+		end
 		-- a box: white while unknown, decoding to its colour as the stalker is identified
 		local k = step_reveal(ent)
 		r, g, b = floor(lerp(255, r, k) + 0.5), floor(lerp(255, g, k) + 0.5), floor(lerp(255, b, k) + 0.5)
@@ -1110,20 +1317,95 @@ function view_zoom()
 	return zoom_factor(console_fov(), dev and dev.fov)
 end
 
--- magnification of a picture-in-picture scope view relative to the main view: the scope camera's
--- fov is 2 atan(tan(base / 2) / zf) (zf: the weapon's GetZoomFactor), the main view has cur_deg
+-- Magnification of a picture-in-picture scope view relative to the main view. The weapon's
+-- GetZoomFactor on these scopes (GAMMA's 3DSS: scope_zoom_factor 20 / 30) works out at 100 / zf
+-- with the main view at its normal field of view (base_deg), as the Bodycam exes' scope
+-- projection uses it; a main view zoomed in a little (cur_deg) magnifies the lens less relative to it.
+-- A small value (up to ZF_FOV_MIN) is read as a plain magnification, for scope mods that use it so.
+ZF_FOV_MIN = 8
 function pip_magnification(zf, base_deg, cur_deg)
 	zf = tonumber(zf)
 	if not zf or zf <= 1 then return 1 end
 	base_deg = tonumber(base_deg) or 75
 	cur_deg = tonumber(cur_deg) or base_deg
 	local r = math.rad
-	local m = math.tan(r(cur_deg) * 0.5) * zf / math.tan(r(min(base_deg, 170)) * 0.5)
+	local main = math.tan(r(min(cur_deg, 170)) * 0.5) / math.tan(r(min(base_deg, 170)) * 0.5)
+	local m = ((zf > ZF_FOV_MIN) and (100 / zf) or zf) * main
 	if not (m == m) then return 1 end
 	return min(max(m, 1), MAX_ZOOM)
 end
 
+-- Lens size of the scope in use. The Bodycam exes measure the picture-in-picture lens when their
+-- diagnostics are on (console r__svp_diag 1): pip.log lines "[SVP-RATIO] ... measH <h> ... aim <a> ...
+-- frame <n>", h being the lens height in half screen heights. It is read once per scope (turning the
+-- diagnostics on only while measuring), else PIP_LENS_FALLBACK, measured on GAMMA's 3DSS scopes.
+PIP_LENS_FALLBACK = 0.12
+function parse_lens_log(text, frame0, frame_now)
+	local r
+	for line in tostring(text or ""):gmatch("[^\r\n]+") do
+		local h, aim, fr = line:match("%[SVP%-RATIO%].-measH ([%d.]+).-aim ([%d.]+).- frame (%d+)")
+		h, aim, fr = tonumber(h), tonumber(aim), tonumber(fr)
+		if h and h >= 0.04 and h <= 4 and aim and aim >= 0.99 and fr and fr >= (frame0 or 0)
+			and (not frame_now or fr <= frame_now) then
+			r = h * 0.25
+		end
+	end
+	return r
+end
+
+local LENS = { key = nil, r = nil, frame0 = 0, next_poll = 0, tries = 0, ours = false }
+local function lens_diag_off()
+	if not LENS.ours then return end
+	LENS.ours = false
+	local c = get_console and get_console()
+	if c then pcall(c.execute, c, "r__svp_diag 0") end
+end
+local function read_int(c, name) return c:get_integer(name) end
+local function read_scope_name(w) return w:GetScopeName() end
+
+local function lens_radius(item, w, dev)
+	local ok_n, scope = pcall(read_scope_name, w)
+	local key = item:id() .. "/" .. tostring(ok_n and scope or "") .. "/" .. tostring(dev.width) .. "x" .. tostring(dev.height)
+	local frame = tonumber(dev.frame)
+	if LENS.key ~= key then
+		lens_diag_off()
+		LENS.key, LENS.r, LENS.frame0, LENS.next_poll, LENS.tries = key, nil, frame or 0, 0, 0
+	end
+	if LENS.r or LENS.tries >= 20 then
+		lens_diag_off()
+		return LENS.r or PIP_LENS_FALLBACK
+	end
+	local now = time_global()
+	if now < LENS.next_poll then return PIP_LENS_FALLBACK end
+	LENS.next_poll = now + 250
+	LENS.tries = LENS.tries + 1
+	local c = get_console and get_console()
+	if not c then return PIP_LENS_FALLBACK end
+	local ok_d, diag = pcall(read_int, c, "r__svp_diag")
+	if not ok_d then
+		LENS.tries = 99                                    -- exes without the diagnostics
+		return PIP_LENS_FALLBACK
+	end
+	if tonumber(diag) == 0 then
+		pcall(c.execute, c, "r__svp_diag 1")
+		LENS.ours = true
+		return PIP_LENS_FALLBACK
+	end
+	local fs = getFS and getFS()
+	local path = fs and fs:update_path("$logs$", "pip.log")
+	local f = path and io.open(path, "rb")
+	if not f then return PIP_LENS_FALLBACK end
+	local size = f:seek("end") or 0
+	f:seek("set", max(0, size - 32768))
+	local tail = f:read("*a") or ""
+	f:close()
+	LENS.r = parse_lens_log(tail, LENS.frame0, frame)
+	if LENS.r then lens_diag_off() end
+	return LENS.r or PIP_LENS_FALLBACK
+end
+
 local function read_zoom(w) return w:GetZoomFactor() end
+local tmp_aimpt = nil
 
 -- updates PIP once a frame (shared with zbc_faces.script)
 function pip_refresh()
@@ -1131,17 +1413,32 @@ function pip_refresh()
 	if PIP.t == now then return PIP end
 	PIP.t = now
 	PIP.m = 1
+	PIP.au, PIP.av = 0.5, 0.5
 	local dev = device and device()
 	if dev and dev.width and dev.height and dev.height > 0 then PIP.a = dev.width / dev.height end
 	if type(is_svp_active) ~= "function" then return PIP end   -- engine without picture-in-picture scopes
 	local ok, on = pcall(is_svp_active)
-	if not (ok and on) then return PIP end
+	if not (ok and on) then
+		lens_diag_off()
+		return PIP
+	end
 	local actor = db.actor
 	local wpn = actor and actor:active_item()
 	local w = wpn and wpn.cast_Weapon and wpn:cast_Weapon()
 	if not w then return PIP end
 	local ok2, zf = pcall(read_zoom, w)
 	PIP.m = pip_magnification(ok2 and zf, console_fov(), dev and dev.fov)
+	PIP.r = lens_radius(wpn, w, dev)
+	-- where the gun points on screen (decoupled camera): a point far along its aim
+	local pos, dir = weapon_aim()
+	if pos and game and game.world2ui then
+		tmp_aimpt = tmp_aimpt or vector()
+		tmp_aimpt:set(pos.x + dir.x * 200, pos.y + dir.y * 200, pos.z + dir.z * 200)
+		local p = game.world2ui(tmp_aimpt, false)
+		if p and p.x ~= -9999 and p.x >= 0 and p.x <= 1024 and p.y >= 0 and p.y <= 768 then
+			PIP.au, PIP.av = p.x / 1024, p.y / 768
+		end
+	end
 	return PIP
 end
 
@@ -1238,10 +1535,17 @@ function update(pool, cfg, L, visible)
 		LG.rect = LG.rect or Frect()
 	end
 
-	-- the crosshair target, at any distance (Identification UI's level.get_target_obj); kept while you
-	-- stay within ID_LENIENCE of them, dropped when you look away
-	local tobj = level.get_target_obj and level.get_target_obj()
-	if tobj and tobj:id() ~= 0 and tobj.alive and tobj:alive()
+	-- the target, at any distance: whoever the gun points at (Bodycam exes, decoupled camera) or the
+	-- crosshair target (Identification UI's level.get_target_obj); kept while you stay within
+	-- ID_LENIENCE of them, dropped when you look away
+	frame_aim_pos, frame_aim_dir = weapon_aim()
+	local tobj
+	if frame_aim_pos then
+		tobj = trace_aim(actor, frame_aim_pos, frame_aim_dir)
+	else
+		tobj = level.get_target_obj and level.get_target_obj()
+	end
+	if tobj and tobj:id() ~= 0 and tobj.alive and tobj:alive() and markable(tobj)
 		and (IsStalker(tobj) or (scan_mutants and IsMonster and IsMonster(tobj)))
 		and (scan_enemies or tobj:relation(actor) ~= game_object.enemy)
 	then
@@ -1303,7 +1607,9 @@ end
 
 function on_game_start()
 	if RegisterScriptCallback then
-		RegisterScriptCallback("actor_on_first_update", clear_known)
-		RegisterScriptCallback("actor_on_net_destroy", clear_known)
+		RegisterScriptCallback("actor_on_first_update", on_first_update)
+		RegisterScriptCallback("actor_on_net_destroy", on_net_destroy)
+		RegisterScriptCallback("save_state", save_state)
+		RegisterScriptCallback("load_state", load_state)
 	end
 end

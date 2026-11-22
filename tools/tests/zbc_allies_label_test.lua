@@ -195,22 +195,61 @@ local pm, pmag = rawget(env, "pip_map"), rawget(env, "pip_magnification")
 check(type(pm) == "function" and type(pmag) == "function", "scope view functions exist")
 if type(pm) == "function" and type(pmag) == "function" then
 	local function near(a, b) return math.abs(a - b) < 1e-6 end
-	local P = { m = 4, r = 0.13, a = 16 / 9 }
-	local u, v = pm(0.5 + 0.01, 0.5 + 0.02, P)
-	check(near(u, 0.54) and near(v, 0.58), "inside the lens: 4x further from the centre")
+	local P = { m = 4, r = 0.12, a = 16 / 9 }
+	local u, v, inside = pm(0.5 + 0.01, 0.5 + 0.02, P)
+	check(near(u, 0.54) and near(v, 0.58) and inside, "inside the lens: 4x further from the centre")
 	local cu, cv = pm(0.5, 0.5, P)
 	check(near(cu, 0.5) and near(cv, 0.5), "the centre stays the centre")
-	check(pm(0.5 + 0.05, 0.5, P) == nil, "in the lens area but magnified out of it: hidden behind the scope")
-	local ou, ov = pm(0.9, 0.2, P)
-	check(ou == 0.9 and ov == 0.2, "outside the lens: unchanged")
-	local nu, nv = pm(0.51, 0.52, { m = 1, r = 0.13, a = 16 / 9 })
-	check(nu == 0.51 and nv == 0.52, "no scope view: unchanged")
-	-- a box's height grows with the magnification (head and feet both inside the lens)
+	local fu, fv, fin = pm(0.5, 0.5 + 0.05, P)
+	check(fu ~= nil and near(fv, 0.7) and not fin, "magnified past the lens edge: still placed, flagged outside")
+	local _, _, oin = pm(0.9, 0.2, P)
+	check(not oin, "far from the centre: outside the lens")
+	local nu, nv, nin = pm(0.51, 0.52, { m = 1, r = 0.12, a = 16 / 9 })
+	check(nu == 0.51 and nv == 0.52 and nin, "no scope view: unchanged")
+	-- a box's height grows with the magnification
 	local _, top = pm(0.5, 0.49, P)
 	local _, bot = pm(0.5, 0.51, P)
 	check(near(bot - top, 0.08), "box height x4 inside the lens")
-	check(pmag(4, 75, 75) > 3.99 and pmag(4, 75, 75) < 4.01, "4x scope, main view unzoomed: 4x")
-	check(pmag(4, 75, 60) < pmag(4, 75, 75), "main view already zoomed a little: less relative magnification")
+
+	-- boxes through the scope: only inside the lens, clipped to it, never dropped for being big
+	local pc = rawget(env, "pip_clip_box")
+	check(type(pc) == "function", "pip_clip_box exists")
+	if type(pc) == "function" then
+		local ry = 0.12 * 768
+		local cx, cy, w, h = pc(512, 400, 60, 120, P)
+		check(cx == 512 and cy == 400 and w == 60 and h == 120, "small box inside the lens: unchanged")
+		local bx, by, bw, bh = pc(512, 384 + 30, 120, 600, P)
+		check(bx and bh <= 2 * ry + 1e-6 and by - bh * 0.5 >= 384 - ry - 1e-6, "body filling the lens: box clipped to it, not dropped")
+		check(pc(150, 384, 40, 80, P) == nil, "someone outside the lens: no box")
+		check(pc(512, 384 + ry * 1.2, 40, 80, P) == nil, "centre outside the lens: no box")
+		local sx, sy, sw, sh = pc(150, 384, 40, 80, { m = 1, r = 0.12, a = 16 / 9 })
+		check(sx == 150 and sw == 40, "no scope view: boxes anywhere")
+	end
+
+	-- lens size from the Bodycam exes' measurement (pip.log, [SVP-RATIO] measH = lens height in half screens)
+	local pl = rawget(env, "parse_lens_log")
+	check(type(pl) == "function", "parse_lens_log exists")
+	if type(pl) == "function" then
+		local log = table.concat({
+			"[SVP-RATIO] scope x measH 0.40 w 0.2 aim 1.00 r 1 frame 90",      -- before this scope came up
+			"[SVP-RATIO] scope x measH 0.48 w 0.2 aim 0.50 r 1 frame 120",     -- not aimed: ignored
+			"[SVP-RATIO] scope x measH 0.52 w 0.2 aim 1.00 r 1 frame 130",
+			"[SVP-RATIO] scope x measH 9.00 w 0.2 aim 1.00 r 1 frame 131",     -- nonsense: ignored
+			"some other line",
+		}, "\n")
+		local r = pl(log, 100, 200)
+		check(r and math.abs(r - 0.13) < 1e-9, ("latest good measurement: radius 0.13, got %s"):format(tostring(r)))
+		check(pl(log, 140, 200) == nil, "nothing newer than this scope: no measurement")
+		check(pl("", 0, 10) == nil and pl(nil, 0, 10) == nil, "empty log: no measurement")
+	end
+
+	-- magnification: GAMMA's 3DSS zoom factors work out at 100 / zf (as the Bodycam exes' scope
+	-- projection uses them), small values are a plain power
+	local m30 = pmag(30, 75, 75)
+	check(m30 > 3.3 and m30 < 3.35, ("3DSS zoom factor 30: 100 / 30, got %.2f"):format(m30))
+	check(pmag(20, 75, 75) > m30, "zoom factor 20 magnifies more than 30")
+	check(pmag(4, 75, 75) > 3.99 and pmag(4, 75, 75) < 4.01, "a small value is a plain 4x")
+	check(pmag(30, 75, 60) < m30, "main view already zoomed a little: less relative magnification")
 	check(pmag(nil, 75, 75) == 1 and pmag(0.5, 75, 75) == 1, "no or bad zoom factor: 1")
 end
 
@@ -339,8 +378,25 @@ do
 		ae.update(pool, cfg, lens, true)
 	end
 	check(ae.is_known_id(42) == true, "re-identified NPC is known")
+	-- the save keeps who is identified: save, leave the level, load, still known
+	local saved = {}
+	ae.save_state(saved)
+	check(type(saved.zbc_known) == "table" and saved.zbc_known[#saved.zbc_known] == 42, "identified ids go into the save")
 	cbs.actor_on_net_destroy()
-	check(ae.is_known_id(42) == false and ae.id_progress_for(42) == nil, "actor_on_net_destroy clears known and id_progress")
+	ae.load_state(saved)
+	cbs.actor_on_first_update()
+	check(ae.is_known_id(42) == true, "still identified after loading the save")
+
+	-- a game started without that data (a new game): nobody known
+	cbs.actor_on_net_destroy()
+	cbs.actor_on_first_update()
+	check(ae.is_known_id(42) == false and ae.id_progress_for(42) == nil, "no saved data: memory cleared")
+
+	-- a save without the data, or with junk in it, loads with nobody known
+	ae.load_state({ zbc_known = { "x", -5, 70000, 7 } })
+	check(ae.is_known_id(7) == true and ae.is_known_id(70000) == false, "only valid ids are restored")
+	ae.load_state({})
+	check(ae.is_known_id(7) == false, "a save without the data: nobody known")
 end
 
 -- allies_mutants decoupled from allies_enemies & allies_color_enemy=7, label clamping, visible==false preserves states

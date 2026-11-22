@@ -146,6 +146,21 @@ if type(pack_bounds) == "function" then
 	check(cnt_e == 2 and pw_e == 1.0 and eu0 == 0 and ev0 == 0 and eu1 == 1 and ev1 == 1, "edge clamping covers [0, 1]")
 end
 
+-- which heads are blurred: configs\zbc_face_models.ltx [skip] / [only]
+local fa, mk = rawget(env, "face_allowed"), rawget(env, "model_key")
+check(type(fa) == "function" and type(mk) == "function", "model list functions exist")
+if type(fa) == "function" and type(mk) == "function" then
+	check(mk("Meshes/Actors/Stalker_Neutral/stalker_neutral_1.ogf") == "actors\\stalker_neutral\\stalker_neutral_1", "model names are normalised")
+	local none = { skip = {}, only = {} }
+	check(fa("actors\\a\\b", none), "empty lists: everyone blurred")
+	local skip = { skip = { ["actors\\exo\\exo_1"] = true }, only = {} }
+	check(not fa("actors/exo/exo_1.ogf", skip) and fa("actors\\a\\b", skip), "a skipped model is not blurred, others are")
+	local only = { skip = {}, only = { ["actors\\a\\b"] = true } }
+	check(fa("actors\\a\\b", only) and not fa("actors\\c\\d", only), "an [only] list limits blurring to it")
+	local both = { skip = { ["actors\\a\\b"] = true }, only = { ["actors\\a\\b"] = true } }
+	check(not fa("actors\\a\\b", both), "skip wins over only")
+end
+
 if failures > 0 then
 	print(failures .. " check(s) failed")
 	os.exit(1)

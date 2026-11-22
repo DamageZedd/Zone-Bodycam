@@ -122,12 +122,50 @@ function pack_bounds(list, n, asp)
 	return n, min_u_q + max_u_q * 4096, min_v_q + max_v_q * 4096, 1.0
 end
 
+-- Which heads get blurred: configs\zbc_face_models.ltx can list models to skip (a full face mask has
+-- no face to hide) in [skip], or limit blurring to listed models in [only]. Both empty by default.
+local MODELS = nil
+function model_key(path)
+	return (tostring(path or ""):lower():gsub("/", "\\"):gsub("^meshes\\", ""):gsub("%.ogf$", ""))
+end
+
+local function read_model_list(ini, section)
+	local list = {}
+	if not (ini and ini.section_exist and ini:section_exist(section)) then return list end
+	for i = 0, ini:line_count(section) - 1 do
+		local ok, key = ini:r_line(section, i, "", "")
+		if ok and key and key ~= "" then list[model_key(key)] = true end
+	end
+	return list
+end
+
+local function read_models(ini) return { skip = read_model_list(ini, "skip"), only = read_model_list(ini, "only") } end
+
+function face_allowed(model, lists)
+	local key = model_key(model)
+	if lists.skip[key] then return false end
+	if next(lists.only) and not lists.only[key] then return false end
+	return true
+end
+
+local function read_visual(obj) return obj:get_visual_name() end
+
+local function has_face(obj)
+	if not MODELS then
+		local ok, lists = pcall(function() return read_models(ini_file and ini_file("zbc_face_models.ltx")) end)
+		MODELS = ok and lists or { skip = {}, only = {} }
+	end
+	if not (next(MODELS.skip) or next(MODELS.only)) then return true end
+	local ok, model = pcall(read_visual, obj)
+	return not ok or face_allowed(model, MODELS)
+end
+
 local function scan(actor)
 	local apos = actor:position()
 	local n = 0
 	for id, st in pairs(db.storage) do
 		local obj = st and st.object
-		if obj and id ~= 0 and IsStalker(obj) then
+		if obj and id ~= 0 and (IsStalker(obj) or (IsTrader and IsTrader(obj))) and has_face(obj) then
 			local d2 = obj:position():distance_to_sqr(apos)
 			if n < POOL or d2 < scan_d2[POOL] then
 				local pos = (n < POOL) and (n + 1) or POOL
@@ -154,10 +192,13 @@ local function project(vec)
 	local p = game.world2ui(vec, false)
 	if not p or p.x == -9999 then return nil end
 	local u, v = p.x / 1024, p.y / 768
-	-- inside a picture-in-picture scope the face shows magnified (zbc_allies.pip_map)
+	-- inside a picture-in-picture scope the face shows magnified (zbc_allies.pip_map); faces outside the
+	-- lens are behind the scope body or blurred out, so they are left alone
 	if zbc_allies and zbc_allies.pip_map then
 		if zbc_allies.pip_refresh then zbc_allies.pip_refresh() end
-		return zbc_allies.pip_map(u, v)
+		local mu, mv, inside = zbc_allies.pip_map(u, v)
+		if not inside then return nil end
+		return mu, mv
 	end
 	return u, v
 end
