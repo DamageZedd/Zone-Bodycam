@@ -41,6 +41,7 @@ function reset()
 	next_scan = 0
 	last_now = nil
 	los = {}
+	last_uv = {}
 end
 
 -- The square for one face, in v units (screen heights; u units are these divided by the aspect).
@@ -188,6 +189,17 @@ local function scan(actor)
 	end
 end
 
+-- Lag-free placement: the face centre one frame ahead, from its own last on-screen step, capped so a
+-- sudden jump (a teleport, a new target) is never overshot. prev: { u, v } of the last frame or nil.
+PREDICT_MAX = 0.04           -- largest step carried forward, in uv
+last_uv = {}
+function predict(prev, u, v)
+	if not prev then return u, v end
+	local du, dv = u - prev[1], v - prev[2]
+	if math.abs(du) > PREDICT_MAX or math.abs(dv) > PREDICT_MAX then return u, v end
+	return u + du, v + dv
+end
+
 -- any_lens: the point only sizes the face square, so it may lie past the lens edge
 local function project(vec, any_lens)
 	local p = game.world2ui(vec, false)
@@ -290,7 +302,12 @@ function update(actor, max_n)
 						r = {}
 						rows[n] = r
 					end
-					r[1], r[2], r[3], r[4] = cu, cv, half, blk
+					-- one frame ahead: the square is placed from this frame's camera but drawn on the
+					-- next, so it would trail a fast turn; move it on by its own last step
+					local pu, pv = predict(last_uv[id], cu, cv)
+					last_uv[id] = last_uv[id] or {}
+					last_uv[id][1], last_uv[id][2] = cu, cv
+					r[1], r[2], r[3], r[4] = pu, pv, half, blk
 				end
 			end
 		end

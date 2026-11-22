@@ -94,7 +94,7 @@ float4 main( p_postpr I ) : SV_Target
 			scene_vis *= lerp(1.0, zbc_render(I.Tex0), saturate(bus_zbc_motion.x * 4.0));
 		image_o *= scene_vis;
 	}
-	[branch] if (ZBC_FX || bus_zbc_ir.x > 0.001)
+	[branch] if (ZBC_FX || bus_zbc_ir.x > 0.001 || abs(bus_zbc_ir.y - 1.0) > 0.005)
 		image_o = zbc_fx_color(image_o, I.Tex0, fx_g, fx_rim, scene_vis);
 	float	osd_mask = 0.0;
 	[branch] if (ZBC_ACTIVE)

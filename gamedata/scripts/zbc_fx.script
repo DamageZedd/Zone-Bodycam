@@ -43,6 +43,33 @@ function interference(storm, psy, rad, anomaly)
 	return clamp01(v)
 end
 
+-- Auto-exposure, like a small camera sensor: the gain the light where you stand needs (luminocity 0..1,
+-- the engine's light level on you), reached through a slightly under-damped spring, so stepping from
+-- a dark room into daylight blows out for a moment and the picture settles with a small overshoot.
+EXP_MID, EXP_MIN, EXP_MAX = 0.42, 0.72, 1.75
+EXP_STIFF, EXP_DAMP = 7.0, 3.6
+function exposure_target(lum)
+	lum = clamp01(tonumber(lum) or 0.5)
+	return min(max(EXP_MID / (lum * 0.85 + 0.12), EXP_MIN), EXP_MAX)
+end
+
+function exposure_step(g, vel, target, dt)
+	dt = min(max(dt or 0, 0), 0.1)
+	vel = vel + ((target - g) * EXP_STIFF - vel * EXP_DAMP) * dt
+	g = g + vel * dt
+	return min(max(g, EXP_MIN * 0.8), EXP_MAX * 1.15), vel
+end
+
+local function read_lum_global(actor) return get_object_luminocity(actor) end
+local function read_lum_level(actor) return level.get_object_luminocity(actor) end
+function light_level(actor)
+	for _, f in ipairs({ read_lum_global, read_lum_level }) do
+		local ok, v = pcall(f, actor)
+		if ok and tonumber(v) then return tonumber(v) end
+	end
+	return nil
+end
+
 -- low-light mode wanted? mode: 0 auto, 1 always, 2 off
 function night_hours(h)
 	h = tonumber(h) or 12
@@ -168,6 +195,16 @@ function frame(cfg, dt, is_powered)
 		ir_goal = ir_target(cfg.night_mode or 0, hour, is_ug)
 	end
 	F.ir = approach(F.ir, ir_goal, 0.7, dt)
+
+	-- auto-exposure: follows the light where you stand, lagging and overshooting a little
+	if cfg.auto_exposure then
+		local lum = light_level(actor)
+		if lum then
+			F.exposure, F.exp_vel = exposure_step(F.exposure or 1, F.exp_vel or 0, exposure_target(lum), dt)
+		end
+	else
+		F.exposure, F.exp_vel = 1, 0
+	end
 
 	-- rain on the lens: builds up while it rains, dries slowly
 	local rain = 0

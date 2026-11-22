@@ -1,0 +1,140 @@
+--[[
+	Zone Bodycam - event log (zbc_eventlog.script)
+
+	Turns game events into short evidence tags like a real bodycam's: SHOTS FIRED, CONTACT 2,
+	OFFICER HIT, OFFICER DOWN (a companion killed), SUBJECT DOWN (someone you killed), EMISSION.
+	The newest few show for a few seconds in the overlay under the recording timer (zbc_bodycam.script
+	draws them); every event, identifications included, is kept in history for the footage review
+	screen (zbc_review.script).
+]]
+
+local floor, min, max = math.floor, math.min, math.max
+
+SHOW_SECONDS = 8             -- how long a line stays in the overlay
+LINES        = 3             -- lines shown at once
+HISTORY_MAX  = 300           -- events kept for the review screen
+SHOTS_GAP    = 4             -- seconds between two SHOTS FIRED tags (a burst is one event)
+HIT_GAP      = 5             -- seconds between two OFFICER HIT tags
+
+history = {}                 -- { real = s, clock = "HH:MM", rec = recorded s, kind = id, text = "...", show = bool }
+local last = {}              -- kind -> real time of the last entry
+local contact = 0            -- hostiles marked the last time we looked
+local storm = false
+local next_poll = 0
+
+local function now_s() return time_global() / 1000 end
+
+local function tr(id, def)
+	local s = game and game.translate_string and game.translate_string(id)
+	if type(s) ~= "string" or s == "" or s == id then s = def end
+	return zbc_allies and zbc_allies.upper_cp1251 and zbc_allies.upper_cp1251(s) or string.upper(s)
+end
+
+local function game_clock()
+	local h = level and level.get_time_hours and level.get_time_hours() or 0
+	local m = level and level.get_time_minutes and level.get_time_minutes() or 0
+	return string.format("%02d:%02d", h, m)
+end
+
+local function enabled()
+	return zbc_bodycam and zbc_bodycam.fx_enabled and zbc_bodycam.fx_enabled()
+		and zbc_bodycam.fx_option and zbc_bodycam.fx_option("event_log")
+end
+
+-- adds an event; show = false keeps it out of the overlay (review screen only)
+function add(kind, text, show, real, clock, rec)
+	real = real or now_s()
+	local e = { real = real, clock = clock or game_clock(), kind = kind, text = text, show = show ~= false,
+		rec = rec or (zbc_bodycam and zbc_bodycam.rec_seconds and zbc_bodycam.rec_seconds()) or 0 }
+	history[#history + 1] = e
+	while #history > HISTORY_MAX do table.remove(history, 1) end
+	last[kind] = real
+	return e
+end
+
+-- true when an event of this kind may be logged again (not within gap seconds of the last one)
+function due(kind, gap, now)
+	local t = last[kind]
+	return not t or (now or now_s()) - t >= gap
+end
+
+-- the overlay lines: the newest shown events from the last SHOW_SECONDS, oldest first
+function recent(now, n)
+	now, n = now or now_s(), n or LINES
+	local out = {}
+	for i = #history, 1, -1 do
+		local e = history[i]
+		if now - e.real > SHOW_SECONDS then break end
+		if e.show then table.insert(out, 1, e.clock .. " " .. e.text) end
+		if #out >= n then break end
+	end
+	return out
+end
+
+function clear()
+	history, last, contact, storm = {}, {}, 0, false
+end
+
+---------------------------------------------------------------------------------------------------
+-- Game events
+---------------------------------------------------------------------------------------------------
+
+local function actor_on_weapon_fired(obj)
+	if not enabled() then return end
+	if obj and db.actor and obj:id() ~= db.actor:id() then return end
+	if due("shots", SHOTS_GAP) then add("shots", tr("st_zbc_ev_shots", "Shots fired")) end
+end
+
+local function read_power(shit) return shit.power end
+local function actor_on_before_hit(shit)
+	if not enabled() then return end
+	local ok, p = pcall(read_power, shit)
+	if (ok and tonumber(p) or 0) >= 0.2 and due("hit", HIT_GAP) then
+		add("hit", tr("st_zbc_ev_hit", "Officer hit"))
+	end
+end
+
+local function on_death(victim, who)
+	if not (enabled() and victim and db.actor) then return end
+	if IsStalker(victim) and victim:has_info("npcx_is_companion") then
+		add("down", tr("st_zbc_ev_officer_down", "Officer down"))
+	elseif who and who:id() == db.actor:id() then
+		add("kill", tr("st_zbc_ev_subject_down", "Subject down"))
+	end
+end
+
+-- once a second: hostiles marked on the camera (CONTACT n when it rises), emissions and psy storms
+local function read_storm()
+	return (surge_manager and surge_manager.is_started and surge_manager.is_started())
+		or (psi_storm_manager and psi_storm_manager.get_psi_storm_manager
+			and psi_storm_manager.get_psi_storm_manager().started) or false
+end
+
+local function actor_on_update()
+	local now = now_s()
+	if now < next_poll then return end
+	next_poll = now + 1
+	if not enabled() then return end
+	local n = zbc_allies and zbc_allies.hostile_count and zbc_allies.hostile_count() or 0
+	if n > contact then add("contact", tr("st_zbc_ev_contact", "Contact") .. " " .. n) end
+	contact = n
+	local ok, s = pcall(read_storm)
+	s = ok and s and true or false
+	if s and not storm then add("storm", tr("st_zbc_ev_emission", "Emission")) end
+	storm = s
+end
+
+-- called by zbc_allies when someone is identified (review screen only)
+function identified(name)
+	if not enabled() then return end
+	add("ident", tr("st_zbc_ev_ident", "Identified") .. " " .. tostring(name or ""), false)
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_first_update", clear)
+	RegisterScriptCallback("actor_on_weapon_fired", actor_on_weapon_fired)
+	RegisterScriptCallback("actor_on_before_hit", actor_on_before_hit)
+	RegisterScriptCallback("npc_on_death_callback", on_death)
+	RegisterScriptCallback("monster_on_death_callback", on_death)
+	RegisterScriptCallback("actor_on_update", actor_on_update)
+end

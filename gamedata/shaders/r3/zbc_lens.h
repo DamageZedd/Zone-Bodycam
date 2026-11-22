@@ -19,7 +19,7 @@ uniform float4 bus_zbc_faces;    // x: number of faces in use (0..64), y/z: pack
 
 // Camera effects (scripts\zbc_fx.script), independent of the lens.
 uniform float4 bus_zbc_glitch;   // x: interference 0..1  y: hit burst 0..1  z: time of death (timers.x clock, 0 alive)
-uniform float4 bus_zbc_ir;       // x: low-light (infrared) mix 0..1
+uniform float4 bus_zbc_ir;       // x: low-light (infrared) mix 0..1  y: auto-exposure gain (0 = off, 1 = neutral)
 uniform float4 bus_zbc_dirt;     // x: rain on the lens 0..1  y: blood seed  z: time the blood hit (0 none)
 
 #define ZBC_INTENSITY (saturate(bus_zbc_motion.x))
@@ -257,6 +257,7 @@ float2 zbc_fx_uv(float2 uv, float g, out float rim)
 // colour effects on the picture (before the overlay): drop rims, blood, interference, infrared
 float3 zbc_fx_color(float3 c, float2 uv, float g, float rim, float scene_vis)
 {
+	c *= (bus_zbc_ir.y > 0.01) ? bus_zbc_ir.y : 1.0;   // auto-exposure gain
 	c *= 1.0 - rim * 0.35;
 	float b = zbc_blood(uv) * scene_vis;
 	c = lerp(c, c * float3(0.35, 0.03, 0.03) + float3(0.06, 0.0, 0.0), b);

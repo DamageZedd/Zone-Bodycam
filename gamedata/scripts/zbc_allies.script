@@ -226,13 +226,36 @@ DECODE_HZ    = 20            -- scramble changes per second
 
 local decode_buf = {}
 
-function decode_text(text, t, seed, flicker_t)
+-- Order letters lock in when the decode is random (MCM): a fixed shuffle of 1..len per NPC, cached.
+-- rank[i] = when letter i locks (0-based).
+local order_cache = {}
+function lock_ranks(len, seed)
+	local key = len * 100000 + (seed or 0) % 100000
+	local ranks = order_cache[key]
+	if ranks then return ranks end
+	local order = {}
+	for i = 1, len do order[i] = i end
+	local s = (seed or 0) % 2147483646 + 1
+	for i = len, 2, -1 do
+		s = (s * 48271) % 2147483647
+		local j = s % i + 1
+		order[i], order[j] = order[j], order[i]
+	end
+	ranks = {}
+	for k = 1, len do ranks[order[k]] = k - 1 end
+	if len > 0 then order_cache[key] = ranks end
+	return ranks
+end
+
+function decode_text(text, t, seed, flicker_t, random_order)
 	local len = #text
 	if t >= DECODE_DELAY + len * DECODE_STEP then return text, true end
 	local step = floor(max(flicker_t or t, 0) * DECODE_HZ)
+	local ranks = random_order and lock_ranks(len, seed) or nil
 	for i = 1, len do
 		local ch = text:sub(i, i)
-		if ch == " " or t >= DECODE_DELAY + (i - 1) * DECODE_STEP then
+		local rank = ranks and ranks[i] or (i - 1)
+		if ch == " " or t >= DECODE_DELAY + rank * DECODE_STEP then
 			decode_buf[i] = ch
 		else
 			local h = (seed * 7919 + i * 104729 + step * 1299709) % #SCRAMBLE
@@ -301,12 +324,24 @@ function build(hud, xml)
 		end
 		hide(pool[i])
 	end
+	pool.edges = {}
+	for i = 1, EDGE_MAX do
+		local d = xml:InitStatic("zbc_dot", hud)
+		d:Show(false)
+		pool.edges[i] = d
+	end
 	return pool
+end
+
+local function hide_edges(pool)
+	if not (pool and pool.edges) then return end
+	for i = 1, #pool.edges do pool.edges[i]:Show(false) end
 end
 
 function hide_all(pool)
 	if not pool then return end
 	for i = 1, #pool do hide(pool[i]) end
+	hide_edges(pool)
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -316,6 +351,9 @@ end
 local scan_enemies = true        -- cfg.allies_enemies, set by update()
 local scan_mutants = true        -- cfg.allies_mutants, set by update()
 local frame_cols = {}            -- relation -> colour, set by update()
+local lens_override = 0          -- cfg.allies_lens: scope lens radius set by hand (0 = measured)
+companion_ids = {}               -- companions at any distance (edge markers), set by scan()
+met = {}                         -- id -> true for stalkers you have talked to ("known only" names), saved
 
 ---------------------------------------------------------------------------------------------------
 -- Who a camera can mark, and where the gun points
@@ -431,6 +469,33 @@ local function scan(actor, range)
 	end
 	for i = 1, n do candidates[i] = scan_ids[i] end
 	for i = n + 1, #candidates do candidates[i] = nil end
+	-- companions at any distance, for the edge markers
+	for i = #companion_ids, 1, -1 do companion_ids[i] = nil end
+	for id, st in pairs(db.storage) do
+		local obj = st and st.object
+		if obj and id ~= 0 and IsStalker(obj) and obj:alive() and obj:has_info("npcx_is_companion") then
+			companion_ids[#companion_ids + 1] = id
+		end
+	end
+end
+
+---------------------------------------------------------------------------------------------------
+-- Companions off screen: a marker at the screen edge, toward where they are
+---------------------------------------------------------------------------------------------------
+
+EDGE_MAX = 4                     -- companions shown at once
+EDGE_MARGIN = 26                 -- UI units from the screen edge
+
+-- where on the screen border a marker for something at camera-space (x right, y up, f forward)
+-- goes, in UI units (1024 x 768). Behind you it slides to the bottom edge.
+function edge_ui(x, y, f)
+	if f <= 0 then y = min(y, f) end
+	local len = sqrt(x * x + y * y)
+	if len < 1e-6 then return 512, 768 - EDGE_MARGIN end
+	local ex, ey = x / len, -y / len
+	local rx, ry = 512 - EDGE_MARGIN, 384 - EDGE_MARGIN
+	local s = min(abs(ex) > 1e-6 and rx / abs(ex) or 1e9, abs(ey) > 1e-6 and ry / abs(ey) or 1e9)
+	return 512 + ex * s, 384 + ey * s
 end
 
 -- Picture-in-picture scopes (3DSS, the engine's second viewport): the lens shows a magnified view
@@ -574,8 +639,9 @@ end
 BOX_BONES = { "bip01_head", "bip01_neck", "bip01_pelvis", "bip01_l_forearm", "bip01_r_forearm",
 	"bip01_l_hand", "bip01_r_hand", "bip01_l_calf", "bip01_r_calf", "bip01_l_foot", "bip01_r_foot" }
 BONE_MIN = 5
-BONE_PAD_W = 0.22            -- body width around the joints, as a share of the joints' height on screen
-BONE_PAD_H = 0.04            -- and above / below them
+BONE_PAD_W = 0.06            -- body width beyond the outermost joints (elbows, hands), as a share of the
+                             -- joints' height on screen, each side: about 10 cm on a standing stalker
+BONE_PAD_H = 0.02            -- above the top of the head / below the ground, each
 HEAD_TOP = 0.14              -- metres from the head bone to the top of the head
 local bone_cache = {}        -- id -> bone names this model has
 local bone_cache_n = 0
@@ -613,12 +679,17 @@ local function bone_screen(obj, L, a, W)
 	local bones = model_bones(obj)
 	if #bones < BONE_MIN then return nil end
 	tmp_bone_pt = tmp_bone_pt or vector()
-	local u0, v0, u1, v1 = 1e9, 1e9, -1e9, -1e9
+	-- the extreme points (leftmost, topmost, rightmost, lowest), each kept whole so it can go through
+	-- the lens warp on its own: the warp bends a rectangle's corners differently from the body's edges
+	local lu, lv, tu, tv, ru, rv, bu, bv = 1e9, 0, 0, 1e9, -1e9, 0, 0, -1e9
 	local n = 0
 	local function add(p)
 		local u, v = project(p)
 		if u then
-			u0, v0, u1, v1 = min(u0, u), min(v0, v), max(u1, u), max(v1, v)
+			if u < lu then lu, lv = u, v end
+			if u > ru then ru, rv = u, v end
+			if v < tv then tu, tv = u, v end
+			if v > bv then bu, bv = u, v end
 			n = n + 1
 		end
 	end
@@ -634,13 +705,12 @@ local function bone_screen(obj, L, a, W)
 	end
 	add(obj:position())                                     -- the ground under the feet
 	if n < BONE_MIN then return nil end
-	u0, v0, u1, v1 = pad_joint_bounds(u0, v0, u1, v1, a)
-	-- through the lens warp: the four corners of the rectangle
-	local cu0, cv0 = unwarp(L, a, u0, v0, W)
-	local cu1, cv1 = unwarp(L, a, u1, v1, W)
-	local cu2, cv2 = unwarp(L, a, u0, v1, W)
-	local cu3, cv3 = unwarp(L, a, u1, v0, W)
-	return min(cu0, cu2), min(cv0, cv3), max(cu1, cu3), max(cv1, cv2)
+	-- each extreme point through the lens warp, then the room for the body around the joints on screen
+	local u0 = unwarp(L, a, lu, lv, W)
+	local u1 = unwarp(L, a, ru, rv, W)
+	local _, v0 = unwarp(L, a, tu, tv, W)
+	local _, v1 = unwarp(L, a, bu, bv, W)
+	return pad_joint_bounds(u0, v0, u1, v1, a)
 end
 
 local function project_box(obj, L, a, ux, uy, size, W, aspect, is_quad)
@@ -839,6 +909,8 @@ local function step_entity(
 	if ent then
 		ent.companion = companion
 		ent.health = companion and tonumber(obj.health) or nil
+		ent.mutant = is_mon and true or false
+		ent.hostile = (is_mon or rel == game_object.enemy) and true or false
 	end
 	if companion then
 		col = cols.companion
@@ -1060,7 +1132,11 @@ local function words()
 			if type(s) ~= "string" or s == "" or s == id then s = def end
 			return label_text(s, INFO_CHARS)
 		end
-		STR = { kia = tr("st_zbc_kia", "KIA"), ident = tr("st_zbc_ident", "IDENT"), m = tr("st_zbc_m", "M") }
+		STR = { kia = tr("st_zbc_kia", "KIA"), ident = tr("st_zbc_ident", "IDENT"), m = tr("st_zbc_m", "M"),
+			unknown = label_text((function()
+				local s = game and game.translate_string and game.translate_string("st_zbc_unknown")
+				return (type(s) == "string" and s ~= "" and s ~= "st_zbc_unknown") and s or "Unknown"
+			end)(), LABEL_CHARS) }
 	end
 	return STR
 end
@@ -1136,8 +1212,11 @@ local function queue_label(slot, ent, cx, top, bottom, alpha, r, g, b)
 		label_queue[label_n] = q
 	end
 	q.slot = slot
-	q.name = (decode_text(ent.name or "", t, seed, LG.now))
-	q.fac = (decode_text(ent.faction or "", t - FACTION_DELAY, seed + 17, LG.now))
+	-- "known only" (MCM): a stalker's name shows only once you have talked to them; until then UNKNOWN
+	local name = ent.name or ""
+	if LG.known_only and not ent.mutant and not (ent.id and met[ent.id]) then name = words().unknown end
+	q.name = (decode_text(name, t, seed, LG.now, LG.random))
+	q.fac = (decode_text(ent.faction or "", t - FACTION_DELAY, seed + 17, LG.now, LG.random))
 	q.info = lbl.info and ent.info or ""                -- a slot without an info line just has two
 	q.argb = GetARGB(a, r, g, b)
 	q.cx, q.top, q.bottom = cx, top, bottom
@@ -1213,10 +1292,20 @@ function save_state(m_data)
 	local list = {}
 	for i = 1, #known_order do list[i] = known_order[i] end
 	m_data.zbc_known = list
+	local met_list = {}
+	for id in pairs(met) do met_list[#met_list + 1] = id end
+	m_data.zbc_met = met_list
 end
 
 function load_state(m_data)
 	known, known_order, id_progress = {}, {}, {}
+	met = {}
+	local ml = m_data and m_data.zbc_met
+	if type(ml) == "table" then
+		for _, id in ipairs(ml) do
+			if type(id) == "number" and id >= 0 and id < 65535 then met[id] = true end
+		end
+	end
 	local list = m_data and m_data.zbc_known
 	if type(list) == "table" then
 		for i = max(1, #list - KNOWN_LIMIT + 1), #list do
@@ -1232,6 +1321,22 @@ local function on_first_update()
 	if pending_clear then clear_known() else reset_state() end
 	id_progress = {}
 	pending_clear = true
+end
+
+-- hostiles (enemies and mutants) marked on the camera right now, alive (zbc_eventlog: CONTACT n)
+function hostile_count()
+	local n = 0
+	for _, ent in pairs(states) do
+		if ent.hostile and not ent.dead_t and (ent.vis or 0) > 0.5 then n = n + 1 end
+	end
+	return n
+end
+
+-- talking to someone tells you their name ("known only" option)
+function on_gui_show(name)
+	if name ~= "Dialog" then return end
+	local npc = mob_trade and mob_trade.GetTalkingNpc and mob_trade.GetTalkingNpc()
+	if npc and npc.id then met[npc:id()] = true end
 end
 
 local function on_net_destroy()
@@ -1287,6 +1392,7 @@ local function step_reveal(ent)
 		if ent.reveal_t >= t_full then
 			remember_known(id)
 			id_progress[id] = nil
+			if zbc_eventlog and zbc_eventlog.identified then zbc_eventlog.identified(ent.name) end
 		else
 			id_progress[id] = ent.reveal_t / t_full
 		end
@@ -1506,7 +1612,8 @@ function pip_refresh()
 	if not w then return PIP end
 	local ok2, zf = pcall(read_zoom, w)
 	PIP.m = pip_magnification(ok2 and zf, console_fov(), dev and dev.fov)
-	PIP.r = lens_radius(wpn, w, dev)
+	-- the lens size: set by hand in MCM for unusual scopes, otherwise measured / estimated
+	PIP.r = (lens_override and lens_override > 0) and lens_override or lens_radius(wpn, w, dev)
 	-- where the gun points on screen (decoupled camera): a point far along its aim
 	local pos, dir = weapon_aim()
 	if pos and game and game.world2ui then
@@ -1559,6 +1666,9 @@ function update(pool, cfg, L, visible)
 	local now = time_global() / 1000
 	scan_enemies = cfg.allies_enemies and true or false
 	scan_mutants = cfg.allies_mutants and true or false
+	lens_override = tonumber(cfg.allies_lens) or 0
+	LG.random = cfg.allies_decode_random and true or false
+	LG.known_only = cfg.allies_known_only and true or false
 	if last_now and now < last_now then
 		next_scan = 0
 		last_now = nil
@@ -1681,6 +1791,42 @@ function update(pool, cfg, L, visible)
 	end
 	flush_labels()                                       -- every label at once: on screen, no overlaps
 	for i = n_shown + 1, #pool do hide(pool[i]) end
+
+	-- companions you can't see: a dot at the screen edge pointing toward them
+	local shown_edges = 0
+	if cfg.allies_companion_edge ~= false and pool.edges and frame_dir and cam_vec then
+		local d = frame_dir
+		local hl = sqrt(d.x * d.x + d.z * d.z)
+		if hl > 1e-4 then
+			local rx, rz = d.z / hl, -d.x / hl                  -- camera right (horizontal)
+			local tx, ty, tz = d.y * rz, d.z * rx - d.x * rz, -d.y * rx   -- camera up = forward x right
+			local col = frame_cols.companion or COLORS[2]
+			local size_x, size_y = 9 * ux * cfg.allies_size, 9 * uy * cfg.allies_size
+			for i = 1, #companion_ids do
+				if shown_edges >= #pool.edges then break end
+				local id = companion_ids[i]
+				local ent = states[id]
+				local obj = level.object_by_id(id)
+				if obj and not (ent and ent.vis and ent.vis > 0.5) then
+					local p = obj:position()
+					local dx, dy, dz = p.x - cam_vec.x, p.y + 1.2 - cam_vec.y, p.z - cam_vec.z
+					local f = dx * d.x + dy * d.y + dz * d.z
+					local su, sv = nil, nil
+					if f > 0.1 then su, sv = project(tmp_top:set(p.x, p.y + 1.2, p.z)) end
+					local onscreen = su and su > 0.02 and su < 0.98 and sv > 0.02 and sv < 0.98
+					if not onscreen then
+						local ex, ey = edge_ui(dx * rx + dz * rz, dx * tx + dy * ty + dz * tz, f)
+						shown_edges = shown_edges + 1
+						apply_wnd(pool.edges[shown_edges], ex, ey, size_x, size_y,
+							GetARGB(floor(255 * clamp01(cfg.allies_opacity)), col[1], col[2], col[3]))
+					end
+				end
+			end
+		end
+	end
+	if pool.edges then
+		for i = shown_edges + 1, #pool.edges do pool.edges[i]:Show(false) end
+	end
 end
 
 function on_game_start()
@@ -1689,5 +1835,6 @@ function on_game_start()
 		RegisterScriptCallback("actor_on_net_destroy", on_net_destroy)
 		RegisterScriptCallback("save_state", save_state)
 		RegisterScriptCallback("load_state", load_state)
+		RegisterScriptCallback("GUI_on_show", on_gui_show)
 	end
 end

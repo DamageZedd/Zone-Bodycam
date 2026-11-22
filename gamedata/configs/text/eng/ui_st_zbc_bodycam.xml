@@ -399,4 +399,79 @@
   <string id="st_zbc_m">
     <text>m</text>
   </string>
+  <string id="ui_mcm_zone_bodycam_allies_companion_edge">
+    <text>Companions off screen</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_companion_edge_desc">
+    <text>A dot at the screen edge pointing toward companions you can't see.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_decode_random">
+    <text>Random decode order</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_decode_random_desc">
+    <text>Letters of a name lock in a random order instead of left to right.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_known_only">
+    <text>Names only when met</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_known_only_desc">
+    <text>A stalker's name shows only after you have talked to them; until then the camera shows UNKNOWN. Faction, rank and colour still decode.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_lens">
+    <text>Scope lens size</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_lens_desc">
+    <text>Radius of a picture-in-picture scope's lens on screen, in screen heights. 0 = measured automatically. Set it for scopes whose markers sit wrong at the lens edge.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_event_log">
+    <text>Event log</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_event_log_desc">
+    <text>Short evidence tags under the recording timer: SHOTS FIRED, CONTACT, OFFICER HIT, OFFICER DOWN, SUBJECT DOWN, EMISSION.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_review_key">
+    <text>Footage review key</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_review_key_desc">
+    <text>Opens the footage review screen: a timeline of everything the camera logged, to scrub through with the arrow keys.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_auto_exposure">
+    <text>Auto-exposure</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_auto_exposure_desc">
+    <text>Exposure follows the light where you stand, with a small sensor's lag: stepping from a dark room into daylight blows out for a moment, then settles.</text>
+  </string>
+  <string id="st_zbc_unknown">
+    <text>Unknown</text>
+  </string>
+  <string id="st_zbc_ev_shots">
+    <text>Shots fired</text>
+  </string>
+  <string id="st_zbc_ev_hit">
+    <text>Officer hit</text>
+  </string>
+  <string id="st_zbc_ev_officer_down">
+    <text>Officer down</text>
+  </string>
+  <string id="st_zbc_ev_subject_down">
+    <text>Subject down</text>
+  </string>
+  <string id="st_zbc_ev_contact">
+    <text>Contact</text>
+  </string>
+  <string id="st_zbc_ev_emission">
+    <text>Emission</text>
+  </string>
+  <string id="st_zbc_ev_ident">
+    <text>Identified</text>
+  </string>
+  <string id="st_zbc_review_title">
+    <text>Footage review</text>
+  </string>
+  <string id="st_zbc_review_hint">
+    <text>Left / right: scrub   Home / End: first / last   Esc: close</text>
+  </string>
+  <string id="st_zbc_review_empty">
+    <text>No events recorded yet</text>
+  </string>
 </string_table>

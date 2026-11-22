@@ -36,6 +36,13 @@
   - **GPS line**: coordinates under the name in the overlay (it moves up when the name is hidden).
   - **Low-battery warning** (bodycam item): a message and a beep at 10% and again at 6%.
   - New script `zbc_fx.script`; test `tools/tests/zbc_fx_test.lua`.
+- **Event log** (MCM **Overlay > Event log**, on): short evidence tags under the recording timer for 8 s: SHOTS FIRED, CONTACT n (more hostiles on camera), OFFICER HIT, OFFICER DOWN (a companion killed), SUBJECT DOWN (someone you killed), EMISSION, in English or Russian. New `zbc_eventlog.script`.
+- **Footage review screen** (MCM key, Insert by default): a timeline of the recording with a coloured tick for every logged event (identifications too) and the list around the selected one; left / right scrub, Home / End jump, Esc closes. New `zbc_review.script`, drawn with a plain procedural fill shader (`hud\zbc_fill`, no new texture).
+- **Auto-exposure** (MCM, on): exposure follows the light where you stand with a small sensor's lag and a slight overshoot, so stepping from a dark room into daylight blows out for a moment and settles.
+- **Face blur placed a frame ahead** from each face's own on-screen motion, so the mosaic no longer trails fast turns (capped so jumps are never overshot).
+- **Companions off screen**: a dot at the screen edge pointing toward them (MCM, on).
+- **Marker options**: random decode order, names only once you have talked to someone (UNKNOWN until then, saved with the game), and a scope lens size slider for unusual scopes (0 = measured).
+- Test: `tools/tests/zbc_round3_test.lua`.
 - **Mutants get boxes too** (MCM **Ally markers > Mark mutants**, on by default). The label shows the species (BLOODSUCKER, SNORK, PSEUDODOG...) with MUTANT under it, in English or Russian; four-legged mutants get a wide, low box. They identify by distance like stalkers and decode to the enemy colour (or friendly, for the rare tame one). Faces of mutants are not pixelated.
 - **Full Russian localization.** Every menu string, the optional Body Camera item (name, description, battery message, its MCM page) and all MCM list options (logo, time zone, text size, marker style, colours) have Russian text in `configs\text\rus`.
   - The overlay font now has Russian letters, so Russian names and factions show in the top-right overlay and above the markers, with the lens on or off. KlartextMono has no Cyrillic, so those letters come from Roboto Mono Bold (Apache-2.0), matched to KlartextMono's capital height and letter width. `tools/make_overlay_assets.py` takes it as a fourth argument and also writes the shader copy of the letters (`zbc_osd_atlas_cyr.script`).

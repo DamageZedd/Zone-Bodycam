@@ -62,6 +62,9 @@ defaults = {
 	lens_dirt         = true,   -- rain drops and blood on the lens
 	event_marker      = true,   -- "EVENT" after REC when you fire or take a big hit
 	gps_line          = true,   -- coordinates line in the overlay
+	event_log         = true,   -- SHOTS FIRED, CONTACT n... under the recording timer (zbc_eventlog.script)
+	review_key        = 210,    -- DIK_INSERT: opens the footage review screen (zbc_review.script)
+	auto_exposure     = true,   -- exposure follows the light where you stand, with a small sensor's lag
 	-- motion
 	motion         = 1.0,
 	turn_lag       = 1.0,
@@ -93,6 +96,10 @@ defaults = {
 	allies_color_companion = 1,      -- see zbc_allies (7 = none)
 	allies_enemies         = true,   -- enemies get a box too (it decodes from white to the enemy colour)
 	allies_mutants         = true,   -- mutants get a box too, labelled with their species
+	allies_companion_edge  = true,   -- companions off screen: a dot at the screen edge toward them
+	allies_decode_random   = false,  -- letters lock in a random order instead of left to right
+	allies_known_only      = false,  -- names only once you have talked to them (UNKNOWN until then)
+	allies_lens            = 0,      -- scope lens radius in screen heights, set by hand (0 = measured)
 	allies_color_friend    = 1,      -- green
 	allies_color_enemy     = 5,      -- red
 }
@@ -136,6 +143,7 @@ local CLAMPS = {
 	allies_color_friend    = { 0, 7 },
 	allies_color_enemy     = { 0, 7 },
 	night_mode             = { 0, 2 },
+	allies_lens            = { 0, 0.4 },
 }
 
 local LIST_OPTS = {
@@ -488,6 +496,7 @@ local function rec_tick()
 end
 
 local function rec_whole() return floor(rec.secs or 0) end
+function rec_seconds() return rec.secs or 0 end   -- for the event log and footage review
 local function rec_dot_on() return ((rec.secs or 0) % 1) < 0.5 end   -- 1 Hz, in step with the seconds
 
 -- "REC HH:MM:SS", plus " EVENT" while an event is flagged (zbc_fx.script); must match zbc_rec_char
@@ -1079,6 +1088,9 @@ function ZbcHud:__init() super()
 	self.batt_shown = false
 	self.batt_color = nil
 	self.rec_line = new_line(REC_CHARS)
+	-- event log (zbc_eventlog.script): a few lines under the recording timer, always HUD-drawn
+	self.log_lines = {}
+	for i = 1, 3 do self.log_lines[i] = new_line(MAX_CHARS) end
 	self.rec_sec = nil
 	self.last_w = -1
 	self.last_h = -1
@@ -1176,6 +1188,8 @@ function ZbcHud:Layout()
 	self.batt:SetWndPos(tmp_v2:set(rec_left * ux, batt_top * uy))
 	self.batt:SetWndSize(tmp_v2:set(BATT_W * em_px * ux, BATT_H * em_px * uy))
 	self.glyph.rec_x = rec_left + dot_d + REC_GAP * em_px
+	self.glyph.log_x = rec_left
+	if self.log_lines then for _, l in ipairs(self.log_lines) do l.text = nil end end
 	self.rec_left_u = rec_left / W
 	self.rec_line.text = nil
 end
@@ -1239,6 +1253,26 @@ function ZbcHud:ShowLine(i, vis)
 end
 
 -- recording timer: shader-drawn while the lens is on, HUD glyphs otherwise
+-- event log lines under the recording timer (newest last), left-aligned with the dot
+function ZbcHud:RefreshLog(visible)
+	if not (self.log_lines and self.glyph) then return end
+	local lines = (visible and cfg.event_log and zbc_eventlog and zbc_eventlog.recent) and zbc_eventlog.recent() or {}
+	local G = self.glyph
+	for i = 1, #self.log_lines do
+		local line, str = self.log_lines[i], lines[i]
+		if str and G.tops[i + 1] then
+			if line.text ~= str then
+				line.visible = true
+				lay_glyphs(line, str, G, G.log_x or 0, G.tops[i + 1] + 0.4 * (G.tops[2] - G.tops[1]))
+			else
+				show_line(line, true)
+			end
+		else
+			show_line(line, false)
+		end
+	end
+end
+
 function ZbcHud:RefreshRec(visible, lens_on)
 	local show = cfg.rec_timer and visible and rec.secs ~= nil
 	local secs = rec_whole()
@@ -1316,6 +1350,7 @@ function ZbcHud:Refresh(visible, lens_on, lens)
 	if not self.glyph then return end
 	local osd_in_post = lens_on and atlas_uploaded
 	self:RefreshRec(visible, osd_in_post)
+	self:RefreshLog(visible)
 
 	-- the housing follows the lens itself, so it stays while the lens fades out (no exposed edges)
 	local ring_vis = lens_on and not cfg.edge_in_image
@@ -1519,7 +1554,7 @@ local function fx_update()
 	local F = zbc_fx.frame(cfg, dt)
 	fx_event = F.event and cfg.rec_timer or false
 	send("glitch", F.glitch, F.burst, F.death_t, 0)
-	send("ir",     F.ir, 0, 0, 0)
+	send("ir",     F.ir, F.exposure or 1, 0, 0)
 	send("dirt",   F.wet, F.blood_seed, F.blood_t, 0)
 	send("event",  fx_event and 1 or 0, 0, 0, 0)
 end
@@ -1643,6 +1678,14 @@ function on_screen_resolution_changed()
 	if db.actor and cfg.enabled ~= nil then sync_lens_settings() end   -- the fill zoom depends on the aspect ratio
 end
 
+-- the footage review screen (zbc_review.script) opens and closes on its MCM key
+function review_key_now() return cfg.review_key end
+
+function on_key_press(key)
+	if not (cfg.enabled and db.actor and zbc_review and zbc_review.toggle) then return end
+	if key == cfg.review_key then zbc_review.toggle() end
+end
+
 function on_game_start()
 	load_settings()
 	lens_off()                               -- clears a value left in user.ltx by a crash
@@ -1658,4 +1701,5 @@ function on_game_start()
 	RegisterScriptCallback("main_menu_on_quit", main_menu_on_quit)
 	RegisterScriptCallback("on_screen_resolution_changed", on_screen_resolution_changed)
 	RegisterScriptCallback("on_option_change", settings_changed)
+	RegisterScriptCallback("on_key_press", on_key_press)
 end

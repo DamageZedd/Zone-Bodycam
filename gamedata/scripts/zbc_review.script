@@ -1,0 +1,183 @@
+--[[
+	Zone Bodycam - footage review screen (zbc_review.script)
+
+	Opens on the MCM key (Insert by default): the camera's event history (zbc_eventlog.script) as a
+	timeline of the recording, with a tick for every event coloured by kind, and the list around the
+	selected one. Left / right scrub through the events, Home / End jump to the first / last, Escape
+	or the key again closes it.
+]]
+
+local floor, min, max = math.floor, math.min, math.max
+
+LIST_ROWS = 9
+KIND_COLORS = {
+	shots   = { 255, 210, 60 },
+	contact = { 255, 70, 60 },
+	hit     = { 255, 140, 40 },
+	down    = { 255, 140, 40 },
+	kill    = { 235, 235, 235 },
+	ident   = { 80, 255, 90 },
+	storm   = { 190, 110, 255 },
+}
+local DEFAULT_COLOR = { 200, 200, 200 }
+
+-- "01:23:45" for a number of seconds
+function rec_clock(s)
+	s = max(floor(tonumber(s) or 0), 0)
+	return string.format("%02d:%02d:%02d", min(floor(s / 3600), 999), floor(s / 60) % 60, s % 60)
+end
+
+-- x of an event on the timeline [x0, x1] covering recorded seconds [t0, t1]
+function timeline_x(rec, t0, t1, x0, x1)
+	if t1 - t0 < 1 then return x1 end
+	return x0 + (x1 - x0) * min(max((rec - t0) / (t1 - t0), 0), 1)
+end
+
+-- the first row shown so the selected event sits in the list (rows, newest at the bottom)
+function list_start(sel, count, rows)
+	if count <= rows then return 1 end
+	return min(max(sel - floor(rows / 2), 1), count - rows + 1)
+end
+
+local tmp_pos, tmp_size = nil, nil
+local function place(w, x, y, wd, ht)
+	tmp_pos = tmp_pos or vector2()
+	tmp_size = tmp_size or vector2()
+	w:SetWndPos(tmp_pos:set(x, y))
+	w:SetWndSize(tmp_size:set(wd, ht))
+end
+
+local function tr(id, def)
+	local s = game and game.translate_string and game.translate_string(id)
+	if type(s) ~= "string" or s == "" or s == id then s = def end
+	return zbc_allies and zbc_allies.upper_cp1251 and zbc_allies.upper_cp1251(s) or string.upper(s)
+end
+
+class "ZbcReview" (CUIScriptWnd)
+
+function ZbcReview:__init() super()
+	self:SetWndRect(Frect():set(0, 0, 1024, 768))
+	local xml = CScriptXmlInit()
+	xml:ParseFile("ui_zbc_bodycam.xml")
+	self.bg = xml:InitStatic("zbc_fill", self)
+	place(self.bg, 0, 0, 1024, 768)
+	self.bg:SetTextureColor(GetARGB(225, 4, 6, 5))
+	self.title = xml:InitStatic("zbc_text", self)
+	place(self.title, 64, 40, 900, 24)
+	self.hint = xml:InitStatic("zbc_text", self)
+	place(self.hint, 64, 712, 900, 20)
+	self.bar = xml:InitStatic("zbc_fill", self)
+	self.ticks, self.rows = {}, {}
+	for i = 1, (zbc_eventlog and zbc_eventlog.HISTORY_MAX or 300) do
+		local t = xml:InitStatic("zbc_fill", self)
+		t:Show(false)
+		self.ticks[i] = t
+	end
+	self.cursor = xml:InitStatic("zbc_fill", self)
+	for i = 1, LIST_ROWS do
+		local r = xml:InitStatic("zbc_text", self)
+		place(r, 96, 150 + (i - 1) * 34, 860, 24)
+		self.rows[i] = r
+	end
+	self.sel = nil
+	self:Refresh()
+end
+
+function ZbcReview:__finalize() end
+
+function ZbcReview:Refresh()
+	local hist = zbc_eventlog and zbc_eventlog.history or {}
+	local count = #hist
+	if not self.sel or self.sel > count then self.sel = count end
+	local now_rec = zbc_bodycam and zbc_bodycam.rec_seconds and zbc_bodycam.rec_seconds() or 0
+	self.title:TextControl():SetText(tr("st_zbc_review_title", "Footage review") .. "   REC " .. rec_clock(now_rec))
+	self.hint:TextControl():SetText(tr("st_zbc_review_hint", "Left / right: scrub   Home / End: first / last   Esc: close"))
+	self.hint:TextControl():SetTextColor(GetARGB(255, 150, 150, 150))
+
+	-- timeline: the recording from the first event to now
+	local x0, x1, y = 96, 928, 560
+	place(self.bar, x0, y, x1 - x0, 4)
+	self.bar:SetTextureColor(GetARGB(255, 90, 90, 90))
+	local t0 = count > 0 and hist[1].rec or now_rec
+	local t1 = max(now_rec, t0 + 1)
+	for i = 1, #self.ticks do
+		local tk, e = self.ticks[i], hist[i]
+		if e then
+			local c = KIND_COLORS[e.kind] or DEFAULT_COLOR
+			place(tk, timeline_x(e.rec, t0, t1, x0, x1) - 1.5, y - 10, 3, 24)
+			tk:SetTextureColor(GetARGB(255, c[1], c[2], c[3]))
+			tk:Show(true)
+		else
+			tk:Show(false)
+		end
+	end
+	if count > 0 then
+		place(self.cursor, timeline_x(hist[self.sel].rec, t0, t1, x0, x1) - 3, y - 18, 6, 40)
+		self.cursor:SetTextureColor(GetARGB(255, 255, 255, 255))
+		self.cursor:Show(true)
+	else
+		self.cursor:Show(false)
+	end
+
+	-- the list around the selected event
+	local first = list_start(self.sel or 1, count, LIST_ROWS)
+	for i = 1, LIST_ROWS do
+		local k = first + i - 1
+		local e = hist[k]
+		local tc = self.rows[i]:TextControl()
+		if count == 0 and i == 1 then
+			tc:SetText(tr("st_zbc_review_empty", "No events recorded yet"))
+			tc:SetTextColor(GetARGB(255, 160, 160, 160))
+		elseif e then
+			local c = KIND_COLORS[e.kind] or DEFAULT_COLOR
+			local mark = (k == self.sel) and "> " or "  "
+			tc:SetText(mark .. "REC " .. rec_clock(e.rec) .. "   " .. e.clock .. "   " .. e.text)
+			local a = (k == self.sel) and 255 or 170
+			tc:SetTextColor(GetARGB(a, c[1], c[2], c[3]))
+		else
+			tc:SetText("")
+		end
+	end
+end
+
+function ZbcReview:OnKeyboard(dik, action)
+	CUIScriptWnd.OnKeyboard(self, dik, action)
+	if action ~= ui_events.WINDOW_KEY_PRESSED then return true end
+	local count = zbc_eventlog and #zbc_eventlog.history or 0
+	local K = DIK_keys
+	if dik == K.DIK_ESCAPE or (zbc_bodycam and dik == zbc_bodycam.review_key_now()) then
+		close()
+		return true
+	elseif dik == K.DIK_LEFT or dik == K.DIK_A then
+		self.sel = max((self.sel or 1) - 1, 1)
+	elseif dik == K.DIK_RIGHT or dik == K.DIK_D then
+		self.sel = min((self.sel or count) + 1, count)
+	elseif dik == K.DIK_HOME then
+		self.sel = 1
+	elseif dik == K.DIK_END then
+		self.sel = count
+	else
+		return true
+	end
+	self:Refresh()
+	return true
+end
+
+local WND = nil
+
+function close()
+	if WND then
+		if WND:IsShown() then WND:HideDialog() end
+		WND = nil
+	end
+end
+
+function toggle()
+	if WND and WND:IsShown() then return close() end
+	WND = ZbcReview()
+	WND:ShowDialog(true)
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_net_destroy", close)
+end

@@ -28,6 +28,16 @@
 		<texture shader="hud\zbc_dot">fx\fx_noise2</texture>
 	</zbc_dot>
 
+	<!-- footage review screen text (zbc_review.script) -->
+	<zbc_text x="0" y="0" width="900" height="20" stretch="1">
+		<text x="0" y="0" align="l" complex_mode="0" font="letterica18" r="220" g="220" b="220" a="255"></text>
+	</zbc_text>
+
+	<!-- plain filled rectangle (footage review screen panels and timeline); procedural like the dot -->
+	<zbc_fill x="0" y="0" width="10" height="10" stretch="1">
+		<texture shader="hud\zbc_fill">fx\fx_noise2</texture>
+	</zbc_fill>
+
 	<!-- VHS battery gauge above the recording dot (bodycam item component); procedural like the dot -->
 	<zbc_batt x="0" y="0" width="19" height="9" stretch="1">
 		<texture shader="hud\zbc_batt">fx\fx_noise2</texture>

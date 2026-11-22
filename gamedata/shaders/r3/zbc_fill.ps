@@ -1,0 +1,10 @@
+#include "common.h"
+#include "hdr10.h"
+#include "zbc_marker.h"
+// Zone Bodycam - plain filled rectangle in the static's colour (shader "hud\zbc_fill"), used for the
+// footage review screen's panels and timeline. No texture of its own.
+float4 main(p_TL I) : SV_Target
+{
+	float zbc_base = (s_base.Sample(smp_base, I.Tex0).a >= -1.0) ? 1.0 : 0.0;   // keeps the bound texture; always 1
+	return zbc_marker_out(float4(I.Color.rgb, 1.0), I.Color.a) * float4(1.0, 1.0, 1.0, zbc_base);
+}

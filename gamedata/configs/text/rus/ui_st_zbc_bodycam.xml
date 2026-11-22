@@ -399,4 +399,79 @@
   <string id="st_zbc_m">
     <text>м</text>
   </string>
+  <string id="ui_mcm_zone_bodycam_allies_companion_edge">
+    <text>Компаньоны за кадром</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_companion_edge_desc">
+    <text>Точка у края экрана в сторону компаньонов, которых не видно.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_decode_random">
+    <text>Случайный порядок расшифровки</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_decode_random_desc">
+    <text>Буквы имени проявляются в случайном порядке, а не слева направо.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_known_only">
+    <text>Имена только знакомых</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_known_only_desc">
+    <text>Имя сталкера показывается только после разговора с ним; до этого камера пишет НЕИЗВЕСТНЫЙ. Группировка, ранг и цвет расшифровываются как обычно.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_lens">
+    <text>Размер линзы прицела</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_allies_lens_desc">
+    <text>Радиус линзы прицела с картинкой в картинке на экране, в долях высоты экрана. 0 = измеряется автоматически. Задайте для прицелов, у которых метки у края линзы стоят неверно.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_event_log">
+    <text>Журнал событий</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_event_log_desc">
+    <text>Короткие метки под таймером записи: СТРЕЛЬБА, КОНТАКТ, ОФИЦЕР РАНЕН, ОФИЦЕР ПОГИБ, ЦЕЛЬ ПОРАЖЕНА, ВЫБРОС.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_review_key">
+    <text>Клавиша просмотра записи</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_review_key_desc">
+    <text>Открывает экран просмотра записи: шкала всех событий камеры, листается стрелками.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_auto_exposure">
+    <text>Автоэкспозиция</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_auto_exposure_desc">
+    <text>Экспозиция следует за освещением там, где вы стоите, с запаздыванием маленькой матрицы: при выходе из тёмной комнаты на свет картинка на мгновение пересвечивается, затем выравнивается.</text>
+  </string>
+  <string id="st_zbc_unknown">
+    <text>Неизвестный</text>
+  </string>
+  <string id="st_zbc_ev_shots">
+    <text>Стрельба</text>
+  </string>
+  <string id="st_zbc_ev_hit">
+    <text>Офицер ранен</text>
+  </string>
+  <string id="st_zbc_ev_officer_down">
+    <text>Офицер погиб</text>
+  </string>
+  <string id="st_zbc_ev_subject_down">
+    <text>Цель поражена</text>
+  </string>
+  <string id="st_zbc_ev_contact">
+    <text>Контакт</text>
+  </string>
+  <string id="st_zbc_ev_emission">
+    <text>Выброс</text>
+  </string>
+  <string id="st_zbc_ev_ident">
+    <text>Опознан</text>
+  </string>
+  <string id="st_zbc_review_title">
+    <text>Просмотр записи</text>
+  </string>
+  <string id="st_zbc_review_hint">
+    <text>Влево / вправо: листать   Home / End: первое / последнее   Esc: закрыть</text>
+  </string>
+  <string id="st_zbc_review_empty">
+    <text>Событий пока нет</text>
+  </string>
 </string_table>
