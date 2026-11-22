@@ -720,6 +720,9 @@ local function motion_update()
 
 	local dir, right, top, cam = dev.cam_dir, dev.cam_right, dev.cam_top, dev.cam_pos
 	local pos = actor:position()
+	if not (dir and right and top and cam and pos) then
+		return S.out_x, S.out_y, S.out_r, S.out_i, S.out_vx, S.out_vy, S.out_vt, S.out_vr, S.out_ox, S.out_oy, 0
+	end
 
 	if not S.ready or not S.t then
 		S.t = now
@@ -1480,6 +1483,9 @@ local function power_down()
 	lens_state.shutter = 0
 end
 
+local fx_last = nil
+local dead = false
+
 local function settings_changed()
 	clear_send_cache()
 	load_settings()
@@ -1498,7 +1504,7 @@ local function settings_changed()
 		motion_reset()
 		lens_state.k = 0
 		lens_state.shutter = 0
-	elseif in_menu and db.actor and powered() and bus_ready() then
+	elseif in_menu and db.actor and not dead and powered() and bus_ready() then
 		S.vis = 1
 		S.out_i = cfg.intensity
 		S.out_rs = 0
@@ -1514,12 +1520,9 @@ local function settings_changed()
 		lens_state.k = 0
 		lens_state.shutter = 0
 	end
-	if db.actor then hud_add() end
+	if db.actor and not dead then hud_add() end
 	if HUD then HUD:Apply() end
 end
-
-local fx_last = nil
-local dead = false
 
 function actor_on_first_update()
 	in_menu = false                          -- loading from the title menu may not fire main_menu_on_quit
@@ -1658,6 +1661,7 @@ function main_menu_on_init()
 			send("sensor", cfg.highlight_blowout, cfg.compression, 0, cfg.sensor_grade)
 			send("osd_info", 0, cfg.logo_style or defaults.logo_style or 0, 0, 0)
 			send("rec", 0, 0, 0, 0)
+			send("batt", 0, 0, 0, 0)
 		end
 	else
 		lens_off()

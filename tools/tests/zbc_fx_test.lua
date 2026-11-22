@@ -127,6 +127,16 @@ do
 	st = fx_env.frame({}, 0.016)
 	check(st.death_t == 0, "revived/alive actor clears F.death_t")
 
+	-- nil cfg and nil psi_storm_manager.get_psi_storm_manager() do not error; surge still drives glitch
+	fx_env.surge_manager = { is_started = function() return true end }
+	fx_env.psi_storm_manager = { get_psi_storm_manager = function() return nil end }
+	local ok_nil = pcall(fx_env.frame, nil, 0.016)
+	check(ok_nil, "frame(nil) does not error")
+	local st_storm = fx_env.frame({ fx_glitch = true }, 0.05)
+	check(st_storm.glitch > 0, "surge with nil psi_storm_manager still builds glitch")
+	fx_env.surge_manager = nil
+	fx_env.psi_storm_manager = nil
+
 	-- Unpowered decay: glitch, ir, and wet decay toward 0/rain instead of freezing
 	fx_env.level = { get_time_hours = function() return 23 end, rain_factor = function() return 1 end }
 	local cfg_fx = { fx_glitch = false, night_mode = 1, lens_dirt = true }
@@ -140,8 +150,8 @@ end
 
 -- zbc_bodycam.script: dead/fx_last reload recovery & Shader Bus <= 6 uint4 gating
 do
-	local registered, set_calls, uint_calls = {}, {}, {}
-	local now_ms, alive = 1000, true
+	local registered, set_calls, uint_calls, bc_cbs = {}, {}, {}, {}
+	local now_ms, alive, hud_adds = 1000, true, 0
 	local bc_env
 	local stub_vec = { x = 0, y = 0, z = 0, set = function(self) return self end }
 	local mock_globals = {
@@ -169,7 +179,7 @@ do
 		zbc_fx = { frame = function() return { glitch = 0, burst = 0, death_t = 0, ir = 0, wet = 0, blood_seed = 0, blood_t = 0, event = false } end },
 		load_var = function(_, _, d) return d end,
 		save_var = function() end,
-		get_hud = function() return { AddDialogToRender = function() end, RemoveDialogToRender = function() end } end,
+		get_hud = function() return { AddDialogToRender = function() hud_adds = hud_adds + 1 end, RemoveDialogToRender = function() end } end,
 		CScriptXmlInit = function() return {
 			ParseFile = function() end,
 			InitStatic = function()
@@ -193,7 +203,7 @@ do
 			bc_env[name] = cls
 			return function() end
 		end,
-		RegisterScriptCallback = function() end,
+		RegisterScriptCallback = function(name, fn) bc_cbs[name] = fn end,
 		ui_mcm = false,
 		actor_menu = false,
 		main_menu = false,
@@ -230,6 +240,24 @@ do
 	now_ms = 3000
 	bc_env.actor_on_update()
 	check(set_calls["zbc_glitch"] and set_calls["zbc_glitch"][3] == 0, "actor_on_first_update resets dead/fx_last across reload")
+
+	-- main_menu_on_init zeroes zbc_batt alongside zbc_osd_info and zbc_rec
+	set_calls["zbc_batt"] = { 1, 4, 1, 1 }
+	bc_env.main_menu_on_init()
+	check(set_calls["zbc_batt"] and set_calls["zbc_batt"][1] == 0, "main_menu_on_init hides zbc_batt")
+	bc_env.main_menu_on_quit()
+
+	-- settings_changed (on_option_change) while dead must NOT re-add HUD or push menu lens
+	bc_env.on_game_start()
+	alive = false
+	bc_env.signal_lost(3.0)
+	local adds_before = hud_adds
+	set_calls["zbc_motion"] = { 0, 0, 0, 0 }
+	bc_env.main_menu_on_init()
+	bc_cbs.on_option_change()
+	check(hud_adds == adds_before, "settings_changed while dead does not re-add HUD")
+	check(set_calls["zbc_motion"][1] == 0, "settings_changed while dead does not push menu lens")
+	bc_env.main_menu_on_quit()
 end
 
 if failures > 0 then

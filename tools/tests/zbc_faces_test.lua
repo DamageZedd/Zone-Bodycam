@@ -161,6 +161,81 @@ if type(fa) == "function" and type(mk) == "function" then
 	check(not fa("actors\\a\\b", both), "skip wins over only")
 end
 
+-- update() edge cases: close-up off-center face, -side projection fallback, and lying dead NPC
+do
+	local npcs = {}
+	local function mkvec(x, y, z)
+		return { x = x or 0, y = y or 0, z = z or 0, set = function(self, nx, ny, nz) self.x, self.y, self.z = nx, ny, nz; return self end, distance_to_sqr = function(a, b) local dx, dy, dz = a.x - b.x, a.y - b.y, a.z - b.z; return dx*dx + dy*dy + dz*dz end }
+	end
+	local fenv
+	fenv = setmetatable({
+		time_global = function() return 1000 end,
+		vector = function() return mkvec(0, 0, 0) end,
+		device = function()
+			return {
+				width = 1920, height = 1080, fov = 75,
+				cam_pos = { x = 0, y = 1.6, z = 0 },
+				cam_dir = { x = 0, y = 0, z = 1 },
+			}
+		end,
+		IsStalker = function() return true end,
+		db = { storage = {} },
+		level = { object_by_id = function(id) return npcs[id] end },
+		utils_obj = { safe_bone_pos = function(obj) return obj._head end },
+		zbc_allies = { los_point = function() return true end },
+		game = {
+			world2ui = function(v)
+				-- simulate +side unprojectable near the right frustum edge (x > 0.99)
+				if v.x > 0.99 then return { x = -9999, y = -9999 } end
+				return { x = v.x * 1024, y = (0.5 - (v.y - 1.6)) * 768 }
+			end,
+		},
+	}, { __index = _G })
+	local fchunk = assert(loadfile(PATH))
+	setfenv(fchunk, fenv)
+	fchunk()
+
+	-- 1) Close-up off-screen-center NPC (cu = -0.15, half = 0.30 -> overlaps [0,1])
+	-- 2) Dead NPC lying with origin at z = -0.8 (behind cam) but head at z = 0.9, y = 1.53 (head + HEAD_UP = 1.60)
+	-- 3) Edge NPC at x = 0.92: +side (0.92 + 0.17 = 1.09 > 0.99) fails to project, -side (0.75) succeeds
+	npcs[10] = {
+		alive = function() return true end,
+		position = function() return mkvec(-0.15, 0, 1.0) end,
+		_head = mkvec(-0.15, 1.53, 1.0),
+	}
+	npcs[20] = {
+		alive = function() return false end,
+		position = function() return mkvec(0.5, 0.0, -0.8) end,
+		_head = mkvec(0.5, 1.53, 0.9),
+	}
+	npcs[30] = {
+		alive = function() return true end,
+		position = function() return mkvec(0.92, 0, 1.2) end,
+		_head = mkvec(0.92, 1.53, 1.2),
+	}
+	fenv.db.storage[10] = { object = npcs[10] }
+	fenv.db.storage[20] = { object = npcs[20] }
+	fenv.db.storage[30] = { object = npcs[30] }
+
+	local actor = { position = function() return mkvec(0, 0, 0) end, see = function() return true end }
+	-- first update seeds los timers; advance time past LOS_INTERVAL (0.1s) so visible() evaluates
+	fenv.update(actor, 64)
+	fenv.time_global = function() return 1200 end
+	local rows, n = fenv.update(actor, 64)
+	check(n == 3, "update() includes close-up off-center, lying dead NPC, and -side fallback NPC, got n=" .. tostring(n))
+	if n == 3 then
+		local found_closeup, found_dead, found_edge = false, false, false
+		for i = 1, n do
+			if math.abs(rows[i][1] - (-0.15)) < 1e-6 then found_closeup = true end
+			if math.abs(rows[i][1] - 0.5) < 1e-6 then found_dead = true end
+			if math.abs(rows[i][1] - 0.92) < 1e-6 then found_edge = true end
+		end
+		check(found_closeup, "close-up face at cu=-0.15 is kept")
+		check(found_dead, "dead NPC with origin behind cam and head in front is kept")
+		check(found_edge, "edge face with unprojectable +side falls back to -side")
+	end
+end
+
 if failures > 0 then
 	print(failures .. " check(s) failed")
 	os.exit(1)

@@ -521,6 +521,326 @@ do
 	check(box_shown > shown_before, "mutant with nil relation remains visible with enemy colour fallback")
 end
 
+-- Zoomed-in partial-body projection, close-up head-tracking switch, smooth morph, hysteresis,
+-- spine fallback, quadruped mutants, lens unwarp, and identification while head-tracking.
+do
+	local now_ms = 1000
+	local sw, sh = 1920, 1080
+	local ux, uy = 1024 / sw, 768 / sh
+	local cur_fov = 75
+	local clip_below_y = nil -- when set, world2ui returns -9999 if v.y < clip_below_y or v.y > clip_above_y
+	local clip_above_y = nil
+	local cam_pos_v = { x = 0, y = 1.6, z = 0 }
+	local cam_dir_v = { x = 0, y = 0, z = 1 }
+
+	local function make_vec(x, y, z)
+		local v = { x = x or 0, y = y or 0, z = z or 0 }
+		function v:set(nx, ny, nz) self.x, self.y, self.z = nx or 0, ny or 0, nz or 0; return self end
+		function v:distance_to(o) local dx, dy, dz = self.x - o.x, self.y - o.y, self.z - o.z; return math.sqrt(dx*dx+dy*dy+dz*dz) end
+		function v:distance_to_sqr(o) local dx, dy, dz = self.x - o.x, self.y - o.y, self.z - o.z; return dx*dx+dy*dy+dz*dz end
+		return v
+	end
+
+	local last_draw = {}
+	local function make_spy_wnd(kind)
+		local w = { shown = false, cx = 0, cy = 0, bw = 0, bh = 0 }
+		return setmetatable(w, { __index = {
+			Show = function(self, v)
+				self.shown = v and true or false
+				if kind and v then
+					last_draw[kind] = { cx = self.cx, cy = self.cy, w = self.bw, h = self.bh }
+				end
+			end,
+			SetWndPos = function(self, p) self._px, self._py = p.x, p.y end,
+			SetWndSize = function(self, s)
+				self.bw, self.bh = s.x, s.y
+				self.cx = (self._px or 0) + s.x * 0.5
+				self.cy = (self._py or 0) + s.y * 0.5
+			end,
+			SetTextureColor = function() end,
+			SetTextureRect = function() end,
+			InitTexture = function() end,
+			SetStretchTexture = function() end,
+		} })
+	end
+
+	local npc_pos = make_vec(0, 0, 20)
+	local npc_head = make_vec(0, 1.6, 20)
+	local npc_spine = make_vec(0, 1.0, 20)
+	local npc_kind = "stalker"
+	local use_head_bone = true
+
+	local target = {
+		alive = function() return true end,
+		position = function() return npc_pos end,
+		relation = function() return 0 end,
+		has_info = function() return false end,
+		character_name = function() return "Strelok" end,
+		character_community = function() return "stalker" end,
+	}
+	local actor = { position = function() return make_vec(0, 0, 0) end, see = function() return true end }
+
+	local function persp_world2ui(v)
+		if clip_below_y and v.y < clip_below_y then return { x = -9999, y = -9999 } end
+		if clip_above_y and v.y > clip_above_y then return { x = -9999, y = -9999 } end
+		local dx, dy, dz = v.x - cam_pos_v.x, v.y - cam_pos_v.y, v.z - cam_pos_v.z
+		if dz <= 0.1 then return { x = -9999, y = -9999 } end
+		local tan_half = math.tan(math.rad(cur_fov) * 0.5)
+		local aspect = sw / sh
+		local u = 0.5 + 0.5 * (dx / (dz * tan_half * aspect))
+		local vv = 0.5 - 0.5 * (dy / (dz * tan_half))
+		return { x = u * 1024, y = vv * 768 }
+	end
+
+	local ae = setmetatable({
+		db = { actor = actor, storage = { [101] = { object = target } } },
+		level = { object_by_id = function(id) return id == 101 and target or nil end },
+		game_object = { enemy = 2, friend = 0, neutral = 1 },
+		IsStalker = function() return npc_kind == "stalker" end,
+		IsMonster = function() return npc_kind == "monster" end,
+		dynamic_news_helper = { GetMonsterDescription = function() return "dog" end },
+		utils_obj = {
+			safe_bone_pos = function(_, bone)
+				if bone == "bip01_head" then return use_head_bone and npc_head or nil end
+				if bone == "bip01_spine" then return npc_spine end
+				return nil
+			end,
+		},
+		game = { world2ui = persp_world2ui, translate_string = function(s) return s end },
+		device = function()
+			return {
+				width = sw, height = sh, fov = cur_fov,
+				cam_pos = make_vec(cam_pos_v.x, cam_pos_v.y, cam_pos_v.z),
+				cam_dir = make_vec(cam_dir_v.x, cam_dir_v.y, cam_dir_v.z),
+			}
+		end,
+		get_console = function() return { get_float = function() return 75 end } end,
+		zbc_font_metrics = { em = 32, advance = 20, cell_w = 32, cell_h = 40, pad = 4, cols = 16, rows = 16, tex_w = 512, tex_h = 512, first = 33, last = 126 },
+		time_global = function() return now_ms end,
+		vector = make_vec, vector2 = make_vec, Frect = make_vec,
+		GetARGB = function() return 0 end,
+		RegisterScriptCallback = function() end,
+	}, { __index = _G })
+
+	local c = assert(loadfile(PATH))
+	setfenv(c, ae)
+	c()
+
+	local min_gy, max_gy = 9999, -9999
+	local function make_glyph_wnd()
+		local w = {}
+		return setmetatable(w, { __index = {
+			Show = function() end,
+			SetWndPos = function(_, p)
+				if p.y < min_gy then min_gy = p.y end
+				if p.y > max_gy then max_gy = p.y end
+			end,
+			SetWndSize = function() end,
+			SetTextureColor = function() end,
+			SetTextureRect = function() end,
+		} })
+	end
+	local glyphs_n, glyphs_f = {}, {}
+	for i = 1, 24 do glyphs_n[i] = make_glyph_wnd() end
+	for i = 1, 20 do glyphs_f[i] = make_glyph_wnd() end
+
+	local pool = { {
+		box = make_spy_wnd("box"), brk = make_spy_wnd("brk"), dot = make_spy_wnd("dot"),
+		lbl = { name = { glyphs = glyphs_n }, fac = { glyphs = glyphs_f } },
+	} }
+	local cfg = {
+		allies = true, allies_range = 100, allies_dot_ratio = 0.7, allies_los = false,
+		allies_enemies = true, allies_mutants = true, allies_size = 1, allies_opacity = 1,
+		allies_color_companion = 2, allies_color_friend = 1, allies_color_enemy = 5,
+		allies_names = true, allies_style = 0,
+	}
+	local lens = { k = 0, ox = 0, oy = 0, roll = 0, dist = 0, zoom = 1, shutter = 0 }
+
+	-- 1. Normal full-body box at 20m, fov=75
+	last_draw.brk = nil
+	ae.update(pool, cfg, lens, true)
+	now_ms = 1050
+	ae.update(pool, cfg, lens, true)
+	check(last_draw.brk ~= nil, "normal stalker draws bracket box")
+	if last_draw.brk then
+		local px_w = last_draw.brk.w / ux
+		local px_h = last_draw.brk.h / uy
+		check(px_h > px_w * 1.5, "normal full-body box is tall (not square head box)")
+	end
+
+	-- 2. Zoomed in on upper half (fov=10, feet unprojectable below screen) -> head-tracking square
+	cur_fov = 10
+	clip_below_y = 0.5
+	last_draw.brk = nil
+	now_ms = 1100
+	ae.update(pool, cfg, lens, true)
+	check(last_draw.brk ~= nil, "zoomed-in stalker with unprojectable feet still shows box")
+	if last_draw.brk then
+		local px_w = last_draw.brk.w / ux
+		local px_h = last_draw.brk.h / uy
+		check(math.abs(px_w - px_h) < 1.5, ("zoomed-in head box is square in screen px (w=%.1f, h=%.1f)"):format(px_w, px_h))
+		check(math.abs(last_draw.brk.cy - 384) < 30, "head box is centered on bip01_head")
+		check(px_h > 30 and px_h < 250, ("head box scales naturally with scope zoom (h=%.1f px)"):format(px_h))
+	end
+
+	-- 3. Zoomed in with feet projecting below screen (fv > 1, clipped vertically) + label placement
+	clip_below_y = nil
+	min_gy, max_gy = 9999, -9999
+	last_draw.brk = nil
+	now_ms = 1150
+	ae.update(pool, cfg, lens, true)
+	check(last_draw.brk ~= nil, "zoomed-in stalker with feet below bottom edge uses head-tracking")
+	if last_draw.brk then
+		local px_w = last_draw.brk.w / ux
+		local px_h = last_draw.brk.h / uy
+		check(math.abs(px_w - px_h) < 1.5, "clipped full-body switches to square head-tracking")
+		local box_top = last_draw.brk.cy - last_draw.brk.h * 0.5
+		check(max_gy <= box_top and min_gy >= -10, ("label placed above head box and clamped on screen (min_y=%.1f, max_y=%.1f, top=%.1f)"):format(min_gy, max_gy, box_top))
+	end
+
+	-- 4. Close-up stalker (1.2m away, fov=75) -> head-tracking
+	ae.clear_known()
+	cur_fov = 75
+	npc_pos:set(0, 0, 1.2)
+	npc_head:set(0, 1.6, 1.2)
+	npc_spine:set(0, 1.0, 1.2)
+	last_draw.brk = nil
+	now_ms = 1200
+	ae.update(pool, cfg, lens, true)
+	now_ms = 1250
+	ae.update(pool, cfg, lens, true)
+	check(last_draw.brk ~= nil, "close-up stalker at 1.2m shows head-tracking box")
+	if last_draw.brk then
+		local px_w = last_draw.brk.w / ux
+		local px_h = last_draw.brk.h / uy
+		check(math.abs(px_w - px_h) < 1.5, "close-up box is square head-tracking")
+		check(last_draw.brk.h <= 768 * 0.75 + 0.01, "close-up head box respects max screen size cap")
+	end
+
+	-- 5. Smooth transition (no instant pop) when walking from 5m into 1.2m
+	ae.clear_known()
+	npc_pos:set(0, 0, 5.0)
+	npc_head:set(0, 1.6, 5.0)
+	npc_spine:set(0, 1.0, 5.0)
+	now_ms = 1300
+	ae.update(pool, cfg, lens, true)
+	now_ms = 1350
+	ae.update(pool, cfg, lens, true)
+	local start_h = last_draw.brk and last_draw.brk.h or 0
+	npc_pos:set(0, 0, 1.5)
+	npc_head:set(0, 1.6, 1.5)
+	npc_spine:set(0, 1.0, 1.5)
+	local heights = {}
+	for i = 1, 6 do
+		now_ms = now_ms + 40
+		ae.update(pool, cfg, lens, true)
+		heights[i] = last_draw.brk and last_draw.brk.h or 0
+	end
+	check(start_h > 0 and heights[1] > heights[6] and heights[2] > heights[5],
+		("smooth morph from full-body to head-tracking (h: %.1f -> %.1f -> %.1f)"):format(heights[1], heights[3], heights[6]))
+
+	-- 6. Hysteresis prevents flicker near bottom screen edge
+	ae.clear_known()
+	cur_fov = 75
+	-- At z=4.0, cam_y=1.6, tan(37.5)=0.7673 -> bottom of screen is y = 1.6 - 4.0*0.7673 = -1.469.
+	-- Place feet at y = -1.55 (just below bottom of screen -> triggers head-tracking)
+	npc_pos:set(0, -1.55, 4.0)
+	npc_head:set(0, 0.05, 4.0)
+	npc_spine:set(0, -0.55, 4.0)
+	now_ms = 1600
+	ae.update(pool, cfg, lens, true)
+	now_ms = 1650
+	ae.update(pool, cfg, lens, true)
+	local head_h_px = last_draw.brk and (last_draw.brk.h / uy) or 0
+	local head_w_px = last_draw.brk and (last_draw.brk.w / ux) or 0
+	check(math.abs(head_w_px - head_h_px) < 1.5, "feet just below screen triggers head-tracking")
+	-- Move feet 4 UI px inside bottom edge (within CLIP_MARGIN_LO=24 -> stays in head-tracking!)
+	npc_pos:set(0, -1.42, 4.0)
+	npc_head:set(0, 0.18, 4.0)
+	npc_spine:set(0, -0.42, 4.0)
+	now_ms = 1700
+	ae.update(pool, cfg, lens, true)
+	local hyst_w_px = last_draw.brk and (last_draw.brk.w / ux) or 0
+	local hyst_h_px = last_draw.brk and (last_draw.brk.h / uy) or 0
+	check(math.abs(hyst_w_px - hyst_h_px) < 1.5, "hysteresis keeps head-tracking inside bottom margin")
+	-- Move feet comfortably inside screen -> returns to full-body
+	npc_pos:set(0, -0.6, 4.0)
+	npc_head:set(0, 1.0, 4.0)
+	npc_spine:set(0, 0.4, 4.0)
+	for _ = 1, 8 do
+		now_ms = now_ms + 50
+		ae.update(pool, cfg, lens, true)
+	end
+	local back_w_px = last_draw.brk and (last_draw.brk.w / ux) or 0
+	local back_h_px = last_draw.brk and (last_draw.brk.h / uy) or 0
+	check(back_h_px > back_w_px * 1.5, "returns smoothly to full-body once well inside screen")
+
+	-- 7. Spine fallback when zoomed in on mid-body (both head above screen & feet below screen unprojectable)
+	ae.clear_known()
+	cur_fov = 10
+	cam_pos_v.y = 1.0
+	npc_pos:set(0, 0, 20)
+	npc_head:set(0, 1.6, 20)
+	npc_spine:set(0, 1.0, 20)
+	clip_above_y = 1.3
+	clip_below_y = 0.5
+	last_draw.brk = nil
+	now_ms = 2200
+	ae.update(pool, cfg, lens, true)
+	now_ms = 2250
+	ae.update(pool, cfg, lens, true)
+	check(last_draw.brk ~= nil, "zoomed in on mid-body (head & feet off-screen) falls back to spine box")
+	if last_draw.brk then
+		check(math.abs(last_draw.brk.cy - 384) < 30, "spine fallback box is centered on bip01_spine")
+	end
+
+	-- 8. Lens warp/unwarp + quadruped mutant head-tracking + nil head bone fallback
+	clip_above_y = nil
+	clip_below_y = nil
+	cam_pos_v.y = 1.6
+	ae.clear_known()
+	npc_kind = "monster"
+	npc_pos:set(0, 0.8, 20)
+	npc_head:set(0, 1.56, 20)
+	npc_spine:set(0, 1.2, 20)
+	cur_fov = 8
+	clip_below_y = 1.0
+	local warped_lens = { k = 1, ox = 0, oy = 0, roll = 0, dist = -0.3, zoom = 1.1, shutter = 0 }
+	last_draw.brk = nil
+	now_ms = 2300
+	ae.update(pool, cfg, warped_lens, true)
+	now_ms = 2350
+	ae.update(pool, cfg, warped_lens, true)
+	check(last_draw.brk ~= nil, "quadruped mutant zoomed-in head-tracking draws with active lens warp")
+	if last_draw.brk then
+		local q_w_px = last_draw.brk.w / ux
+		local q_h_px = last_draw.brk.h / uy
+		check(math.abs(q_w_px - q_h_px) < 4.0, "quadruped head-tracking box is square")
+	end
+	use_head_bone = false
+	last_draw.brk = nil
+	now_ms = 2400
+	ae.update(pool, cfg, warped_lens, true)
+	check(last_draw.brk ~= nil, "missing bip01_head bone falls back safely in head-tracking mode")
+
+	-- 9. Identification works while zoomed-in & head-tracking beyond ID_INSTANT (80m)
+	ae.clear_known()
+	npc_kind = "stalker"
+	use_head_bone = true
+	clip_below_y = 1.0
+	cur_fov = 10
+	cam_pos_v.y = 1.6
+	npc_pos:set(0, 0, 80)
+	npc_head:set(0, 1.6, 80)
+	npc_spine:set(0, 1.0, 80)
+	now_ms = 2500
+	ae.update(pool, cfg, lens, true)
+	now_ms = 2580
+	ae.update(pool, cfg, lens, true)
+	check(ae.id_progress_for(101) ~= nil and ae.id_progress_for(101) > 0,
+		"distant zoomed-in head-tracking target accumulates identification progress")
+end
+
 if failures > 0 then
 	print(failures .. " check(s) failed")
 	os.exit(1)

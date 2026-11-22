@@ -31,8 +31,20 @@ local POP_IN_RATE = 2.5
 local POP_OUT_RATE = 2.5
 local DEAD_OUT_RATE = 5.0
 local MORPH_RATE = 1.8
+local HEAD_MORPH_RATE = 6.0
 local HYST_LOW = 0.96
 local HYST_HIGH = 1.04
+
+-- Head-tracking fallback when full-body projection clips vertically, is oversized, or feet fail to project.
+local HEAD_UP_BIPED   = 0.07         -- metres from bip01_head up to head/helmet centre
+local HEAD_UP_QUAD    = 0.04         -- metres from bip01_head up for quadrupeds
+local HEAD_HALF_BIPED = 0.22         -- half-side of head square in world metres (0.44 m box)
+local HEAD_HALF_QUAD  = 0.20         -- half-side of head square for quadrupeds (0.40 m box)
+local SPINE_HALF      = 0.28         -- half-side of torso fallback square when both full-body and head are off-screen
+local BODY_MAX_H_HI   = 768 * 0.60   -- switch full-body -> head-tracking above 60% of screen height
+local BODY_MAX_H_LO   = 768 * 0.50   -- hysteresis: switch back below 50% of screen height
+local CLIP_MARGIN_LO  = 24           -- UI px inset required inside top/bottom before returning to full-body
+local HEAD_MAX_UI     = 768 * 0.75   -- cap very close head/spine box so corners stay visible on screen
 
 -- Name labels above the boxes, in the overlay's glyph font (zbc_font_metrics, textures\ui\zbc_font).
 -- Shown only while the box itself is: never on a dot.
@@ -74,6 +86,9 @@ local frame_W = {}
 local los_ray = nil
 local tmp_top, tmp_pos, tmp_sz
 local tmp_cam, tmp_bone, tmp_ray_p, tmp_ray_d
+local tmp_pt, tmp_side_pt
+local frame_dir = nil        -- camera direction this frame, set by update()
+local frame_sx, frame_sy, frame_sz = 1, 0, 0
 
 local function clamp01(x) return min(max(x, 0), 1) end
 local function lerp(a, b, t) return a + (b - a) * t end
@@ -109,26 +124,26 @@ end
 
 -- Precompute frame-constant lens parameters for warp/unwarp.
 local function fill_warp_frame(W, L, a)
-	local k = L.k
+	local k = (L and L.k) or 0
 	local get_rs = zbc_bodycam and zbc_bodycam.get_rolling_shutter
-	local rs = (L.shutter ~= nil) and L.shutter or (get_rs and get_rs() or 0)
-	local zoom = max(1 + (L.zoom - 1) * k, 0.25)
+	local rs = (L and L.shutter ~= nil) and L.shutter or (get_rs and get_rs() or 0)
+	local zoom = max(1 + (((L and L.zoom) or 1) - 1) * k, 0.25)
 	local safe_a = max(a, 0.1)
 	local uw = min(1, (16 / 9) / safe_a)
-	local ang = L.roll * k
+	local ang = ((L and L.roll) or 0) * k
 	W.k = k
 	W.a = safe_a
 	W.inv_a = 1 / safe_a
 	W.rsk = rs * k
-	W.k1 = L.dist * k
+	W.k1 = ((L and L.dist) or 0) * k
 	W.k2 = 0.5 * W.k1 * W.k1
 	W.zoom = zoom
 	W.inv_zoom = 1 / zoom
 	W.uw2 = uw * uw
 	W.s = sin(ang)
 	W.c = cos(ang)
-	W.oxk = L.ox * k
-	W.oyk = L.oy * k
+	W.oxk = ((L and L.ox) or 0) * k
+	W.oyk = ((L and L.oy) or 0) * k
 	return W
 end
 
@@ -148,7 +163,7 @@ end
 -- Jacobian. Tested offline against the warp over the whole screen at the most extreme MCM settings:
 -- worst error 0.01 px at 1080p.
 local function unwarp(L, a, su, sv, W)
-	if L.k <= 0.0005 then return su, sv end
+	if not L or (L.k or 0) <= 0.0005 then return su, sv end
 	W = W or fill_warp_frame(frame_W, L, a)
 	local zoom = W.zoom
 	local u, v = 0.5 + (su - 0.5) * zoom, 0.5 + (sv - 0.5) * zoom
@@ -291,6 +306,8 @@ local function reset_state()
 	states = {}
 	last_now = nil
 	los_ray = nil
+	frame_dir = nil
+	frame_sx, frame_sy, frame_sz = 1, 0, 0
 	for k in pairs(cand_set) do cand_set[k] = nil end
 	for i = 1, #proc_ids do proc_ids[i] = nil end
 	for i = 1, #draw_list do draw_list[i] = nil end
@@ -449,9 +466,11 @@ local function scan(actor, range)
 	for id, st in pairs(db.storage) do
 		local obj = st and st.object
 		local is_mon = obj and IsMonster and IsMonster(obj)
-		if obj and id ~= 0 and (IsStalker(obj) or (scan_mutants and is_mon)) and obj:alive() and markable(obj) then
+		local is_stk = obj and IsStalker and IsStalker(obj)
+		if obj and id ~= 0 and (is_stk or (scan_mutants and is_mon)) and obj.alive and obj:alive() and markable(obj) then
 			local d2 = obj:position():distance_to_sqr(apos)
-			if d2 <= r2 and (is_mon or scan_enemies or obj:relation(actor) ~= game_object.enemy) then
+			local rel = (not is_mon and obj.relation) and obj:relation(actor) or nil
+			if d2 <= r2 and (is_mon or scan_enemies or rel ~= game_object.enemy) then
 				if n < POOL or d2 < scan_d2[POOL] then
 					local limit = (n < POOL) and (n + 1) or POOL
 					local pos = limit
@@ -544,7 +563,8 @@ local function project(vec)
 end
 
 local function project_dot(obj, L, a, W)
-	local su, sv = project(utils_obj.safe_bone_pos(obj, "bip01_spine"))
+	local spine = utils_obj and utils_obj.safe_bone_pos and utils_obj.safe_bone_pos(obj, "bip01_spine")
+	local su, sv = project(spine or obj:position())
 	if not su then return nil end
 	local u, v = unwarp(L, a, su, sv, W)
 	if u > 0 and u < 1 and v > 0 and v < 1 then
@@ -580,10 +600,12 @@ end
 
 -- label lines: a stalker's name and faction; a mutant's species and "MUTANT"
 local function npc_name(obj)
-	if IsStalker(obj) then return label_text(obj:character_name()) end
+	if IsStalker and IsStalker(obj) then
+		return label_text(obj.character_name and obj:character_name())
+	end
 	local kind = mutant_kind(obj)
 	local key = kind and ("st_zbc_mutant_" .. kind)
-	local s = key and game.translate_string(key)
+	local s = key and game and game.translate_string and game.translate_string(key)
 	if not s or s == key then s = kind or "" end            -- no string: the class name itself
 	return label_text((s:gsub("_", " ")))
 end
@@ -598,8 +620,9 @@ local function npc_rank(obj)
 end
 
 local function npc_faction(obj)
-	if IsStalker(obj) then return faction_text(obj) end
-	return label_text(game.translate_string("st_zbc_mutant"), FACTION_CHARS)
+	if IsStalker and IsStalker(obj) then return faction_text(obj) end
+	local s = game and game.translate_string and game.translate_string("st_zbc_mutant")
+	return label_text(s or "MUTANT", FACTION_CHARS)
 end
 
 function box_top_y(head_y, feet_y, is_quad)
@@ -713,7 +736,7 @@ local function bone_screen(obj, L, a, W)
 	return pad_joint_bounds(u0, v0, u1, v1, a)
 end
 
-local function project_box(obj, L, a, ux, uy, size, W, aspect, is_quad)
+local function project_full_box(obj, L, a, ux, uy, size, W, aspect, is_quad)
 	-- the skeleton when the model has one; otherwise the head and feet below (the engine's bounding
 	-- box, bbox_screen, covers every pose the model can take and is far too big for a box)
 	local bu0, bv0, bu1, bv1 = bone_screen(obj, L, a, W)
@@ -722,31 +745,138 @@ local function project_box(obj, L, a, ux, uy, size, W, aspect, is_quad)
 		local h_ui = (bv1 - bv0) * 768 * size
 		if h_ui <= 2 or w_ui <= 1 then return nil end
 		local cx, cy = (bu0 + bu1) * 0.5 * 1024, (bv0 + bv1) * 0.5 * 768
-		if cx + w_ui * 0.5 <= 0 or cx - w_ui * 0.5 >= 1024 or cy + h_ui * 0.5 <= 0 or cy - h_ui * 0.5 >= 768 then
+		local top_y, bot_y = cy - h_ui * 0.5, cy + h_ui * 0.5
+		if cx + w_ui * 0.5 <= 0 or cx - w_ui * 0.5 >= 1024 or bot_y <= 0 or top_y >= 768 then
 			return nil
 		end
-		return pip_clip_box(cx, cy, w_ui, h_ui)
+		local pcx, pcy, pw, ph = pip_clip_box(cx, cy, w_ui, h_ui)
+		if not pcx then return nil end
+		return pcx, pcy, pw, ph, top_y, bot_y
 	end
 	local feet = obj:position()
-	local head = utils_obj.safe_bone_pos(obj, "bip01_head") or feet
+	local head = (utils_obj and utils_obj.safe_bone_pos and utils_obj.safe_bone_pos(obj, "bip01_head")) or feet
 	tmp_top:set(head.x, box_top_y(head.y, feet.y, is_quad), head.z)
 	local tu, tv = project(tmp_top)
 	local fu, fv = project(feet)
 	if not (tu and fu) then return nil end
 	tu, tv = unwarp(L, a, tu, tv, W)
 	fu, fv = unwarp(L, a, fu, fv, W)
-	local h_ui = abs(fv - tv) * 768
+	local h_ui = abs(fv - tv) * 768 * size
 	if h_ui <= 2 then return nil end
-	h_ui = h_ui * size
 	local asp = aspect or box_aspect(obj)
 	local w_ui = (h_ui / uy) * asp * ux
 	local cx = (tu + fu) * 0.5 * 1024
 	local cy = (tv + fv) * 0.5 * 768
+	local top_y = cy - h_ui * 0.5
+	local bot_y = cy + h_ui * 0.5
+	if cx + w_ui * 0.5 <= 0 or cx - w_ui * 0.5 >= 1024 or bot_y <= 0 or top_y >= 768 then
+		return nil
+	end
+	local pcx, pcy, pw, ph = pip_clip_box(cx, cy, w_ui, h_ui)
+	if not pcx then return nil end
+	return pcx, pcy, pw, ph, top_y, bot_y
+end
+
+-- Tight square box around a world point, sized via sideways projection (unwarped through the lens)
+-- so it scales naturally with distance and scope zoom.
+local function project_square_at(wx, wy, wz, half_m, L, a, ux, uy, size, W)
+	tmp_pt:set(wx, wy, wz)
+	local cu, cv = project(tmp_pt)
+	if not cu then return nil end
+
+	tmp_side_pt:set(wx + frame_sx * half_m, wy + frame_sy * half_m, wz + frame_sz * half_m)
+	local tu, tv = project(tmp_side_pt)
+	if not tu then
+		-- Near a screen edge, +side can clip the frustum; try -side inward.
+		tmp_side_pt:set(wx - frame_sx * half_m, wy - frame_sy * half_m, wz - frame_sz * half_m)
+		tu, tv = project(tmp_side_pt)
+		if not tu then return nil end
+	end
+
+	cu, cv = unwarp(L, a, cu, cv, W)
+	tu, tv = unwarp(L, a, tu, tv, W)
+
+	local du, dv = (tu - cu) * a, tv - cv
+	local half_v = sqrt(du * du + dv * dv)
+	if not (half_v == half_v) or half_v <= 0 then return nil end
+
+	local h_ui = 2 * half_v * 768 * size
+	if h_ui <= 2 then return nil end
+	h_ui = min(h_ui, HEAD_MAX_UI)
+	local w_ui = (h_ui / uy) * ux
+	local cx, cy = cu * 1024, cv * 768
 	if cx + w_ui * 0.5 <= 0 or cx - w_ui * 0.5 >= 1024 or cy + h_ui * 0.5 <= 0 or cy - h_ui * 0.5 >= 768 then
 		return nil
 	end
 	-- through a picture-in-picture scope: only inside the lens, clipped to it
 	return pip_clip_box(cx, cy, w_ui, h_ui)
+end
+
+local function project_box(obj, L, a, ux, uy, size, W, aspect, is_quad, prev_target_head, head_t, dt)
+	local fcx, fcy, fw, fh, ftop, fbot = project_full_box(obj, L, a, ux, uy, size, W, aspect, is_quad)
+
+	local need_head
+	if not fcx then
+		need_head = true
+	elseif prev_target_head == 1 then
+		need_head = (fh > BODY_MAX_H_LO) or (ftop < CLIP_MARGIN_LO) or (fbot > 768 - CLIP_MARGIN_LO)
+	else
+		need_head = (fh > BODY_MAX_H_HI) or (ftop < 0) or (fbot > 768)
+	end
+
+	if not need_head and (head_t or 0) <= 0.01 then
+		return fcx, fcy, fw, fh, 0, 0
+	end
+
+	local feet = obj:position()
+	local safe_bone = utils_obj and utils_obj.safe_bone_pos
+	local head_pos = safe_bone and safe_bone(obj, "bip01_head")
+	local hx, hy, hz
+	if head_pos then
+		hx, hy, hz = head_pos.x, head_pos.y + (is_quad and HEAD_UP_QUAD or HEAD_UP_BIPED), head_pos.z
+	else
+		hx, hy, hz = feet.x, feet.y + (is_quad and 0.45 or 1.45), feet.z
+	end
+	local hcx, hcy, hw, hh = project_square_at(
+		hx, hy, hz, is_quad and HEAD_HALF_QUAD or HEAD_HALF_BIPED, L, a, ux, uy, size, W
+	)
+
+	if not hcx then
+		-- Head is off-screen or unprojectable. If full body is also missing, oversized, or clipped on
+		-- both top & bottom (leaving corner brackets invisible), fall back to torso tracking on spine.
+		local full_usable = fcx and fh <= BODY_MAX_H_HI and not (ftop < 0 and fbot > 768)
+		if not full_usable then
+			local spine_pos = safe_bone and safe_bone(obj, "bip01_spine")
+			local sxp, syp, szp
+			if spine_pos then
+				sxp, syp, szp = spine_pos.x, spine_pos.y, spine_pos.z
+			else
+				sxp, syp, szp = feet.x, feet.y + (is_quad and 0.35 or 1.0), feet.z
+			end
+			local scx, scy, sw, sh = project_square_at(sxp, syp, szp, SPINE_HALF, L, a, ux, uy, size, W)
+			if scx then
+				return scx, scy, sw, sh, 1, 1
+			end
+		end
+		if fcx then
+			return fcx, fcy, fw, fh, 0, 0
+		end
+		return nil
+	end
+
+	local target_head = need_head and 1 or 0
+	if head_t == nil then
+		head_t = target_head
+	else
+		head_t = move_toward(head_t, target_head, HEAD_MORPH_RATE * (dt or 0))
+	end
+
+	if not fcx then
+		return hcx, hcy, hw, hh, 1, 1
+	end
+
+	local s = smoothstep(0, 1, head_t)
+	return lerp(fcx, hcx, s), lerp(fcy, hcy, s), lerp(fw, hw, s), lerp(fh, hh, s), target_head, head_t
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -755,19 +885,22 @@ end
 
 local function ensure_entity_shape(ent, obj)
 	if ent.aspect ~= nil then return end
-	local kind = (not IsStalker(obj)) and mutant_kind(obj) or nil
+	local kind = (not (IsStalker and IsStalker(obj))) and mutant_kind(obj) or nil
 	ent.aspect = box_aspect(obj, kind)
 	ent.quad = kind and QUADRUPED[kind] or false
 end
 
-local function refresh_projections(ent, obj, L, a, ux, uy, size, dot_w, dot_h, W)
+local function refresh_projections(ent, obj, L, a, ux, uy, size, dot_w, dot_h, W, dt)
 	local bcx, dcx
 	if ent.target_dot == 0 or ent.dot_t < 0.99 then
 		ensure_entity_shape(ent, obj)
-		local bcy, bw, bh
-		bcx, bcy, bw, bh = project_box(obj, L, a, ux, uy, size, W, ent.aspect, ent.quad)
+		local bcy, bw, bh, th, ht
+		bcx, bcy, bw, bh, th, ht = project_box(
+			obj, L, a, ux, uy, size, W, ent.aspect, ent.quad, ent.target_head, ent.head_t, dt
+		)
 		if bcx then
 			ent.bcx, ent.bcy, ent.bw, ent.bh = bcx, bcy, bw, bh
+			ent.target_head, ent.head_t = th, ht
 		end
 	end
 	if ent.target_dot == 1 or ent.dot_t > 0.01 then
@@ -851,6 +984,7 @@ local function has_los(actor, obj, obj_id, check_los, cam_vec)
 	end
 	local safe_bone = utils_obj and utils_obj.safe_bone_pos
 	local pos = obj:position()
+	tmp_bone = tmp_bone or vector()
 
 	local head = safe_bone and safe_bone(obj, "bip01_head")
 	if head then
@@ -870,22 +1004,31 @@ local function has_los(actor, obj, obj_id, check_los, cam_vec)
 	return false
 end
 
-local frame_dir = nil        -- camera direction this frame, set by update()
 local aim_target = nil       -- id of the stalker or mutant you are aiming at (any distance, like the
                              -- Identification UI mod's crosshair target), kept while you stay on them
 local ID_LENIENCE_COS = 0.984   -- = ID_LENIENCE (defined with the identification below)
 
--- are you looking at this stalker (their upper body within ID_LENIENCE of where the gun points, or of
--- the view centre when the camera counts)?
+-- are you looking at this stalker (their head or upper body within ID_LENIENCE of where the gun
+-- points, or of the view centre when the camera counts)?
 local function aimed_at(obj, cam_vec)
 	local dir = frame_aim_dir or frame_dir
 	local from = frame_aim_pos or cam_vec
 	if not (dir and from) then return true end
+	local threshold = ID_LENIENCE or ID_LENIENCE_COS
+	local safe_bone = utils_obj and utils_obj.safe_bone_pos
+	local head = safe_bone and safe_bone(obj, "bip01_head")
+	if head then
+		local dx, dy, dz = head.x - from.x, head.y - from.y, head.z - from.z
+		local l = sqrt(dx * dx + dy * dy + dz * dz)
+		if l < 0.01 or (dx * dir.x + dy * dir.y + dz * dir.z) / l >= threshold then
+			return true
+		end
+	end
 	local p = obj:position()
 	local dx, dy, dz = p.x - from.x, p.y + 1.3 - from.y, p.z - from.z
 	local l = sqrt(dx * dx + dy * dy + dz * dz)
 	if l < 0.01 then return true end
-	return (dx * dir.x + dy * dir.y + dz * dir.z) / l >= (ID_LENIENCE or ID_LENIENCE_COS)
+	return (dx * dir.x + dy * dir.y + dz * dir.z) / l >= threshold
 end
 
 local function step_entity(
@@ -895,6 +1038,7 @@ local function step_entity(
 	local ent = states[id]
 	local obj = level.object_by_id(id)
 	local is_mon = obj and IsMonster and IsMonster(obj)
+	local is_stk = obj and IsStalker and IsStalker(obj)
 	local rel = obj and obj.relation and obj:relation(actor) or nil
 	if not obj or (is_mon and not cfg.allies_mutants) or (not is_mon and rel == game_object.enemy and not cfg.allies_enemies)
 		or (obj:alive() and not markable(obj)) then                -- a bloodsucker that just cloaked, say
@@ -905,7 +1049,7 @@ local function step_entity(
 	-- the colour the box decodes to. White only means "not identified yet" (see draw_slot): once
 	-- decoded, everyone is either friendly (neutrals included) or an enemy
 	local col
-	local companion = IsStalker(obj) and obj:has_info("npcx_is_companion")
+	local companion = is_stk and obj.has_info and obj:has_info("npcx_is_companion")
 	if ent then
 		ent.companion = companion
 		ent.health = companion and tonumber(obj.health) or nil
@@ -924,7 +1068,10 @@ local function step_entity(
 		return false
 	end
 
-	if not obj:alive() then
+	local allies_size = max(cfg.allies_size or 1, 0.1)
+	local allies_opacity = clamp01(cfg.allies_opacity or 1)
+
+	if not (obj.alive and obj:alive()) then
 		if not ent then return false end
 		-- killed while marked: a grey KIA box for DEAD_HOLD seconds, then it fades
 		if not ent.dead_t then
@@ -935,7 +1082,7 @@ local function step_entity(
 		ent.los_grace = 0
 		ent.col = col
 		ent.dist = obj:position():distance_to(apos)
-		refresh_projections(ent, obj, L, a, ux, uy, cfg.allies_size, dot_w, dot_h, W)
+		refresh_projections(ent, obj, L, a, ux, uy, allies_size, dot_w, dot_h, W, dt)
 		if ent.target_vis == 1 then return ent.bcx ~= nil or ent.dcx ~= nil end
 		ent.vis = move_toward(ent.vis, 0, DEAD_OUT_RATE * dt)
 		ent.dot_t = move_toward(ent.dot_t, ent.target_dot, MORPH_RATE * dt)
@@ -958,14 +1105,16 @@ local function step_entity(
 	if not ent then
 		if not in_range then return false end
 		local init_dot = (dist > dot_dist and not is_target) and 1 or 0
-		local kind = (not IsStalker(obj)) and mutant_kind(obj) or nil
+		local kind = (not is_stk) and mutant_kind(obj) or nil
 		local asp = box_aspect(obj, kind)
 		local is_quad = kind and QUADRUPED[kind] or false
-		local bcx, bcy, bw, bh, dcx, dcy
+		local bcx, bcy, bw, bh, init_t_head, init_head_t, dcx, dcy
 		if init_dot == 1 then
 			dcx, dcy = project_dot(obj, L, a, W)
 		else
-			bcx, bcy, bw, bh = project_box(obj, L, a, ux, uy, cfg.allies_size, W, asp, is_quad)
+			bcx, bcy, bw, bh, init_t_head, init_head_t = project_box(
+				obj, L, a, ux, uy, allies_size, W, asp, is_quad, nil, nil, 0
+			)
 		end
 		if not (bcx or dcx) then return false end
 		if not has_los(actor, obj, id, cfg.allies_los, cam_vec) then return false end
@@ -977,6 +1126,8 @@ local function step_entity(
 			next_los = now + LOS_INTERVAL + (id % 4) * (LOS_INTERVAL * 0.25),
 			dot_t = init_dot,
 			target_dot = init_dot,
+			target_head = init_t_head,
+			head_t = init_head_t,
 			col = col,
 			aspect = asp,
 			quad = is_quad,
@@ -1017,7 +1168,7 @@ local function step_entity(
 		end
 	end
 
-	local live_ok = refresh_projections(ent, obj, L, a, ux, uy, cfg.allies_size, dot_w, dot_h, W)
+	local live_ok = refresh_projections(ent, obj, L, a, ux, uy, allies_size, dot_w, dot_h, W, dt)
 
 	if not in_range or not live_ok then
 		ent.los_grace = 0
@@ -1055,11 +1206,13 @@ local function step_entity(
 	return (ent.vis > 0) and (ent.bcx ~= nil or ent.dcx ~= nil)
 end
 
--- Prioritize active targets first, then highest-vis fading-out targets.
+-- Prioritize active targets first, then highest-vis fading-out targets, then nearest.
 local function cmp_draw(a, b)
 	local sa, sb = states[a], states[b]
 	if sa.target_vis ~= sb.target_vis then return sa.target_vis > sb.target_vis end
 	if sa.vis ~= sb.vis then return sa.vis > sb.vis end
+	local da, db_ = sa.dist or 9999, sb.dist or 9999
+	if da ~= db_ then return da < db_ end
 	return a < b
 end
 
@@ -1641,8 +1794,8 @@ end
 -- cfg: zbc_bodycam settings; L: lens state; visible: HUD shown
 function update(pool, cfg, L, visible)
 	if not pool then return end
-	local actor = db.actor
-	if not (cfg.allies and actor) then
+	local actor = db and db.actor
+	if not (cfg and cfg.allies and actor) then
 		reset_state()
 		hide_all(pool)
 		return
@@ -1652,17 +1805,19 @@ function update(pool, cfg, L, visible)
 		return
 	end
 
-	tmp_top   = tmp_top   or vector()
-	tmp_pos   = tmp_pos   or vector2()
-	tmp_sz    = tmp_sz    or vector2()
-	tmp_cam   = tmp_cam   or vector()
-	tmp_bone  = tmp_bone  or vector()
-	tmp_ray_p = tmp_ray_p or vector()
-	tmp_ray_d = tmp_ray_d or vector()
+	tmp_top     = tmp_top     or vector()
+	tmp_pos     = tmp_pos     or vector2()
+	tmp_sz      = tmp_sz      or vector2()
+	tmp_cam     = tmp_cam     or vector()
+	tmp_bone    = tmp_bone    or vector()
+	tmp_ray_p   = tmp_ray_p   or vector()
+	tmp_ray_d   = tmp_ray_d   or vector()
+	tmp_pt      = tmp_pt      or vector()
+	tmp_side_pt = tmp_side_pt or vector()
 
 	-- through a scope the range (and the box/dot switch) grows with the zoom, so an ally that looks as
 	-- big as one at the normal range still gets a box and a name
-	local range = max(cfg.allies_range, 2) * max(view_zoom(), pip_refresh().m)
+	local range = max(cfg.allies_range or 50, 2) * max(view_zoom(), pip_refresh().m)
 	local now = time_global() / 1000
 	scan_enemies = cfg.allies_enemies and true or false
 	scan_mutants = cfg.allies_mutants and true or false
@@ -1696,15 +1851,24 @@ function update(pool, cfg, L, visible)
 		cam_vec = tmp_cam:set(dev.cam_pos.x, dev.cam_pos.y, dev.cam_pos.z)
 	end
 	local apos = actor:position()
-	frame_cols.companion = COLORS[cfg.allies_color_companion + 1]
+	frame_cols.companion = COLORS[(cfg.allies_color_companion or 1) + 1]
 	frame_cols.friend    = COLORS[(cfg.allies_color_friend or 1) + 1]
 	frame_cols.enemy     = COLORS[(cfg.allies_color_enemy or 5) + 1]
 	LG.now = now
 	LG.dt = dt
 	LG.fov = dev.fov
-	frame_dir = dev.cam_dir
-	local dot_dist = range * cfg.allies_dot_ratio
-	local dot_w, dot_h = 11 * cfg.allies_size * ux, 11 * cfg.allies_size * uy
+	local dir = dev.cam_dir
+	frame_dir = dir
+	frame_sx, frame_sy, frame_sz = 1, 0, 0
+	if dir then
+		local l = sqrt(dir.x * dir.x + dir.z * dir.z)
+		if l > 0.05 then
+			frame_sx, frame_sy, frame_sz = dir.z / l, 0, -dir.x / l
+		end
+	end
+	local allies_size = max(cfg.allies_size or 1, 0.1)
+	local dot_dist = range * clamp01(cfg.allies_dot_ratio or 0.7)
+	local dot_w, dot_h = 11 * allies_size * ux, 11 * allies_size * uy
 
 	-- name labels: overlay glyph font, size from the effective 16:9 width like the overlay
 	local F = zbc_font_metrics

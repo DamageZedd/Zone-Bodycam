@@ -267,6 +267,38 @@ do
 	check(A.holding_power() == false, "reset clears power hold")
 end
 
+-- actor dying during holster phase aborts immediately, cleans up locks, and never plays on corpse
+do
+	local chunk = assert(loadfile("optional/bodycam_item/gamedata/scripts/zbc_item_anim.script"))
+	local locked, played, is_alive = nil, 0, true
+	local actor = {
+		alive = function() return is_alive end,
+		active_slot = function() return 2 end,
+		active_detector = function() return nil end,
+		active_item = function() return {} end,
+		activate_slot = function() end,
+	}
+	local A = setmetatable({
+		db = { actor = actor },
+		level = {},
+		game = {
+			only_allow_movekeys = function(v) locked = v end,
+			play_hud_motion = function() played = played + 1 end,
+		},
+		printf = function() end,
+		time_global = function() return 0 end,
+	}, { __index = _G })
+	setfenv(chunk, A)
+	chunk()
+
+	A.request("dead", 0)
+	A.update(0, true)
+	check(locked == true, "holster locks movekeys")
+	is_alive = false
+	A.update(3000, true)
+	check(locked == false and played == 0, "dying during holster unlocks movekeys and never plays animation")
+end
+
 -- zbc_item.script: warned_low silent load seeding, camera swap seeding, drain gating, parent check, enabled=false skip
 do
 	local cbs = {}

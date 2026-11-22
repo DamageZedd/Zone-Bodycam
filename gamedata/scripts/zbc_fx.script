@@ -131,9 +131,9 @@ local function read_rad(actor) return actor.radiation end
 
 local function read_storm()
 	local surge = surge_manager and surge_manager.is_started and surge_manager.is_started()
-	local psi = psi_storm_manager and psi_storm_manager.get_psi_storm_manager
-		and psi_storm_manager.get_psi_storm_manager().started
-	return surge or psi
+	local pm = psi_storm_manager and psi_storm_manager.get_psi_storm_manager
+		and psi_storm_manager.get_psi_storm_manager()
+	return surge or (pm and pm.started)
 end
 
 local function storm_active()
@@ -165,6 +165,7 @@ end
 
 -- cfg: zbc_bodycam settings; dt seconds; is_powered: false decays effects while off. Returns the state table (read only).
 function frame(cfg, dt, is_powered)
+	cfg = cfg or {}
 	local actor = db.actor
 	local now = now_s()
 	if not actor then return F end

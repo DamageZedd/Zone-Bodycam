@@ -281,21 +281,27 @@ function update(actor, max_n)
 		if scan_d2[i] and scan_d2[i] > max_d2 then break end
 		local id = cands[i]
 		local obj = level.object_by_id(id)
-		-- cheap skip for NPCs behind the camera before the bone lookup
+		-- cheap skip for NPCs behind the camera before the bone lookup (wider margin for lying corpses)
 		if obj and cam and dir then
 			local p = obj:position()
-			if (p.x - cam.x) * dir.x + (p.y + 1.6 - cam.y) * dir.y + (p.z - cam.z) * dir.z < -0.5 then obj = nil end
+			local hy = (obj.alive and obj:alive()) and 1.6 or 0.15
+			if (p.x - cam.x) * dir.x + (p.y + hy - cam.y) * dir.y + (p.z - cam.z) * dir.z < -2.0 then obj = nil end
 		end
 		local head = obj and utils_obj.safe_bone_pos(obj, "bip01_head")
 		if head then
 			tmp_c:set(head.x, head.y + HEAD_UP, head.z)
 			local cu, cv = project(tmp_c)
-			if cu and cu > -0.1 and cu < 1.1 and cv > -0.1 and cv < 1.1 then
+			if cu and cu > -0.25 and cu < 1.25 and cv > -0.25 and cv < 1.25 then
 				tmp_t:set(tmp_c.x + side.x * HEAD_HALF, tmp_c.y + side.y * HEAD_HALF, tmp_c.z + side.z * HEAD_HALF)
 				local tu, tv = project(tmp_t, true)   -- only sizes the square: may lie past the lens edge
+				if not tu then
+					tmp_t:set(tmp_c.x - side.x * HEAD_HALF, tmp_c.y - side.y * HEAD_HALF, tmp_c.z - side.z * HEAD_HALF)
+					tu, tv = project(tmp_t, true)
+				end
 				local half, blk
 				if tu then half, blk = face_square(cu, cv, tu, tv, a, H) end
-				if half and visible(actor, obj, id, now, cam) then
+				if half and (cu + half / a > 0 and cu - half / a < 1 and cv + half > 0 and cv - half < 1)
+					and visible(actor, obj, id, now, cam) then
 					n = n + 1
 					local r = rows[n]
 					if not r then

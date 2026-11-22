@@ -133,7 +133,12 @@ local function play(now)
 end
 
 local function cleanup_hands()
-	if phase == "playing" and game and game.stop_hud_motion then pcall(game.stop_hud_motion) end   -- never left cycling
+	if phase == "playing" then
+		if game and game.stop_hud_motion then pcall(game.stop_hud_motion) end   -- never left cycling
+		if kind and ANIMS[kind] and level and level.remove_cam_effector then
+			pcall(level.remove_cam_effector, ANIMS[kind].cam_id)
+		end
+	end
 	if game and game.only_allow_movekeys then pcall(game.only_allow_movekeys, false) end
 	if game and game.set_actor_allow_ladder then pcall(game.set_actor_allow_ladder, true) end
 	if fov_changed and fov_anim_manager and fov_anim_manager.restore_fov then pcall(fov_anim_manager.restore_fov) end
@@ -177,6 +182,10 @@ function update(now, carried)
 		if hold_since and not power_held(hold_since, now, playing_since) then hold_since = nil end
 		if queued and not carried then queued, hold_since = nil, nil end
 		if queued and allowed() then guarded(begin, now) end
+		return
+	end
+	if not (db.actor and db.actor:alive()) then
+		reset()
 		return
 	end
 	if phase == "holster" then
