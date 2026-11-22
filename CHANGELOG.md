@@ -52,6 +52,10 @@
   - Test: `tools/tests/zbc_allies_label_test.lua`.
 
 ### Changed
+- **Ally marker scope, decode & dot behaviour (`zbc_allies.script`)**:
+  - Gated head-tracking and spine fallback strictly on being scoped in (`pip_active()` or `view_zoom() > 1.05`), so unscoped close-up/clipped targets stay on `project_full_box()` and smoothly morph back from `head_t` when unscoping.
+  - Aligned faction label decoding with the name line (`total_t` in `decode_text()`, `FACTION_DELAY` removed) so both start and finish decoding together regardless of string length.
+  - Kept distant dot markers white until the target is identified/decoded, and hid dot markers while scoped in.
 - **Script & shader bus optimization pass**:
   - `zbc_faces.script` & `zbc_bodycam.script`: packed padded union face AABB `(min_u, min_v, max_u, max_v)` into `bus_zbc_faces.yzw` for shader early-out, distance-culled face candidates by FOV before bone/projection lookups, staggered initial 10 Hz `ray_pick` checks, and avoided redundant `zbc_faces.reset()` calls while face blur is disabled.
   - `zbc_allies.script`: cached label font metrics per screen resolution instead of allocating a closure per frame, cached per-entity `box_aspect` and quadruped status, reused a module buffer in `decode_text()`, relaxed the vertical height floor (`0.15 m` vs `0.5 m`) for small four-legged mutants, and staggered initial `next_los` checks.
@@ -71,6 +75,7 @@
 - **Partial-body / close-up head-tracking markers (`zbc_allies.script`)**: switched markers smoothly to head-tracking (with hysteresis and `head_t` morphing, plus a `bip01_spine` mid-body fallback and point-blank size cap) whenever feet fail to project, lower body clips off-screen, or a target fills the frame up close or through a scope; updated `aimed_at()` to check `bip01_head`, added `project_dot()` position fallback, and sorted draw ties by distance.
 - **Full QA bug-fix pass (`zbc_bodycam.script`, `zbc_faces.script`, `zbc_fx.script`, `zbc_item_anim.script`)**: hid the shader battery gauge in pause/MCM (`main_menu_on_init()`), prevented MCM changes while dead from resurrecting the HUD/lens (`settings_changed()`), nil-guarded camera/actor vectors in `motion_update()`, widened face-blur screen bounds with `-side` edge fallback and corpse height adjustment in `zbc_faces.script`, nil-guarded `psi_storm_manager.get_psi_storm_manager()` in `zbc_fx.script`, and aborted active bodycam hand animations + camera effectors immediately if the actor dies mid-animation.
 - **Footage review self-close & default keybind (`zbc_review.script`, `zbc_bodycam.script`)**: debounced the review key on open (`150 ms`) so X-Ray's same-keypress `OnKeyboard` dispatch no longer closes the dialog on the frame it opens, registered/unregistered `ZbcReview` with `Register_UI`/`Unregister_UI` (and `SetAutoDelete(true)`), guarded `on_key_press` against menus/other UIs, and changed the default keybind from `Insert` (`210`) to `Delete` (`211`).
+- **3DSS PiP dual-view markers & face blur + scoped dot suppression (`zbc_allies.script`, `zbc_faces.script`)**: kept normal 1x main-camera full-body boxes and 1x face pixelation for people visible outside the circular 3DSS PiP scope lens while preserving magnified in-lens boxes/face blur inside the lens (with mode-aware frame-ahead prediction and smooth outside-lens fade-out), and suppressed all dot markers (distant, morphing, dead, and companion edge dots) while scoped in.
 
 ## v1.1.0 - 2026-11-20
 

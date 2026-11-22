@@ -59,7 +59,6 @@ local LABEL_VW      = 0.85   -- name height in % of the effective 16:9 width (th
 local FACTION_SCALE = 0.72   -- faction line size relative to the name
 local LABEL_GAP     = 0.30   -- space between the faction line and the top of the box, in name ems
 local LINE_GAP      = 0.12   -- space between the two lines, in name ems
-local FACTION_DELAY = 0.10   -- the faction line starts decoding this much after the name
 
 -- MCM list value -> colour; the last entry hides that kind of NPC
 local COLORS = {
@@ -89,6 +88,7 @@ local tmp_cam, tmp_bone, tmp_ray_p, tmp_ray_d
 local tmp_pt, tmp_side_pt
 local frame_dir = nil        -- camera direction this frame, set by update()
 local frame_sx, frame_sy, frame_sz = 1, 0, 0
+local frame_scoped = false
 
 local function clamp01(x) return min(max(x, 0), 1) end
 local function lerp(a, b, t) return a + (b - a) * t end
@@ -262,15 +262,17 @@ function lock_ranks(len, seed)
 	return ranks
 end
 
-function decode_text(text, t, seed, flicker_t, random_order)
+function decode_text(text, t, seed, flicker_t, random_order, total_t)
 	local len = #text
-	if t >= DECODE_DELAY + len * DECODE_STEP then return text, true end
+	local dur = total_t or (DECODE_DELAY + len * DECODE_STEP)
+	if t >= dur then return text, true end
+	local step_s = len > 0 and max(dur - DECODE_DELAY, 0) / len or DECODE_STEP
 	local step = floor(max(flicker_t or t, 0) * DECODE_HZ)
 	local ranks = random_order and lock_ranks(len, seed) or nil
 	for i = 1, len do
 		local ch = text:sub(i, i)
 		local rank = ranks and ranks[i] or (i - 1)
-		if ch == " " or t >= DECODE_DELAY + rank * DECODE_STEP then
+		if ch == " " or t >= DECODE_DELAY + rank * step_s then
 			decode_buf[i] = ch
 		else
 			local h = (seed * 7919 + i * 104729 + step * 1299709) % #SCRAMBLE
@@ -308,6 +310,7 @@ local function reset_state()
 	los_ray = nil
 	frame_dir = nil
 	frame_sx, frame_sy, frame_sz = 1, 0, 0
+	frame_scoped = false
 	for k in pairs(cand_set) do cand_set[k] = nil end
 	for i = 1, #proc_ids do proc_ids[i] = nil end
 	for i = 1, #draw_list do draw_list[i] = nil end
@@ -555,11 +558,28 @@ function pip_clip_box(cx, cy, w, h, P)
 	return (x0 + x1) * 0.5, (y0 + y1) * 0.5, x1 - x0, y1 - y0
 end
 
-local function project(vec)
+-- true when a screen point (UI units 1024 x 768) falls inside the circular PiP scope lens
+function pip_inside_lens(cx, cy, P)
+	P = P or PIP
+	if P.m <= 1.01 then return false end
+	local ry = P.r * 768
+	local rx = P.r / P.a * 1024
+	if rx <= 0 or ry <= 0 then return false end
+	local dx, dy = (cx - 512) / rx, (cy - 384) / ry
+	return dx * dx + dy * dy <= 1
+end
+
+local function project_raw(vec)
 	if not vec then return nil end
 	local p = game.world2ui(vec, false)
 	if not p or p.x == -9999 then return nil end
-	return pip_map(p.x / 1024, p.y / 768)
+	return p.x / 1024, p.y / 768
+end
+
+local function project(vec)
+	local u, v = project_raw(vec)
+	if not u then return nil end
+	return pip_map(u, v)
 end
 
 local function project_dot(obj, L, a, W)
@@ -697,7 +717,7 @@ function pad_joint_bounds(u0, v0, u1, v1, a)
 end
 
 local function read_bone_pos(obj, name) return obj:bone_position(name) end
-local function bone_screen(obj, L, a, W)
+local function bone_screen(obj, L, a, W, raw)
 	if not obj.bone_position then return nil end
 	local bones = model_bones(obj)
 	if #bones < BONE_MIN then return nil end
@@ -706,8 +726,9 @@ local function bone_screen(obj, L, a, W)
 	-- the lens warp on its own: the warp bends a rectangle's corners differently from the body's edges
 	local lu, lv, tu, tv, ru, rv, bu, bv = 1e9, 0, 0, 1e9, -1e9, 0, 0, -1e9
 	local n = 0
+	local proj = raw and project_raw or project
 	local function add(p)
-		local u, v = project(p)
+		local u, v = proj(p)
 		if u then
 			if u < lu then lu, lv = u, v end
 			if u > ru then ru, rv = u, v end
@@ -736,28 +757,39 @@ local function bone_screen(obj, L, a, W)
 	return pad_joint_bounds(u0, v0, u1, v1, a)
 end
 
-local function project_full_box(obj, L, a, ux, uy, size, W, aspect, is_quad)
+local function finish_full_box(cx, cy, w_ui, h_ui, raw)
+	local top_y, bot_y = cy - h_ui * 0.5, cy + h_ui * 0.5
+	if cx + w_ui * 0.5 <= 0 or cx - w_ui * 0.5 >= 1024 or bot_y <= 0 or top_y >= 768 then
+		return nil
+	end
+	if raw then
+		-- outside-lens 1x fallback: reject centres inside the PiP lens circle so targets behind
+		-- the opaque scope body don't draw a 1x box inside the magnified lens
+		if pip_inside_lens(cx, cy) then return nil end
+		return cx, cy, w_ui, h_ui, top_y, bot_y
+	end
+	local pcx, pcy, pw, ph = pip_clip_box(cx, cy, w_ui, h_ui)
+	if not pcx then return nil end
+	return pcx, pcy, pw, ph, top_y, bot_y
+end
+
+local function project_full_box(obj, L, a, ux, uy, size, W, aspect, is_quad, raw)
 	-- the skeleton when the model has one; otherwise the head and feet below (the engine's bounding
 	-- box, bbox_screen, covers every pose the model can take and is far too big for a box)
-	local bu0, bv0, bu1, bv1 = bone_screen(obj, L, a, W)
+	local bu0, bv0, bu1, bv1 = bone_screen(obj, L, a, W, raw)
 	if bu0 then
 		local w_ui = (bu1 - bu0) * 1024 * size
 		local h_ui = (bv1 - bv0) * 768 * size
 		if h_ui <= 2 or w_ui <= 1 then return nil end
 		local cx, cy = (bu0 + bu1) * 0.5 * 1024, (bv0 + bv1) * 0.5 * 768
-		local top_y, bot_y = cy - h_ui * 0.5, cy + h_ui * 0.5
-		if cx + w_ui * 0.5 <= 0 or cx - w_ui * 0.5 >= 1024 or bot_y <= 0 or top_y >= 768 then
-			return nil
-		end
-		local pcx, pcy, pw, ph = pip_clip_box(cx, cy, w_ui, h_ui)
-		if not pcx then return nil end
-		return pcx, pcy, pw, ph, top_y, bot_y
+		return finish_full_box(cx, cy, w_ui, h_ui, raw)
 	end
+	local proj = raw and project_raw or project
 	local feet = obj:position()
 	local head = (utils_obj and utils_obj.safe_bone_pos and utils_obj.safe_bone_pos(obj, "bip01_head")) or feet
 	tmp_top:set(head.x, box_top_y(head.y, feet.y, is_quad), head.z)
-	local tu, tv = project(tmp_top)
-	local fu, fv = project(feet)
+	local tu, tv = proj(tmp_top)
+	local fu, fv = proj(feet)
 	if not (tu and fu) then return nil end
 	tu, tv = unwarp(L, a, tu, tv, W)
 	fu, fv = unwarp(L, a, fu, fv, W)
@@ -767,14 +799,7 @@ local function project_full_box(obj, L, a, ux, uy, size, W, aspect, is_quad)
 	local w_ui = (h_ui / uy) * asp * ux
 	local cx = (tu + fu) * 0.5 * 1024
 	local cy = (tv + fv) * 0.5 * 768
-	local top_y = cy - h_ui * 0.5
-	local bot_y = cy + h_ui * 0.5
-	if cx + w_ui * 0.5 <= 0 or cx - w_ui * 0.5 >= 1024 or bot_y <= 0 or top_y >= 768 then
-		return nil
-	end
-	local pcx, pcy, pw, ph = pip_clip_box(cx, cy, w_ui, h_ui)
-	if not pcx then return nil end
-	return pcx, pcy, pw, ph, top_y, bot_y
+	return finish_full_box(cx, cy, w_ui, h_ui, raw)
 end
 
 -- Tight square box around a world point, sized via sideways projection (unwarped through the lens)
@@ -812,11 +837,14 @@ local function project_square_at(wx, wy, wz, half_m, L, a, ux, uy, size, W)
 	return pip_clip_box(cx, cy, w_ui, h_ui)
 end
 
-local function project_box(obj, L, a, ux, uy, size, W, aspect, is_quad, prev_target_head, head_t, dt)
+local function project_box_in_view(obj, L, a, ux, uy, size, W, aspect, is_quad, prev_target_head, head_t, dt, scoped)
 	local fcx, fcy, fw, fh, ftop, fbot = project_full_box(obj, L, a, ux, uy, size, W, aspect, is_quad)
 
+	if scoped == nil then scoped = frame_scoped end
 	local need_head
-	if not fcx then
+	if not scoped then
+		need_head = false
+	elseif not fcx then
 		need_head = true
 	elseif prev_target_head == 1 then
 		need_head = (fh > BODY_MAX_H_LO) or (ftop < CLIP_MARGIN_LO) or (fbot > 768 - CLIP_MARGIN_LO)
@@ -825,7 +853,8 @@ local function project_box(obj, L, a, ux, uy, size, W, aspect, is_quad, prev_tar
 	end
 
 	if not need_head and (head_t or 0) <= 0.01 then
-		return fcx, fcy, fw, fh, 0, 0
+		if fcx then return fcx, fcy, fw, fh, 0, 0 end
+		return nil
 	end
 
 	local feet = obj:position()
@@ -842,10 +871,10 @@ local function project_box(obj, L, a, ux, uy, size, W, aspect, is_quad, prev_tar
 	)
 
 	if not hcx then
-		-- Head is off-screen or unprojectable. If full body is also missing, oversized, or clipped on
-		-- both top & bottom (leaving corner brackets invisible), fall back to torso tracking on spine.
+		-- Head is off-screen or unprojectable. While scoped in, if full body is also missing, oversized,
+		-- or clipped on both top & bottom, fall back to torso tracking on spine.
 		local full_usable = fcx and fh <= BODY_MAX_H_HI and not (ftop < 0 and fbot > 768)
-		if not full_usable then
+		if scoped and not full_usable then
 			local spine_pos = safe_bone and safe_bone(obj, "bip01_spine")
 			local sxp, syp, szp
 			if spine_pos then
@@ -872,11 +901,26 @@ local function project_box(obj, L, a, ux, uy, size, W, aspect, is_quad, prev_tar
 	end
 
 	if not fcx then
-		return hcx, hcy, hw, hh, 1, 1
+		if scoped then return hcx, hcy, hw, hh, 1, 1 end
+		return nil
 	end
 
 	local s = smoothstep(0, 1, head_t)
 	return lerp(fcx, hcx, s), lerp(fcy, hcy, s), lerp(fw, hw, s), lerp(fh, hh, s), target_head, head_t
+end
+
+-- Dual-view 3DSS PiP projection: try magnified in-lens projection first; if outside the lens and
+-- within normal base range, fall back to 1x main-camera full-body projection (no head fallback).
+local function project_box(obj, L, a, ux, uy, size, W, aspect, is_quad, prev_target_head, head_t, dt, scoped, allow_outside)
+	local bcx, bcy, bw, bh, th, ht = project_box_in_view(
+		obj, L, a, ux, uy, size, W, aspect, is_quad, prev_target_head, head_t, dt, scoped
+	)
+	if bcx then return bcx, bcy, bw, bh, th, ht, false end
+	if pip_active() and allow_outside then
+		local fcx, fcy, fw, fh = project_full_box(obj, L, a, ux, uy, size, W, aspect, is_quad, true)
+		if fcx then return fcx, fcy, fw, fh, 0, 0, true end
+	end
+	return nil
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -890,17 +934,19 @@ local function ensure_entity_shape(ent, obj)
 	ent.quad = kind and QUADRUPED[kind] or false
 end
 
-local function refresh_projections(ent, obj, L, a, ux, uy, size, dot_w, dot_h, W, dt)
+local function refresh_projections(ent, obj, L, a, ux, uy, size, dot_w, dot_h, W, dt, allow_outside)
 	local bcx, dcx
+	local outside = false
 	if ent.target_dot == 0 or ent.dot_t < 0.99 then
 		ensure_entity_shape(ent, obj)
 		local bcy, bw, bh, th, ht
-		bcx, bcy, bw, bh, th, ht = project_box(
-			obj, L, a, ux, uy, size, W, ent.aspect, ent.quad, ent.target_head, ent.head_t, dt
+		bcx, bcy, bw, bh, th, ht, outside = project_box(
+			obj, L, a, ux, uy, size, W, ent.aspect, ent.quad, ent.target_head, ent.head_t, dt, nil, allow_outside
 		)
 		if bcx then
 			ent.bcx, ent.bcy, ent.bw, ent.bh = bcx, bcy, bw, bh
 			ent.target_head, ent.head_t = th, ht
+			ent.outside_pip = (outside == true)
 		end
 	end
 	if ent.target_dot == 1 or ent.dot_t > 0.01 then
@@ -908,6 +954,7 @@ local function refresh_projections(ent, obj, L, a, ux, uy, size, dot_w, dot_h, W
 		dcx, dcy = project_dot(obj, L, a, W)
 		if dcx then
 			ent.dcx, ent.dcy = dcx, dcy
+			if not bcx then ent.outside_pip = false end
 		end
 	end
 	ent.dw, ent.dh = dot_w, dot_h
@@ -1070,6 +1117,7 @@ local function step_entity(
 
 	local allies_size = max(cfg.allies_size or 1, 0.1)
 	local allies_opacity = clamp01(cfg.allies_opacity or 1)
+	local base_range = max(cfg.allies_range or 50, 2)
 
 	if not (obj.alive and obj:alive()) then
 		if not ent then return false end
@@ -1082,7 +1130,14 @@ local function step_entity(
 		ent.los_grace = 0
 		ent.col = col
 		ent.dist = obj:position():distance_to(apos)
-		refresh_projections(ent, obj, L, a, ux, uy, allies_size, dot_w, dot_h, W, dt)
+		refresh_projections(ent, obj, L, a, ux, uy, allies_size, dot_w, dot_h, W, dt, ent.dist <= base_range)
+		if frame_scoped and ent.target_dot == 1 and ent.dot_t >= 0.98 then
+			if ent.target_vis ~= 1 then
+				ent.vis = move_toward(ent.vis, 0, DEAD_OUT_RATE * dt)
+				if ent.vis <= 0 then states[id] = nil end
+			end
+			return false
+		end
 		if ent.target_vis == 1 then return ent.bcx ~= nil or ent.dcx ~= nil end
 		ent.vis = move_toward(ent.vis, 0, DEAD_OUT_RATE * dt)
 		ent.dot_t = move_toward(ent.dot_t, ent.target_dot, MORPH_RATE * dt)
@@ -1097,23 +1152,24 @@ local function step_entity(
 	-- the one you are aiming at gets a full box at any distance (through a scope, say)
 	local is_target = (id == aim_target)
 	local in_range = in_cand and (dist <= range or is_target)
-	local function alpha_at(d)
+	local function alpha_at(d, r)
 		if is_target then return cfg.allies_opacity end
-		return cfg.allies_opacity * (1 - smoothstep(range * 0.85, range, d))
+		return cfg.allies_opacity * (1 - smoothstep(r * 0.85, r, d))
 	end
 
 	if not ent then
 		if not in_range then return false end
 		local init_dot = (dist > dot_dist and not is_target) and 1 or 0
+		if frame_scoped and init_dot == 1 then return false end
 		local kind = (not is_stk) and mutant_kind(obj) or nil
 		local asp = box_aspect(obj, kind)
 		local is_quad = kind and QUADRUPED[kind] or false
-		local bcx, bcy, bw, bh, init_t_head, init_head_t, dcx, dcy
+		local bcx, bcy, bw, bh, init_t_head, init_head_t, outside, dcx, dcy
 		if init_dot == 1 then
 			dcx, dcy = project_dot(obj, L, a, W)
 		else
-			bcx, bcy, bw, bh, init_t_head, init_head_t = project_box(
-				obj, L, a, ux, uy, allies_size, W, asp, is_quad, nil, nil, 0
+			bcx, bcy, bw, bh, init_t_head, init_head_t, outside = project_box(
+				obj, L, a, ux, uy, allies_size, W, asp, is_quad, nil, nil, 0, nil, dist <= base_range
 			)
 		end
 		if not (bcx or dcx) then return false end
@@ -1128,6 +1184,7 @@ local function step_entity(
 			target_dot = init_dot,
 			target_head = init_t_head,
 			head_t = init_head_t,
+			outside_pip = (outside == true),
 			col = col,
 			aspect = asp,
 			quad = is_quad,
@@ -1137,7 +1194,7 @@ local function step_entity(
 			id = id,
 			dist = dist,
 			aimed = aimed_at(obj, cam_vec),
-			base_alpha = alpha_at(dist),
+			base_alpha = alpha_at(dist, outside and base_range or range),
 			bcx = bcx, bcy = bcy, bw = bw, bh = bh,
 			dcx = dcx, dcy = dcy, dw = dot_w, dh = dot_h,
 		}
@@ -1154,9 +1211,6 @@ local function step_entity(
 	ent.id = id
 	ent.dist = dist
 	ent.aimed = aimed_at(obj, cam_vec)
-	if dist <= range or is_target then
-		ent.base_alpha = alpha_at(dist)
-	end
 
 	if is_target then
 		ent.target_dot = 0
@@ -1168,7 +1222,10 @@ local function step_entity(
 		end
 	end
 
-	local live_ok = refresh_projections(ent, obj, L, a, ux, uy, allies_size, dot_w, dot_h, W, dt)
+	local live_ok = refresh_projections(ent, obj, L, a, ux, uy, allies_size, dot_w, dot_h, W, dt, dist <= base_range)
+	if dist <= range or is_target then
+		ent.base_alpha = alpha_at(dist, ent.outside_pip and base_range or range)
+	end
 
 	if not in_range or not live_ok then
 		ent.los_grace = 0
@@ -1201,6 +1258,9 @@ local function step_entity(
 
 	if ent.target_vis == 0 and ent.vis <= 0 then
 		states[id] = nil
+		return false
+	end
+	if frame_scoped and ent.target_dot == 1 and ent.dot_t >= 0.98 then
 		return false
 	end
 	return (ent.vis > 0) and (ent.bcx ~= nil or ent.dcx ~= nil)
@@ -1368,8 +1428,9 @@ local function queue_label(slot, ent, cx, top, bottom, alpha, r, g, b)
 	-- "known only" (MCM): a stalker's name shows only once you have talked to them; until then UNKNOWN
 	local name = ent.name or ""
 	if LG.known_only and not ent.mutant and not (ent.id and met[ent.id]) then name = words().unknown end
-	q.name = (decode_text(name, t, seed, LG.now, LG.random))
-	q.fac = (decode_text(ent.faction or "", t - FACTION_DELAY, seed + 17, LG.now, LG.random))
+	local t_full = DECODE_DELAY + max(#name, 1) * DECODE_STEP
+	q.name = (decode_text(name, t, seed, LG.now, LG.random, t_full))
+	q.fac = (decode_text(ent.faction or "", t, seed + 17, LG.now, LG.random, t_full))
 	q.info = lbl.info and ent.info or ""                -- a slot without an info line just has two
 	q.argb = GetARGB(a, r, g, b)
 	q.cx, q.top, q.bottom = cx, top, bottom
@@ -1535,7 +1596,7 @@ local function step_reveal(ent)
 	if not ent.reveal_t then
 		-- someone already identified keeps their name, faction and colour: shown at once when the box
 		-- comes back after you looked away; someone half identified carries on from where they were
-		ent.reveal_t = is_known and (max(t_full, REVEAL_MIN) + COLOR_FADE + FACTION_DELAY + 1)
+		ent.reveal_t = is_known and (max(t_full, REVEAL_MIN) + COLOR_FADE + 1)
 			or (id and id_progress[id] or 0) * t_full
 	end
 	local s = reveal_speed(t_full, is_known, ent.dist or 0, ent.aimed, LG.fov)
@@ -1560,7 +1621,7 @@ local function draw_slot(slot, ent, dot_w, dot_h, style)
 	if ent.dead_t then
 		r, g, b = DEAD_COL[1], DEAD_COL[2], DEAD_COL[3]
 		ent.info = info_text(true, nil, nil, nil, nil, words())
-	elseif m < 0.98 then
+	else
 		-- a hurt companion's colour runs toward grey with their health
 		if ent.companion and ent.health then
 			local hurt = 1 - clamp01(ent.health)
@@ -1568,10 +1629,17 @@ local function draw_slot(slot, ent, dot_w, dot_h, style)
 			g = floor(lerp(g, DEAD_COL[2], hurt) + 0.5)
 			b = floor(lerp(b, DEAD_COL[3], hurt) + 0.5)
 		end
-		-- a box: white while unknown, decoding to its colour as the stalker is identified
-		local k = step_reveal(ent)
-		r, g, b = floor(lerp(255, r, k) + 0.5), floor(lerp(255, g, k) + 0.5), floor(lerp(255, b, k) + 0.5)
-		ent.info = info_text(false, ent.id and known[ent.id], ent.id_pct, ent.rank, ent.dist, words())
+		if m < 0.98 then
+			-- a box: white while unknown, decoding to its colour as the stalker is identified
+			local k = step_reveal(ent)
+			r, g, b = floor(lerp(255, r, k) + 0.5), floor(lerp(255, g, k) + 0.5), floor(lerp(255, b, k) + 0.5)
+			ent.info = info_text(false, ent.id and known[ent.id], ent.id_pct, ent.rank, ent.dist, words())
+		else
+			-- a dot: white until identified (decoded), then its relation colour
+			local is_known = ent.id and known[ent.id]
+			local k = is_known and 1 or 0
+			r, g, b = floor(lerp(255, r, k) + 0.5), floor(lerp(255, g, k) + 0.5), floor(lerp(255, b, k) + 0.5)
+		end
 	end
 	local vis_e = (ent.target_vis == 1) and ease_out3(ent.vis) or smoothstep(0, 1, ent.vis)
 	local pop_alpha = ent.base_alpha * vis_e
@@ -1602,8 +1670,12 @@ local function draw_slot(slot, ent, dot_w, dot_h, style)
 		slot.dot:Show(false)
 		queue_label(slot, ent, bx, by - bh * box_pop_scale * 0.5, by + bh * box_pop_scale * 0.5, pop_alpha, r, g, b)
 	elseif m >= 0.98 then
-		local argb = GetARGB(floor(255 * clamp01(pop_alpha)), r, g, b)
-		apply_wnd(slot.dot, dx, dy, dw * dot_pop_scale, dh * dot_pop_scale, argb)
+		if frame_scoped then
+			slot.dot:Show(false)
+		else
+			local argb = GetARGB(floor(255 * clamp01(pop_alpha)), r, g, b)
+			apply_wnd(slot.dot, dx, dy, dw * dot_pop_scale, dh * dot_pop_scale, argb)
+		end
 		slot.box:Show(false)
 		slot.brk:Show(false)
 		hide_label(slot.lbl)
@@ -1619,9 +1691,13 @@ local function draw_slot(slot, ent, dot_w, dot_h, style)
 		other:Show(false)
 		queue_label(slot, ent, mcx, mcy - box_h * 0.5, mcy + box_h * 0.5, box_a, r, g, b)
 
-		local d_scale = lerp(0.55, 1.0, m) * dot_pop_scale
-		local dot_a = smoothstep(0.10, 0.85, m) * pop_alpha
-		apply_wnd(slot.dot, mcx, mcy, dw * d_scale, dh * d_scale, GetARGB(floor(255 * clamp01(dot_a)), r, g, b))
+		if frame_scoped then
+			slot.dot:Show(false)
+		else
+			local d_scale = lerp(0.55, 1.0, m) * dot_pop_scale
+			local dot_a = smoothstep(0.10, 0.85, m) * pop_alpha
+			apply_wnd(slot.dot, mcx, mcy, dw * d_scale, dh * d_scale, GetARGB(floor(255 * clamp01(dot_a)), r, g, b))
+		end
 	end
 end
 
@@ -1817,7 +1893,10 @@ function update(pool, cfg, L, visible)
 
 	-- through a scope the range (and the box/dot switch) grows with the zoom, so an ally that looks as
 	-- big as one at the normal range still gets a box and a name
-	local range = max(cfg.allies_range or 50, 2) * max(view_zoom(), pip_refresh().m)
+	local vz = view_zoom()
+	local pm = pip_refresh().m
+	local range = max(cfg.allies_range or 50, 2) * max(vz, pm)
+	frame_scoped = pip_active() or vz > 1.05
 	local now = time_global() / 1000
 	scan_enemies = cfg.allies_enemies and true or false
 	scan_mutants = cfg.allies_mutants and true or false
@@ -1956,9 +2035,9 @@ function update(pool, cfg, L, visible)
 	flush_labels()                                       -- every label at once: on screen, no overlaps
 	for i = n_shown + 1, #pool do hide(pool[i]) end
 
-	-- companions you can't see: a dot at the screen edge pointing toward them
+	-- companions you can't see: a dot at the screen edge pointing toward them (hidden while scoped in)
 	local shown_edges = 0
-	if cfg.allies_companion_edge ~= false and pool.edges and frame_dir and cam_vec then
+	if not frame_scoped and cfg.allies_companion_edge ~= false and pool.edges and frame_dir and cam_vec then
 		local d = frame_dir
 		local hl = sqrt(d.x * d.x + d.z * d.z)
 		if hl > 1e-4 then

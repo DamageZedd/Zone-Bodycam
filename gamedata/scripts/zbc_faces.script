@@ -193,24 +193,25 @@ end
 -- sudden jump (a teleport, a new target) is never overshot. prev: { u, v } of the last frame or nil.
 PREDICT_MAX = 0.04           -- largest step carried forward, in uv
 last_uv = {}
-function predict(prev, u, v)
+function predict(prev, u, v, mode)
 	if not prev then return u, v end
+	if mode ~= nil and prev[3] ~= nil and prev[3] ~= mode then return u, v end
 	local du, dv = u - prev[1], v - prev[2]
 	if math.abs(du) > PREDICT_MAX or math.abs(dv) > PREDICT_MAX then return u, v end
 	return u + du, v + dv
 end
 
--- any_lens: the point only sizes the face square, so it may lie past the lens edge
-local function project(vec, any_lens)
+local function project_raw(vec)
 	local p = game.world2ui(vec, false)
 	if not p or p.x == -9999 then return nil end
-	local u, v = p.x / 1024, p.y / 768
-	-- inside a picture-in-picture scope the face shows magnified (zbc_allies.pip_map); faces outside the
-	-- lens are behind the scope body or blurred out, so they are left alone
-	if zbc_allies and zbc_allies.pip_map then
-		if zbc_allies.pip_refresh then zbc_allies.pip_refresh() end
-		local mu, mv, inside = zbc_allies.pip_map(u, v)
-		if not (inside or any_lens) then return nil end
+	return p.x / 1024, p.y / 768
+end
+
+local function project_point(vec, use_pip, P)
+	local u, v = project_raw(vec)
+	if not u then return nil end
+	if use_pip then
+		local mu, mv = zbc_allies.pip_map(u, v, P)
 		return mu, mv
 	end
 	return u, v
@@ -258,9 +259,12 @@ function update(actor, max_n)
 	local tan_half = tan(rad(min(max(fov, 1), 170) * 0.5))
 	-- through a picture-in-picture scope faces show magnified, so far faces are big enough to blur there
 	local mag = 1
-	if zbc_allies and zbc_allies.pip_refresh then
-		local P = zbc_allies.pip_refresh()
+	local P = nil
+	local pip_on = false
+	if zbc_allies then
+		P = (zbc_allies.pip_refresh and zbc_allies.pip_refresh()) or zbc_allies.PIP
 		mag = max(tonumber(P and P.m) or 1, 1)
+		pip_on = zbc_allies.pip_active and zbc_allies.pip_active(P) and zbc_allies.pip_map ~= nil
 	end
 	local max_dist = (HEAD_HALF * H * max(a, 1) * mag) / (2 * MIN_FACE_PX * max(tan_half, 1e-4)) + 5
 	local max_d2 = max_dist * max_dist
@@ -290,13 +294,33 @@ function update(actor, max_n)
 		local head = obj and utils_obj.safe_bone_pos(obj, "bip01_head")
 		if head then
 			tmp_c:set(head.x, head.y + HEAD_UP, head.z)
-			local cu, cv = project(tmp_c)
+			-- Dual-view 3DSS PiP projection: inside the lens we use magnified pip_map; outside the
+			-- circular lens we keep the raw 1x main-camera view so nearby faces stay pixelated.
+			local ru, rv = project_raw(tmp_c)
+			local cu, cv, use_pip
+			if ru then
+				if pip_on then
+					local mu, mv, in_lens = zbc_allies.pip_map(ru, rv, P)
+					if in_lens then
+						cu, cv, use_pip = mu, mv, true
+					else
+						local pa = (P and P.a) or a
+						local pr = (P and P.r) or 0.12
+						local dx, dy = (ru - 0.5) * pa, rv - 0.5
+						if dx * dx + dy * dy > pr * pr then
+							cu, cv, use_pip = ru, rv, false
+						end
+					end
+				else
+					cu, cv, use_pip = ru, rv, false
+				end
+			end
 			if cu and cu > -0.25 and cu < 1.25 and cv > -0.25 and cv < 1.25 then
 				tmp_t:set(tmp_c.x + side.x * HEAD_HALF, tmp_c.y + side.y * HEAD_HALF, tmp_c.z + side.z * HEAD_HALF)
-				local tu, tv = project(tmp_t, true)   -- only sizes the square: may lie past the lens edge
+				local tu, tv = project_point(tmp_t, use_pip, P)   -- only sizes the square: may lie past the lens edge
 				if not tu then
 					tmp_t:set(tmp_c.x - side.x * HEAD_HALF, tmp_c.y - side.y * HEAD_HALF, tmp_c.z - side.z * HEAD_HALF)
-					tu, tv = project(tmp_t, true)
+					tu, tv = project_point(tmp_t, use_pip, P)
 				end
 				local half, blk
 				if tu then half, blk = face_square(cu, cv, tu, tv, a, H) end
@@ -310,9 +334,9 @@ function update(actor, max_n)
 					end
 					-- one frame ahead: the square is placed from this frame's camera but drawn on the
 					-- next, so it would trail a fast turn; move it on by its own last step
-					local pu, pv = predict(last_uv[id], cu, cv)
+					local pu, pv = predict(last_uv[id], cu, cv, use_pip)
 					last_uv[id] = last_uv[id] or {}
-					last_uv[id][1], last_uv[id][2] = cu, cv
+					last_uv[id][1], last_uv[id][2], last_uv[id][3] = cu, cv, use_pip
 					r[1], r[2], r[3], r[4] = pu, pv, half, blk
 				end
 			end

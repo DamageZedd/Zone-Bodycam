@@ -236,6 +236,103 @@ do
 	end
 end
 
+-- Dual-view 3DSS PiP projection: magnified inside lens + 1x outside lens + occluded behind lens
+do
+	local npcs = {}
+	local function mkvec(x, y, z)
+		return { x = x or 0, y = y or 0, z = z or 0, set = function(self, nx, ny, nz) self.x, self.y, self.z = nx, ny, nz; return self end, distance_to_sqr = function(a, b) local dx, dy, dz = a.x - b.x, a.y - b.y, a.z - b.z; return dx*dx + dy*dy + dz*dz end }
+	end
+	local P = { m = 4, r = 0.12, a = 16 / 9, au = 0.56, av = 0.5 }
+	local fenv
+	fenv = setmetatable({
+		time_global = function() return 1000 end,
+		vector = function() return mkvec(0, 0, 0) end,
+		device = function()
+			return {
+				width = 1920, height = 1080, fov = 75,
+				cam_pos = { x = 0, y = 1.6, z = 0 },
+				cam_dir = { x = 0, y = 0, z = 1 },
+			}
+		end,
+		IsStalker = function() return true end,
+		db = { storage = {} },
+		level = { object_by_id = function(id) return npcs[id] end },
+		utils_obj = { safe_bone_pos = function(obj) return obj._head end },
+		zbc_allies = {
+			PIP = P,
+			pip_refresh = function() return P end,
+			pip_active = function(p) return (p or P).m > 1.01 end,
+			pip_map = function(u, v, p)
+				p = p or P
+				local mu, mv = 0.5 + (u - p.au) * p.m, 0.5 + (v - p.av) * p.m
+				local dx, dy = (mu - 0.5) * p.a, mv - 0.5
+				return mu, mv, dx * dx + dy * dy <= p.r * p.r
+			end,
+			los_point = function() return true end,
+		},
+		game = {
+			world2ui = function(v)
+				if v.z <= 0.05 then return { x = -9999, y = -9999 } end
+				local u = 0.5 + (v.x / v.z) * 0.5
+				local vv = 0.5 - (v.y - 1.6) / v.z
+				return { x = u * 1024, y = vv * 768 }
+			end,
+		},
+	}, { __index = _G })
+	local fchunk = assert(loadfile(PATH))
+	setfenv(fchunk, fenv)
+	fchunk()
+
+	-- 101: Far face inside PiP lens (ru=0.57 -> mu=0.54, in_lens=true)
+	npcs[101] = {
+		alive = function() return true end,
+		position = function() return mkvec(2.8, 0, 20) end,
+		_head = mkvec(2.8, 1.53, 20),
+	}
+	-- 102: Nearby face outside PiP lens on right side (ru=0.80, 1x unmagnified)
+	npcs[102] = {
+		alive = function() return true end,
+		position = function() return mkvec(1.2, 0, 2.0) end,
+		_head = mkvec(1.2, 1.53, 2.0),
+	}
+	-- 103: Raw 1x face behind the opaque/magnified lens interior (ru=0.50 -> mu=0.26 out of lens, raw 1x inside lens circle)
+	npcs[103] = {
+		alive = function() return true end,
+		position = function() return mkvec(0.0, 0, 2.0) end,
+		_head = mkvec(0.0, 1.53, 2.0),
+	}
+	fenv.db.storage[101] = { object = npcs[101] }
+	fenv.db.storage[102] = { object = npcs[102] }
+	fenv.db.storage[103] = { object = npcs[103] }
+
+	local actor = { position = function() return mkvec(0, 0, 0) end, see = function() return true end }
+	fenv.update(actor, 64)
+	fenv.time_global = function() return 1200 end
+	local rows, n = fenv.update(actor, 64)
+	check(n == 2, "PiP dual-view keeps far in-lens face and nearby 1x face, skips face behind lens, got n=" .. tostring(n))
+	if n == 2 then
+		local far_row, near_row
+		for i = 1, n do
+			if math.abs(rows[i][1] - 0.54) < 1e-6 then far_row = rows[i] end
+			if math.abs(rows[i][1] - 0.80) < 1e-6 then near_row = rows[i] end
+		end
+		check(far_row ~= nil, "far face inside PiP lens is placed at magnified cu=0.54")
+		check(near_row ~= nil, "nearby face outside PiP lens is placed at 1x cu=0.80")
+		if far_row then
+			local exp_half = fenv.face_square(0.54, 0.5, 0.54 + 4 * 0.5 * (0.17 / 20), 0.5, 16 / 9, 1080)
+			check(near(far_row[3], exp_half), "in-lens face square is magnified")
+		end
+		if near_row then
+			local exp_half = fenv.face_square(0.80, 0.5, 0.80 + 0.5 * (0.17 / 2.0), 0.5, 16 / 9, 1080)
+			check(near(near_row[3], exp_half), "outside-lens face square is 1x unmagnified")
+		end
+	end
+
+	-- predict() must not extrapolate across a 1x <-> magnified mode switch even for small deltas
+	local pu, pv = fenv.predict({ 0.50, 0.50, false }, 0.52, 0.50, true)
+	check(near(pu, 0.52) and near(pv, 0.50), "predict() does not extrapolate across 1x <-> magnified switch")
+end
+
 if failures > 0 then
 	print(failures .. " check(s) failed")
 	os.exit(1)

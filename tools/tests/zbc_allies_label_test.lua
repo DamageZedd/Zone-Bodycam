@@ -66,6 +66,19 @@ if type(dt) == "function" then
 		local s = dt("XXXXXXXXXXXXXXXXXXXX", k * 0.013, k)
 		check(not s:find("[^%w%+=/<>#%%]"), "scramble uses only glyph-atlas characters: " .. s)
 	end
+	-- lockstep faction decode: shorter or longer faction finishes at the exact same time as name
+	local long_name = "ARTYOM FAVORITE"
+	local short_fac = "DUTY"
+	local total_t = env.DECODE_DELAY + #long_name * env.DECODE_STEP
+	local fn0, fd0 = dt(short_fac, 0, 22, nil, false, total_t)
+	check(not fd0 and fn0 ~= short_fac, "short faction starts scrambled at t=0")
+	local fn_mid, fd_mid = dt(short_fac, env.DECODE_DELAY + 5 * env.DECODE_STEP, 22, nil, false, total_t)
+	local nm_mid, nd_mid = dt(long_name, env.DECODE_DELAY + 5 * env.DECODE_STEP, 5, nil, false, total_t)
+	check(not fd_mid and not nd_mid, "short faction is still decoding while long name is still decoding")
+	local fn_end, fd_end = dt(short_fac, total_t, 22, nil, false, total_t)
+	local nm_end, nd_end = dt(long_name, total_t, 5, nil, false, total_t)
+	check(fd_end and nd_end and fn_end == short_fac and nm_end == long_name,
+		"faction and name finish decoding at the exact same time")
 end
 
 -- faction text
@@ -236,6 +249,16 @@ if type(pm) == "function" and type(pmag) == "function" then
 		check(pc(512, 384 + ry * 1.2, 40, 80, P) == nil, "centre outside the lens: no box")
 		local sx, sy, sw, sh = pc(150, 384, 40, 80, { m = 1, r = 0.12, a = 16 / 9 })
 		check(sx == 150 and sw == 40, "no scope view: boxes anywhere")
+	end
+
+	local pil = rawget(env, "pip_inside_lens")
+	check(type(pil) == "function", "pip_inside_lens exists")
+	if type(pil) == "function" then
+		local ry = 0.12 * 768
+		check(pil(512, 384, P) == true, "lens centre is inside lens")
+		check(pil(800, 384, P) == false, "right side of screen is outside lens")
+		check(pil(512, 384 + ry * 1.2, P) == false, "above/below lens radius is outside lens")
+		check(pil(512, 384, { m = 1, r = 0.12, a = 16 / 9 }) == false, "inactive PiP: nothing inside lens")
 	end
 
 	-- lens size from the Bodycam exes' measurement (pip.log, [SVP-RATIO] measH = lens height in half screens)
@@ -470,7 +493,7 @@ do
 		zbc_font_metrics = { em = 32, advance = 20, cell_w = 32, cell_h = 40, pad = 4, cols = 16, rows = 16, tex_w = 512, tex_h = 512, first = 33, last = 126 },
 		time_global = function() return now_ms end,
 		vector = make_vec, vector2 = make_vec, Frect = make_vec,
-		GetARGB = function() return 0 end,
+		GetARGB = function(a, r, g, b) return { a = a, r = r, g = g, b = b } end,
 		RegisterScriptCallback = function() end,
 	}, { __index = _G })
 	local c = assert(loadfile(PATH))
@@ -548,7 +571,7 @@ do
 			Show = function(self, v)
 				self.shown = v and true or false
 				if kind and v then
-					last_draw[kind] = { cx = self.cx, cy = self.cy, w = self.bw, h = self.bh }
+					last_draw[kind] = { cx = self.cx, cy = self.cy, w = self.bw, h = self.bh, color = self._col }
 				end
 			end,
 			SetWndPos = function(self, p) self._px, self._py = p.x, p.y end,
@@ -557,7 +580,7 @@ do
 				self.cx = (self._px or 0) + s.x * 0.5
 				self.cy = (self._py or 0) + s.y * 0.5
 			end,
-			SetTextureColor = function() end,
+			SetTextureColor = function(self, c) self._col = c end,
 			SetTextureRect = function() end,
 			InitTexture = function() end,
 			SetStretchTexture = function() end,
@@ -618,7 +641,7 @@ do
 		zbc_font_metrics = { em = 32, advance = 20, cell_w = 32, cell_h = 40, pad = 4, cols = 16, rows = 16, tex_w = 512, tex_h = 512, first = 33, last = 126 },
 		time_global = function() return now_ms end,
 		vector = make_vec, vector2 = make_vec, Frect = make_vec,
-		GetARGB = function() return 0 end,
+		GetARGB = function(a, r, g, b) return { a = a, r = r, g = g, b = b } end,
 		RegisterScriptCallback = function() end,
 	}, { __index = _G })
 
@@ -698,7 +721,7 @@ do
 		check(max_gy <= box_top and min_gy >= -10, ("label placed above head box and clamped on screen (min_y=%.1f, max_y=%.1f, top=%.1f)"):format(min_gy, max_gy, box_top))
 	end
 
-	-- 4. Close-up stalker (1.2m away, fov=75) -> head-tracking
+	-- 4. Unscoped close-up (1.2m, fov=75) does NOT switch to head-tracking; scoped (fov=10 or PiP) DOES
 	ae.clear_known()
 	cur_fov = 75
 	npc_pos:set(0, 0, 1.2)
@@ -709,27 +732,63 @@ do
 	ae.update(pool, cfg, lens, true)
 	now_ms = 1250
 	ae.update(pool, cfg, lens, true)
-	check(last_draw.brk ~= nil, "close-up stalker at 1.2m shows head-tracking box")
+	check(last_draw.brk ~= nil, "unscoped close-up stalker at 1.2m draws full-body box")
 	if last_draw.brk then
 		local px_w = last_draw.brk.w / ux
 		local px_h = last_draw.brk.h / uy
-		check(math.abs(px_w - px_h) < 1.5, "close-up box is square head-tracking")
-		check(last_draw.brk.h <= 768 * 0.75 + 0.01, "close-up head box respects max screen size cap")
+		check(px_h > px_w * 1.5, "unscoped close-up does NOT switch to square head-tracking")
 	end
 
-	-- 5. Smooth transition (no instant pop) when walking from 5m into 1.2m
+	-- Now scope in via FOV zoom (cur_fov=10) -> head-tracking activates and respects cap
+	cur_fov = 10
+	last_draw.brk = nil
+	for _ = 1, 10 do
+		now_ms = now_ms + 50
+		ae.update(pool, cfg, lens, true)
+	end
+	if last_draw.brk then
+		local px_w = last_draw.brk.w / ux
+		local px_h = last_draw.brk.h / uy
+		check(math.abs(px_w - px_h) < 1.5, "scoped close-up box switches to square head-tracking")
+		check(last_draw.brk.h <= 768 * 0.75 + 0.01, "scoped close-up head box respects max screen size cap")
+	end
+
+	-- Also verify 3DSS PiP scope (pip_active() = true, cur_fov = 75) enables head-tracking
 	ae.clear_known()
-	npc_pos:set(0, 0, 5.0)
-	npc_head:set(0, 1.6, 5.0)
-	npc_spine:set(0, 1.0, 5.0)
+	cur_fov = 75
+	local orig_pip_refresh = ae.pip_refresh
+	ae.pip_refresh = function() ae.PIP.m = 3.33; ae.PIP.r = 0.25; return ae.PIP end
+	npc_pos:set(0, 0, 20)
+	npc_head:set(0, 1.6, 20)
+	npc_spine:set(0, 1.0, 20)
+	clip_below_y = 0.5
+	last_draw.brk = nil
+	now_ms = 1260
+	ae.update(pool, cfg, lens, true)
+	now_ms = 1290
+	ae.update(pool, cfg, lens, true)
+	check(last_draw.brk ~= nil, "PiP scoped stalker with clipped feet shows head-tracking box")
+	if last_draw.brk then
+		local px_w = last_draw.brk.w / ux
+		local px_h = last_draw.brk.h / uy
+		check(math.abs(px_w - px_h) < 1.5, "PiP scoped clipped body switches to square head-tracking")
+	end
+	ae.pip_refresh = orig_pip_refresh
+	ae.PIP.m = 1
+	clip_below_y = nil
+
+	-- 5. Smooth transition (no instant pop) when scoping in on 1.5m stalker, and smooth return when unscoping
+	ae.clear_known()
+	cur_fov = 75
+	npc_pos:set(0, 0, 1.5)
+	npc_head:set(0, 1.6, 1.5)
+	npc_spine:set(0, 1.0, 1.5)
 	now_ms = 1300
 	ae.update(pool, cfg, lens, true)
 	now_ms = 1350
 	ae.update(pool, cfg, lens, true)
 	local start_h = last_draw.brk and last_draw.brk.h or 0
-	npc_pos:set(0, 0, 1.5)
-	npc_head:set(0, 1.6, 1.5)
-	npc_spine:set(0, 1.0, 1.5)
+	cur_fov = 15
 	local heights = {}
 	for i = 1, 6 do
 		now_ms = now_ms + 40
@@ -737,36 +796,46 @@ do
 		heights[i] = last_draw.brk and last_draw.brk.h or 0
 	end
 	check(start_h > 0 and heights[1] > heights[6] and heights[2] > heights[5],
-		("smooth morph from full-body to head-tracking (h: %.1f -> %.1f -> %.1f)"):format(heights[1], heights[3], heights[6]))
-
-	-- 6. Hysteresis prevents flicker near bottom screen edge
-	ae.clear_known()
+		("smooth morph from full-body to head-tracking when scoping in (h: %.1f -> %.1f -> %.1f)"):format(heights[1], heights[3], heights[6]))
+	-- Unscoping smoothly morphs back to full-body
 	cur_fov = 75
-	-- At z=4.0, cam_y=1.6, tan(37.5)=0.7673 -> bottom of screen is y = 1.6 - 4.0*0.7673 = -1.469.
-	-- Place feet at y = -1.55 (just below bottom of screen -> triggers head-tracking)
-	npc_pos:set(0, -1.55, 4.0)
-	npc_head:set(0, 0.05, 4.0)
-	npc_spine:set(0, -0.55, 4.0)
+	local unscope_h = {}
+	for i = 1, 6 do
+		now_ms = now_ms + 40
+		ae.update(pool, cfg, lens, true)
+		unscope_h[i] = last_draw.brk and last_draw.brk.h or 0
+	end
+	check(unscope_h[6] > unscope_h[1],
+		("smooth morph back to full-body when unscoping (h: %.1f -> %.1f)"):format(unscope_h[1], unscope_h[6]))
+
+	-- 6. Hysteresis prevents flicker near bottom screen edge (while scoped in, cur_fov=50 -> view_zoom ~ 1.59)
+	ae.clear_known()
+	cur_fov = 50
+	-- At z=4.0, cur_fov=50, cam_y=1.6, tan(25)=0.4663 -> bottom of screen is y = 1.6 - 4.0*0.4663 = -0.265.
+	-- Place feet at y = -0.35 (just below bottom of screen -> triggers head-tracking)
+	npc_pos:set(0, -0.35, 4.0)
+	npc_head:set(0, 1.25, 4.0)
+	npc_spine:set(0, 0.65, 4.0)
 	now_ms = 1600
 	ae.update(pool, cfg, lens, true)
 	now_ms = 1650
 	ae.update(pool, cfg, lens, true)
 	local head_h_px = last_draw.brk and (last_draw.brk.h / uy) or 0
 	local head_w_px = last_draw.brk and (last_draw.brk.w / ux) or 0
-	check(math.abs(head_w_px - head_h_px) < 1.5, "feet just below screen triggers head-tracking")
-	-- Move feet 4 UI px inside bottom edge (within CLIP_MARGIN_LO=24 -> stays in head-tracking!)
-	npc_pos:set(0, -1.42, 4.0)
-	npc_head:set(0, 0.18, 4.0)
-	npc_spine:set(0, -0.42, 4.0)
+	check(math.abs(head_w_px - head_h_px) < 1.5, "scoped feet just below screen triggers head-tracking")
+	-- Move feet ~8 UI px inside bottom edge (within CLIP_MARGIN_LO=24 -> stays in head-tracking!)
+	npc_pos:set(0, -0.22, 4.0)
+	npc_head:set(0, 1.38, 4.0)
+	npc_spine:set(0, 0.78, 4.0)
 	now_ms = 1700
 	ae.update(pool, cfg, lens, true)
 	local hyst_w_px = last_draw.brk and (last_draw.brk.w / ux) or 0
 	local hyst_h_px = last_draw.brk and (last_draw.brk.h / uy) or 0
 	check(math.abs(hyst_w_px - hyst_h_px) < 1.5, "hysteresis keeps head-tracking inside bottom margin")
 	-- Move feet comfortably inside screen -> returns to full-body
-	npc_pos:set(0, -0.6, 4.0)
-	npc_head:set(0, 1.0, 4.0)
-	npc_spine:set(0, 0.4, 4.0)
+	npc_pos:set(0, 0.2, 4.0)
+	npc_head:set(0, 1.8, 4.0)
+	npc_spine:set(0, 1.2, 4.0)
 	for _ = 1, 8 do
 		now_ms = now_ms + 50
 		ae.update(pool, cfg, lens, true)
@@ -839,6 +908,424 @@ do
 	ae.update(pool, cfg, lens, true)
 	check(ae.id_progress_for(101) ~= nil and ae.id_progress_for(101) > 0,
 		"distant zoomed-in head-tracking target accumulates identification progress")
+
+	-- 10. Unidentified dot stays white; identified dot takes relation colour
+	ae.clear_known()
+	clip_below_y = nil
+	clip_above_y = nil
+	cur_fov = 75
+	npc_pos:set(0, 0, 80)
+	npc_head:set(0, 1.6, 80)
+	npc_spine:set(0, 1.0, 80)
+	last_draw.dot = nil
+	now_ms = 3000
+	ae.update(pool, cfg, lens, true)
+	now_ms = 3050
+	ae.update(pool, cfg, lens, true)
+	check(last_draw.dot ~= nil, "distant unidentified stalker (80m > 70m dot_dist) draws dot")
+	if last_draw.dot and last_draw.dot.color then
+		local c = last_draw.dot.color
+		check(c.r == 255 and c.g == 255 and c.b == 255,
+			("unidentified dot is white (got %d,%d,%d)"):format(c.r, c.g, c.b))
+	end
+
+	-- Identify stalker up close (20m), then move back to dot distance (80m)
+	npc_pos:set(0, 0, 20)
+	npc_head:set(0, 1.6, 20)
+	npc_spine:set(0, 1.0, 20)
+	for _ = 1, 30 do
+		now_ms = now_ms + 100
+		ae.update(pool, cfg, lens, true)
+	end
+	npc_pos:set(0, 0, 80)
+	npc_head:set(0, 1.6, 80)
+	npc_spine:set(0, 1.0, 80)
+	last_draw.dot = nil
+	for _ = 1, 15 do
+		now_ms = now_ms + 100
+		ae.update(pool, cfg, lens, true)
+	end
+	check(last_draw.dot ~= nil, "identified distant stalker draws dot")
+	if last_draw.dot and last_draw.dot.color then
+		local c = last_draw.dot.color
+		check(c.r == 80 and c.g == 255 and c.b == 90,
+			("identified friendly dot takes relation colour (got %d,%d,%d)"):format(c.r, c.g, c.b))
+	end
+
+	-- 11. Dots are hidden while scoped in (both FOV zoom and PiP, newly spotted and already tracked)
+	local short_cfg = {
+		allies = true, allies_range = 10, allies_dot_ratio = 0.7, allies_los = false,
+		allies_enemies = true, allies_mutants = true, allies_size = 1, allies_opacity = 1,
+		allies_color_companion = 2, allies_color_friend = 1, allies_color_enemy = 5,
+		allies_names = true, allies_style = 0,
+	}
+	ae.clear_known()
+	cur_fov = 50 -- view_zoom ~ 1.59 -> range ~ 15.9, dot_dist ~ 11.1
+	npc_pos:set(0, 0, 13) -- between dot_dist (11.1) and range (15.9) -> dot-only target
+	npc_head:set(0, 1.6, 13)
+	npc_spine:set(0, 1.0, 13)
+	last_draw.dot = nil
+	now_ms = 8000
+	ae.update(pool, short_cfg, lens, true)
+	now_ms = 8050
+	ae.update(pool, short_cfg, lens, true)
+	check(last_draw.dot == nil, "dot-only target is hidden while FOV scoped in")
+
+	-- (a) Already-tracked dot hides when scoping in via FOV zoom, and returns when unscoping
+	ae.clear_known()
+	cur_fov = 75
+	npc_pos:set(0, 0, 8.5) -- unscoped: range=10, dot_dist=7 -> dot
+	npc_head:set(0, 1.6, 8.5)
+	npc_spine:set(0, 1.0, 8.5)
+	last_draw.dot = nil
+	now_ms = 8100
+	ae.update(pool, short_cfg, lens, true)
+	now_ms = 8150
+	ae.update(pool, short_cfg, lens, true)
+	check(last_draw.dot ~= nil, "already-tracked target draws dot while unscoped")
+	-- Scope in with short_cfg2 where 8.5m stays > dot_dist even zoomed (range=8, dot_dist=5.6 -> zoomed 1.59x: range=12.7, dot_dist=8.9 -> use 10.5m? Instead test PiP scope with 13m)
+	local tiny_cfg = {
+		allies = true, allies_range = 8, allies_dot_ratio = 0.7, allies_los = false,
+		allies_enemies = true, allies_mutants = true, allies_size = 1, allies_opacity = 1,
+		allies_color_companion = 2, allies_color_friend = 1, allies_color_enemy = 5,
+		allies_names = true, allies_style = 0,
+	}
+	ae.clear_known()
+	cur_fov = 75
+	npc_pos:set(0, 0, 7.0) -- unscoped: range=8, dot_dist=5.6 -> dot
+	npc_head:set(0, 1.6, 7.0)
+	npc_spine:set(0, 1.0, 7.0)
+	last_draw.dot = nil
+	now_ms = 8200
+	ae.update(pool, tiny_cfg, lens, true)
+	now_ms = 8250
+	ae.update(pool, tiny_cfg, lens, true)
+	check(last_draw.dot ~= nil, "unscoped dot-only target at 7m draws dot")
+	cur_fov = 65 -- view_zoom ~ 1.18 > 1.05 -> dot_dist ~ 6.6m, so 7m stays target_dot == 1
+	last_draw.dot = nil
+	now_ms = 8300
+	ae.update(pool, tiny_cfg, lens, true)
+	check(last_draw.dot == nil, "already-tracked dot hides immediately when FOV scoping in")
+
+	-- (b) PiP scope hides dot-only targets
+	ae.clear_known()
+	cur_fov = 75
+	local orig_pip_refresh2 = ae.pip_refresh
+	ae.pip_refresh = function() ae.PIP.m = 1.5; ae.PIP.r = 0.25; return ae.PIP end
+	npc_pos:set(0, 0, 10.0) -- with m=1.5: range=12, dot_dist=8.4 -> 10m is dot-only
+	npc_head:set(0, 1.6, 10.0)
+	npc_spine:set(0, 1.0, 10.0)
+	last_draw.dot = nil
+	now_ms = 8400
+	ae.update(pool, tiny_cfg, lens, true)
+	now_ms = 8450
+	ae.update(pool, tiny_cfg, lens, true)
+	check(last_draw.dot == nil, "dot-only target is hidden while PiP scoped in")
+	ae.pip_refresh = orig_pip_refresh2
+	ae.PIP.m = 1
+
+	-- (c) Unscoped mid-body clip (head & feet unprojectable) does NOT fall back to head or spine box
+	ae.clear_known()
+	cur_fov = 75
+	cam_pos_v.y = 1.0
+	npc_pos:set(0, 0, 20)
+	npc_head:set(0, 1.6, 20)
+	npc_spine:set(0, 1.0, 20)
+	clip_above_y = 1.3
+	clip_below_y = 0.5
+	last_draw.brk = nil
+	now_ms = 8500
+	ae.update(pool, cfg, lens, true)
+	now_ms = 8550
+	ae.update(pool, cfg, lens, true)
+	check(last_draw.brk == nil, "unscoped mid-body clip (head & feet off-screen) does NOT fall back to head/spine box")
+	clip_above_y = nil
+	clip_below_y = nil
+	cam_pos_v.y = 1.6
+end
+
+-- 12. Dual-view 3DSS PiP projection & zero dots while scoped in:
+--     - stalker inside PiP lens gets magnified box (with clipped-body head-tracking if needed)
+--     - stalker nearby outside PiP lens (right side of screen) STILL gets a 1x main-camera full-body box
+--     - stalker behind PiP lens circle (when gun aim is offset) does NOT draw a 1x box inside the lens
+--     - distant target outside base cfg.allies_range outside lens does NOT get a 1x box
+--     - zero dots (neither distant dots nor companion_edge dots) appear while PiP scoped in
+do
+	local now_ms = 1000
+	local sw, sh = 1920, 1080
+	local ux, uy = 1024 / sw, 768 / sh
+	local cur_fov = 75
+	local pip_on = false
+	local pip_m, pip_r, pip_au, pip_av = 4.0, 0.18, 0.5, 0.5
+	local cam_pos_v = { x = 0, y = 1.6, z = 0 }
+	local cam_dir_v = { x = 0, y = 0, z = 1 }
+
+	local function make_vec(x, y, z)
+		local v = { x = x or 0, y = y or 0, z = z or 0 }
+		function v:set(nx, ny, nz) self.x, self.y, self.z = nx or 0, ny or 0, nz or 0; return self end
+		function v:distance_to(o) local dx, dy, dz = self.x - o.x, self.y - o.y, self.z - o.z; return math.sqrt(dx*dx+dy*dy+dz*dz) end
+		function v:distance_to_sqr(o) local dx, dy, dz = self.x - o.x, self.y - o.y, self.z - o.z; return dx*dx+dy*dy+dz*dz end
+		return v
+	end
+
+	local function make_slot_wnd()
+		local w = { shown = false, cx = 0, cy = 0, w = 0, h = 0 }
+		return setmetatable(w, { __index = {
+			Show = function(self, v) self.shown = v and true or false end,
+			SetWndPos = function(self, p) self._px, self._py = p.x, p.y end,
+			SetWndSize = function(self, s)
+				self.w, self.h = s.x, s.y
+				self.cx = (self._px or 0) + s.x * 0.5
+				self.cy = (self._py or 0) + s.y * 0.5
+			end,
+			SetTextureColor = function(self, c) self._col = c end,
+			SetTextureRect = function() end,
+			InitTexture = function() end,
+			SetStretchTexture = function() end,
+		} })
+	end
+
+	local function make_npc(name, x, y, z, is_companion)
+		local pos = make_vec(x, y, z)
+		local head = make_vec(x, y + 1.6, z)
+		local spine = make_vec(x, y + 1.0, z)
+		return {
+			_pos = pos, _head = head, _spine = spine,
+			alive = function() return true end,
+			position = function() return pos end,
+			relation = function() return 0 end,
+			has_info = function(_, info) return is_companion and info == "npcx_is_companion" or false end,
+			character_name = function() return name end,
+			character_community = function() return "stalker" end,
+		}
+	end
+
+	-- IDs:
+	-- 201: inside PiP lens (center, 30m)
+	-- 202: nearby outside PiP lens on right side of screen (x=8, z=15 -> ~17m, u ~ 0.89 -> cx ~ 910)
+	-- 203: distant outside lens (x=45, z=65 -> ~79m > allies_range=50, u ~ 0.96 -> must NOT get 1x box)
+	-- 204: distant dot-range inside lens (x=0, z=150 -> between dot_dist=140 and range=200 when pip_m=4)
+	-- 205: off-screen companion behind/right (x=12, z=-5 -> triggers edge dot unscoped, hidden when scoped)
+	local npcs = {
+		[201] = make_npc("InsideLens", 0, 0, 30, false),
+		[202] = make_npc("OutsideRight", 8, 0, 15, false),
+		[203] = make_npc("TooFarRight", 45, 0, 65, false),
+		[204] = make_npc("FarDotLens", 0, 0, 150, false),
+		[205] = make_npc("EdgeComp", 12, 0, -5, true),
+	}
+	local active_ids = { [201] = true, [202] = true, [203] = true, [204] = true, [205] = true }
+
+	local storage = {}
+	for id, obj in pairs(npcs) do
+		if active_ids[id] then storage[id] = { object = obj } end
+	end
+
+	local actor = { position = function() return make_vec(0, 0, 0) end, see = function() return true end }
+
+	local function persp_world2ui(v)
+		local dx, dy, dz = v.x - cam_pos_v.x, v.y - cam_pos_v.y, v.z - cam_pos_v.z
+		if dz <= 0.1 then return { x = -9999, y = -9999 } end
+		local tan_half = math.tan(math.rad(cur_fov) * 0.5)
+		local aspect = sw / sh
+		local u = 0.5 + 0.5 * (dx / (dz * tan_half * aspect))
+		local vv = 0.5 - 0.5 * (dy / (dz * tan_half))
+		return { x = u * 1024, y = vv * 768 }
+	end
+
+	local ae = setmetatable({
+		db = { actor = actor, storage = storage },
+		level = { object_by_id = function(id) return active_ids[id] and npcs[id] or nil end },
+		game_object = { enemy = 2, friend = 0, neutral = 1 },
+		IsStalker = function() return true end,
+		IsMonster = function() return false end,
+		utils_obj = {
+			safe_bone_pos = function(obj, bone)
+				if bone == "bip01_head" then return obj._head end
+				if bone == "bip01_spine" then return obj._spine end
+				return nil
+			end,
+		},
+		game = { world2ui = persp_world2ui, translate_string = function(s) return s end },
+		device = function()
+			return {
+				width = sw, height = sh, fov = cur_fov,
+				cam_pos = make_vec(cam_pos_v.x, cam_pos_v.y, cam_pos_v.z),
+				cam_dir = make_vec(cam_dir_v.x, cam_dir_v.y, cam_dir_v.z),
+			}
+		end,
+		get_console = function() return { get_float = function() return 75 end } end,
+		time_global = function() return now_ms end,
+		vector = make_vec, vector2 = make_vec, Frect = make_vec,
+		GetARGB = function(a, r, g, b) return { a = a, r = r, g = g, b = b } end,
+		RegisterScriptCallback = function() end,
+	}, { __index = _G })
+
+	local c = assert(loadfile(PATH))
+	setfenv(c, ae)
+	c()
+
+	ae.pip_refresh = function()
+		if pip_on then
+			ae.PIP.m = pip_m
+			ae.PIP.r = pip_r
+			ae.PIP.au = pip_au
+			ae.PIP.av = pip_av
+		else
+			ae.PIP.m = 1
+			ae.PIP.au = 0.5
+			ae.PIP.av = 0.5
+		end
+		ae.PIP.a = sw / sh
+		return ae.PIP
+	end
+
+	local pool = { edges = {} }
+	for i = 1, 8 do
+		pool[i] = { box = make_slot_wnd(), brk = make_slot_wnd(), dot = make_slot_wnd() }
+	end
+	for i = 1, 4 do
+		pool.edges[i] = make_slot_wnd()
+	end
+
+	local cfg = {
+		allies = true, allies_range = 50, allies_dot_ratio = 0.7, allies_los = false,
+		allies_enemies = true, allies_mutants = true, allies_size = 1, allies_opacity = 1,
+		allies_color_companion = 2, allies_color_friend = 1, allies_color_enemy = 5,
+		allies_names = false, allies_style = 0, allies_companion_edge = true,
+	}
+	local lens = { k = 0, ox = 0, oy = 0, roll = 0, dist = 0, zoom = 1, shutter = 0 }
+
+	local function collect_shown()
+		local brks, dots, edges = {}, {}, {}
+		for i = 1, #pool do
+			if pool[i].brk.shown then brks[#brks + 1] = pool[i].brk end
+			if pool[i].dot.shown then dots[#dots + 1] = pool[i].dot end
+		end
+		for i = 1, #pool.edges do
+			if pool.edges[i].shown then edges[#edges + 1] = pool.edges[i] end
+		end
+		return brks, dots, edges
+	end
+
+	-- Step A: Unscoped baseline -> 201 (center), 202 (right) get 1x boxes; 205 gets edge dot
+	pip_on = false
+	for _ = 1, 8 do
+		ae.update(pool, cfg, lens, true)
+		now_ms = now_ms + 80
+	end
+	ae.update(pool, cfg, lens, true)
+	local u_brks, u_dots, u_edges = collect_shown()
+	check(#u_brks == 2, ("unscoped: 2 boxes shown (got %d)"):format(#u_brks))
+	check(#u_edges == 1, ("unscoped: off-screen companion edge dot shown (got %d)"):format(#u_edges))
+	local unscoped_center_h, unscoped_right_cx, unscoped_right_h
+	for _, b in ipairs(u_brks) do
+		if math.abs(b.cx - 512) < 5 then
+			unscoped_center_h = b.h
+		elseif b.cx > 700 then
+			unscoped_right_cx = b.cx
+			unscoped_right_h = b.h
+		end
+	end
+	check(unscoped_center_h and unscoped_right_cx and unscoped_right_h, "unscoped: found both center and right boxes")
+
+	-- Step B: PiP scope active (4x) ->
+	--   201 (inside lens) gets 4x magnified box at center
+	--   202 (nearby outside lens on right) STILL gets 1x full-body box at same cx/height
+	--   203 (79m > allies_range=50, outside lens) does NOT get a 1x box
+	--   204 (150m > dot_dist=140, inside lens) does NOT draw a dot
+	--   205 (off-screen companion) does NOT draw an edge dot
+	pip_on = true
+	now_ms = now_ms + 300 -- force rescan at range = 200m
+	ae.update(pool, cfg, lens, true)
+	now_ms = now_ms + 80
+	ae.update(pool, cfg, lens, true)
+	local p_brks, p_dots, p_edges = collect_shown()
+	check(#p_dots == 0, ("PiP scoped: zero regular dots shown (got %d)"):format(#p_dots))
+	check(#p_edges == 0, ("PiP scoped: zero companion edge dots shown (got %d)"):format(#p_edges))
+	check(#p_brks == 2, ("PiP scoped: exactly 2 boxes shown (inside lens + nearby outside lens, not >base_range; got %d)"):format(#p_brks))
+
+	local pip_center_b, pip_right_b
+	for _, b in ipairs(p_brks) do
+		if math.abs(b.cx - 512) < 5 then
+			pip_center_b = b
+		elseif b.cx > 700 then
+			pip_right_b = b
+		end
+	end
+	check(pip_center_b ~= nil, "PiP scoped: stalker inside lens keeps box")
+	if pip_center_b and unscoped_center_h then
+		check(pip_center_b.h > unscoped_center_h * 3.0,
+			("PiP scoped: in-lens box is magnified (unscoped=%.1f, pip=%.1f)"):format(unscoped_center_h, pip_center_b.h))
+	end
+	check(pip_right_b ~= nil, "PiP scoped: stalker standing nearby outside lens STILL gets 1x box on right side")
+	if pip_right_b and unscoped_right_cx and unscoped_right_h then
+		check(math.abs(pip_right_b.cx - unscoped_right_cx) < 1.0 and math.abs(pip_right_b.h - unscoped_right_h) < 1.0,
+			("PiP scoped: outside-lens box stays unmagnified 1x (cx=%.1f vs %.1f, h=%.1f vs %.1f)"):format(
+				pip_right_b.cx, unscoped_right_cx, pip_right_b.h, unscoped_right_h))
+		local px_w = pip_right_b.w / ux
+		local px_h = pip_right_b.h / uy
+		check(px_h > px_w * 1.5, "PiP scoped: outside-lens 1x box stays tall full-body (not head-tracking)")
+	end
+
+	-- Step C: Decoupled gun aim offset (PIP.au = 0.65) while stalker 201 is at screen centre (u=0.50):
+	--   In-lens magnified projection misses 201 (0.5 + (0.5 - 0.65)*4 = -0.10, outside lens),
+	--   AND outside-lens 1x fallback MUST reject 201 because its 1x center (512, 384) is inside the lens circle!
+	pip_au = 0.65
+	now_ms = now_ms + 80
+	ae.update(pool, cfg, lens, true)
+	for _ = 1, 10 do
+		now_ms = now_ms + 80
+		ae.update(pool, cfg, lens, true)
+	end
+	local o_brks, o_dots, o_edges = collect_shown()
+	local ghost_center = false
+	for _, b in ipairs(o_brks) do
+		if math.abs(b.cx - 512) < 5 then ghost_center = true end
+	end
+	check(not ghost_center, "PiP scoped: target behind scope lens circle does NOT draw a ghost 1x box inside the lens")
+	check(#o_dots == 0 and #o_edges == 0, "PiP scoped: still zero dots with offset aim")
+
+	-- Step D: Unscoping brings back companion edge dot
+	pip_on = false
+	pip_au = 0.5
+	now_ms = now_ms + 80
+	ae.update(pool, cfg, lens, true)
+	local _, _, r_edges = collect_shown()
+	check(#r_edges == 1, ("unscoping restores companion edge dot (got %d)"):format(#r_edges))
+
+	-- Step E: Outside-lens 1x fade-out past base_range never flashes alpha upward
+	pip_on = true
+	pip_au = 0.5
+	-- Move 202 to 48.9m (just inside base_range=50, on right side of screen)
+	npcs[202]._pos:set(25, 0, 42)
+	npcs[202]._head:set(25, 1.6, 42)
+	npcs[202]._spine:set(25, 1.0, 42)
+	for _ = 1, 8 do
+		now_ms = now_ms + 80
+		ae.update(pool, cfg, lens, true)
+	end
+	local near_alpha = nil
+	for i = 1, #pool do
+		if pool[i].brk.shown and pool[i].brk.cx > 700 then
+			near_alpha = pool[i].brk._col and pool[i].brk._col.a
+		end
+	end
+	check(near_alpha ~= nil and near_alpha > 0 and near_alpha < 30,
+		("outside-lens stalker near base_range (48.9m) has faded alpha (got %s)"):format(tostring(near_alpha)))
+	-- Step past base_range to 51.1m -> alpha must not flash upward toward 255
+	npcs[202]._pos:set(26, 0, 44)
+	npcs[202]._head:set(26, 1.6, 44)
+	npcs[202]._spine:set(26, 1.0, 44)
+	now_ms = now_ms + 80
+	ae.update(pool, cfg, lens, true)
+	local past_alpha = 0
+	for i = 1, #pool do
+		if pool[i].brk.shown and pool[i].brk.cx > 700 then
+			past_alpha = pool[i].brk._col and pool[i].brk._col.a or 0
+		end
+	end
+	check(near_alpha and past_alpha <= near_alpha,
+		("stepping past base_range does NOT flash alpha upward (%s -> %s)"):format(tostring(near_alpha), tostring(past_alpha)))
 end
 
 if failures > 0 then
