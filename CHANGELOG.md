@@ -52,6 +52,9 @@
   - Test: `tools/tests/zbc_allies_label_test.lua`.
 
 ### Changed
+- **Front-of-face blur filter (`zbc_faces.script`)**:
+  - Face pixelation now checks whether each stalker's face is actually oriented toward the camera (`face_visible_to_cam` with `FACING_COS = 0.15`), so the back of a head and back-3/4 views are left unblurred.
+  - Resolves true 3D face orientation and centers the mosaic on the face plane using `eye_left`, `eye_right`, and `jaw_1` bones (working for both alive head-turning stalkers and ragdolled corpses), with `head_orientation()` / `direction()` fallback for alive NPCs without eye bones.
 - **Aim-gated marker labels (`zbc_allies.script`)**:
   - Non-companion stalkers and mutants keep their bounding box visible whenever on screen and in line of sight, but their name, faction, and info/distance label text is shown only while looking at them (`aimed` or `is_target`) and hidden when looking away (preserving identification progress and `known` state).
   - Companions (`npcx_is_companion`) show both their bounding box and label text at all times from frame 1 while on screen and in line of sight.

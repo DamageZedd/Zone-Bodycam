@@ -24,6 +24,8 @@ local SCAN_INTERVAL = 0.25   -- seconds between candidate rescans
 local LOS_INTERVAL  = 0.1    -- seconds between line-of-sight checks per NPC
 local HEAD_UP       = 0.07   -- metres from the head bone up to the middle of the face
 local HEAD_HALF     = 0.17   -- half the side of the square around the face, metres
+local FACE_FWD      = 0.08   -- metres forward from head bone to face plane when eye bones are absent
+FACING_COS          = 0.15   -- min dot(face_dir, to_cam) to blur (~81 deg; skips back and back-3/4)
 BLOCKS              = 8      -- blocks across the square on a near face (even)
 MIN_BLOCK_PX        = 5      -- smaller faces still get blocks at least this many pixels tall...
 MIN_FACE_PX         = 3      -- ...and faces with a half side under this many pixels are not pixelated
@@ -234,6 +236,69 @@ local function visible(actor, obj, id, now, cam)
 	return e.ok
 end
 
+-- Returns true when a face at (fx, fy, fz) with forward direction (dx, dy, dz) is facing the
+-- camera at (cx, cy, cz). Missing direction or camera defaults to true so mocks without facing
+-- APIs still blur.
+function face_visible_to_cam(fx, fy, fz, dx, dy, dz, cx, cy, cz)
+	if not (dx and dy and dz and cx and cy and cz) then return true end
+	local dlen = sqrt(dx * dx + dy * dy + dz * dz)
+	if dlen < 1e-6 then return true end
+	local vx, vy, vz = cx - fx, cy - fy, cz - fz
+	local vlen = sqrt(vx * vx + vy * vy + vz * vz)
+	if vlen < 1e-6 then return true end
+	return (dx * vx + dy * vy + dz * vz) / (dlen * vlen) > FACING_COS
+end
+
+-- Resolves face centre (fx, fy, fz) and forward direction (dx, dy, dz) from eye/jaw bones when
+-- present (works for both alive head-turning stalkers and ragdolled corpses), falling back to
+-- head_orientation() / direction() for alive NPCs without eye bones.
+local function face_pose(obj, head)
+	if obj.get_bone_id and obj.bone_position then
+		local l_id = obj:get_bone_id("eye_left")
+		local r_id = obj:get_bone_id("eye_right")
+		if l_id and l_id ~= 65535 and r_id and r_id ~= 65535 then
+			local el = obj:bone_position("eye_left")
+			local er = obj:bone_position("eye_right")
+			if el and er then
+				local ex = 0.5 * (el.x + er.x)
+				local ey = 0.5 * (el.y + er.y)
+				local ez = 0.5 * (el.z + er.z)
+				local dx, dy, dz = ex - head.x, ey - head.y, ez - head.z
+				local j_id = obj:get_bone_id("jaw_1")
+				if j_id and j_id ~= 65535 then
+					local jaw = obj:bone_position("jaw_1")
+					if jaw then
+						local ux, uy, uz = ex - jaw.x, ey - jaw.y, ez - jaw.z
+						local ulen = sqrt(ux * ux + uy * uy + uz * uz)
+						if ulen > 1e-4 then
+							ux, uy, uz = ux / ulen, uy / ulen, uz / ulen
+							local proj = dx * ux + dy * uy + dz * uz
+							local fx, fy, fz = dx - proj * ux, dy - proj * uy, dz - proj * uz
+							if fx * fx + fy * fy + fz * fz > 1e-6 then
+								dx, dy, dz = fx, fy, fz
+							end
+						end
+					end
+				end
+				return ex, ey, ez, dx, dy, dz
+			end
+		end
+	end
+	local fx, fy, fz = head.x, head.y + HEAD_UP, head.z
+	if obj.alive and obj:alive() then
+		local d = (IsStalker and IsStalker(obj) and obj.head_orientation and obj:head_orientation())
+			or (obj.direction and obj:direction())
+		if d then
+			local dlen = sqrt(d.x * d.x + d.y * d.y + d.z * d.z)
+			if dlen > 1e-4 then
+				local dx, dy, dz = d.x / dlen, d.y / dlen, d.z / dlen
+				return fx + dx * FACE_FWD, fy + dy * FACE_FWD, fz + dz * FACE_FWD, dx, dy, dz
+			end
+		end
+	end
+	return fx, fy, fz, nil, nil, nil
+end
+
 -- Returns rows, n, aspect: up to max_n squares { cu, cv, half_v, blk_v }, nearest first.
 function update(actor, max_n)
 	if not actor then return rows, 0, 16 / 9 end
@@ -293,52 +358,57 @@ function update(actor, max_n)
 		end
 		local head = obj and utils_obj.safe_bone_pos(obj, "bip01_head")
 		if head then
-			tmp_c:set(head.x, head.y + HEAD_UP, head.z)
-			-- Dual-view 3DSS PiP projection: inside the lens we use magnified pip_map; outside the
-			-- circular lens we keep the raw 1x main-camera view so nearby faces stay pixelated.
-			local ru, rv = project_raw(tmp_c)
-			local cu, cv, use_pip
-			if ru then
-				if pip_on then
-					local mu, mv, in_lens = zbc_allies.pip_map(ru, rv, P)
-					if in_lens then
-						cu, cv, use_pip = mu, mv, true
-					else
-						local pa = (P and P.a) or a
-						local pr = (P and P.r) or 0.12
-						local dx, dy = (ru - 0.5) * pa, rv - 0.5
-						if dx * dx + dy * dy > pr * pr then
-							cu, cv, use_pip = ru, rv, false
+			local fx, fy, fz, dx, dy, dz = face_pose(obj, head)
+			if not cam or face_visible_to_cam(fx, fy, fz, dx, dy, dz, cam.x, cam.y, cam.z) then
+				tmp_c:set(fx, fy, fz)
+				-- Dual-view 3DSS PiP projection: inside the lens we use magnified pip_map; outside the
+				-- circular lens we keep the raw 1x main-camera view so nearby faces stay pixelated.
+				local ru, rv = project_raw(tmp_c)
+				local cu, cv, use_pip
+				if ru then
+					if pip_on then
+						local mu, mv, in_lens = zbc_allies.pip_map(ru, rv, P)
+						if in_lens then
+							cu, cv, use_pip = mu, mv, true
+						else
+							local pa = (P and P.a) or a
+							local pr = (P and P.r) or 0.12
+							local dx_l, dy_l = (ru - 0.5) * pa, rv - 0.5
+							if dx_l * dx_l + dy_l * dy_l > pr * pr then
+								cu, cv, use_pip = ru, rv, false
+							end
 						end
+					else
+						cu, cv, use_pip = ru, rv, false
 					end
-				else
-					cu, cv, use_pip = ru, rv, false
 				end
-			end
-			if cu and cu > -0.25 and cu < 1.25 and cv > -0.25 and cv < 1.25 then
-				tmp_t:set(tmp_c.x + side.x * HEAD_HALF, tmp_c.y + side.y * HEAD_HALF, tmp_c.z + side.z * HEAD_HALF)
-				local tu, tv = project_point(tmp_t, use_pip, P)   -- only sizes the square: may lie past the lens edge
-				if not tu then
-					tmp_t:set(tmp_c.x - side.x * HEAD_HALF, tmp_c.y - side.y * HEAD_HALF, tmp_c.z - side.z * HEAD_HALF)
-					tu, tv = project_point(tmp_t, use_pip, P)
-				end
-				local half, blk
-				if tu then half, blk = face_square(cu, cv, tu, tv, a, H) end
-				if half and (cu + half / a > 0 and cu - half / a < 1 and cv + half > 0 and cv - half < 1)
-					and visible(actor, obj, id, now, cam) then
-					n = n + 1
-					local r = rows[n]
-					if not r then
-						r = {}
-						rows[n] = r
+				if cu and cu > -0.25 and cu < 1.25 and cv > -0.25 and cv < 1.25 then
+					tmp_t:set(tmp_c.x + side.x * HEAD_HALF, tmp_c.y + side.y * HEAD_HALF, tmp_c.z + side.z * HEAD_HALF)
+					local tu, tv = project_point(tmp_t, use_pip, P)   -- only sizes the square: may lie past the lens edge
+					if not tu then
+						tmp_t:set(tmp_c.x - side.x * HEAD_HALF, tmp_c.y - side.y * HEAD_HALF, tmp_c.z - side.z * HEAD_HALF)
+						tu, tv = project_point(tmp_t, use_pip, P)
 					end
-					-- one frame ahead: the square is placed from this frame's camera but drawn on the
-					-- next, so it would trail a fast turn; move it on by its own last step
-					local pu, pv = predict(last_uv[id], cu, cv, use_pip)
-					last_uv[id] = last_uv[id] or {}
-					last_uv[id][1], last_uv[id][2], last_uv[id][3] = cu, cv, use_pip
-					r[1], r[2], r[3], r[4] = pu, pv, half, blk
+					local half, blk
+					if tu then half, blk = face_square(cu, cv, tu, tv, a, H) end
+					if half and (cu + half / a > 0 and cu - half / a < 1 and cv + half > 0 and cv - half < 1)
+						and visible(actor, obj, id, now, cam) then
+						n = n + 1
+						local r = rows[n]
+						if not r then
+							r = {}
+							rows[n] = r
+						end
+						-- one frame ahead: the square is placed from this frame's camera but drawn on the
+						-- next, so it would trail a fast turn; move it on by its own last step
+						local pu, pv = predict(last_uv[id], cu, cv, use_pip)
+						last_uv[id] = last_uv[id] or {}
+						last_uv[id][1], last_uv[id][2], last_uv[id][3] = cu, cv, use_pip
+						r[1], r[2], r[3], r[4] = pu, pv, half, blk
+					end
 				end
+			else
+				last_uv[id] = nil
 			end
 		end
 	end

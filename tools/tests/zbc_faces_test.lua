@@ -333,6 +333,133 @@ do
 	check(near(pu, 0.52) and near(pv, 0.50), "predict() does not extrapolate across 1x <-> magnified switch")
 end
 
+-- Pure facing helper: front and 3/4 front blur; exact side, 3/4 back, and back do not
+local fv = rawget(env, "face_visible_to_cam")
+check(type(fv) == "function", "face_visible_to_cam exists")
+if type(fv) == "function" then
+	-- camera at (0, 1.6, 0), face at (0, 1.6, 5) -> to_cam is (0, 0, -1)
+	check(fv(0, 1.6, 5, 0, 0, -1, 0, 1.6, 0), "facing camera (dot = 1.0) -> blurred")
+	check(fv(0, 1.6, 5, 0.866, 0, -0.5, 0, 1.6, 0), "3/4 front (dot = 0.5) -> blurred")
+	check(not fv(0, 1.6, 5, 1, 0, 0, 0, 1.6, 0), "exact side (dot = 0.0) -> not blurred")
+	check(not fv(0, 1.6, 5, 0.866, 0, 0.5, 0, 1.6, 0), "3/4 back (dot = -0.5) -> not blurred")
+	check(not fv(0, 1.6, 5, 0, 0, 1, 0, 1.6, 0), "back of head (dot = -1.0) -> not blurred")
+	check(fv(0, 1.6, 5, nil, nil, nil, 0, 1.6, 0), "missing direction defaults to blurred")
+	check(fv(0, 1.6, 5, 0, 0, 0, 0, 1.6, 0), "zero direction defaults to blurred")
+	check(fv(0, 1.6, 5, 0, 0, 1, nil, nil, nil), "missing camera defaults to blurred")
+end
+
+-- End-to-end update() facing checks: eye bones (alive + ragdoll corpses) and direction/head_orientation fallback
+do
+	local npcs = {}
+	local function mkvec(x, y, z)
+		return { x = x or 0, y = y or 0, z = z or 0, set = function(self, nx, ny, nz) self.x, self.y, self.z = nx, ny, nz; return self end, distance_to_sqr = function(a, b) local dx, dy, dz = a.x - b.x, a.y - b.y, a.z - b.z; return dx*dx + dy*dy + dz*dz end }
+	end
+	local function mk_bone_npc(id_alive, pos, head, eye_l, eye_r, jaw)
+		local bones = { bip01_head = head, eye_left = eye_l, eye_right = eye_r, jaw_1 = jaw }
+		local ids = { bip01_head = 1, eye_left = eye_l and 16 or 65535, eye_right = eye_r and 17 or 65535, jaw_1 = jaw and 19 or 65535 }
+		return {
+			alive = function() return id_alive end,
+			position = function() return pos end,
+			_head = head,
+			get_bone_id = function(_, name) return ids[name] or 65535 end,
+			bone_position = function(_, name) return bones[name] or pos end,
+		}
+	end
+	local fenv
+	fenv = setmetatable({
+		time_global = function() return 1000 end,
+		vector = function() return mkvec(0, 0, 0) end,
+		device = function()
+			return {
+				width = 1920, height = 1080, fov = 75,
+				cam_pos = { x = 0, y = 1.6, z = 0 },
+				cam_dir = { x = 0, y = 0, z = 1 },
+			}
+		end,
+		IsStalker = function() return true end,
+		db = { storage = {} },
+		level = { object_by_id = function(id) return npcs[id] end },
+		utils_obj = { safe_bone_pos = function(obj, bone) return obj.bone_position and obj:bone_position(bone) or obj._head end },
+		zbc_allies = { los_point = function() return true end },
+		game = {
+			world2ui = function(v)
+				if v.z <= 0.05 then return { x = -9999, y = -9999 } end
+				local u = 0.5 + (v.x / v.z) * 0.5
+				local vv = 0.5 - (v.y - 1.6) / v.z
+				return { x = u * 1024, y = vv * 768 }
+			end,
+		},
+	}, { __index = _G })
+	local fchunk = assert(loadfile(PATH))
+	setfenv(fchunk, fenv)
+	fchunk()
+
+	-- 201: Alive stalker with eye bones facing camera (-Z), at x = -1.0, z = 3.0 -> blurred at eye_mid
+	npcs[201] = mk_bone_npc(true, mkvec(-1.0, 0, 3.0),
+		mkvec(-1.0, 1.53, 3.0), mkvec(-1.03, 1.60, 2.92), mkvec(-0.97, 1.60, 2.92), mkvec(-1.0, 1.50, 2.92))
+	-- 202: Alive stalker with eye bones facing away (+Z), at x = -0.3, z = 3.0 -> NOT blurred
+	npcs[202] = mk_bone_npc(true, mkvec(-0.3, 0, 3.0),
+		mkvec(-0.3, 1.53, 3.0), mkvec(-0.33, 1.60, 3.08), mkvec(-0.27, 1.60, 3.08), mkvec(-0.3, 1.50, 3.08))
+	-- 203: Corpse lying face-up (+Y) at x = 0.3, z = 3.0, y = 0.15 -> blurred
+	npcs[203] = mk_bone_npc(false, mkvec(0.3, 0, 3.0),
+		mkvec(0.3, 0.15, 3.0), mkvec(0.27, 0.23, 3.07), mkvec(0.33, 0.23, 3.07), mkvec(0.3, 0.23, 2.97))
+	-- 204: Corpse lying face-down (-Y) at x = 0.9, z = 3.0, y = 0.15 -> NOT blurred
+	npcs[204] = mk_bone_npc(false, mkvec(0.9, 0, 3.0),
+		mkvec(0.9, 0.15, 3.0), mkvec(0.87, 0.07, 3.07), mkvec(0.93, 0.07, 3.07), mkvec(0.9, 0.07, 2.97))
+	-- 205: Alive stalker without eye bones, direction() facing camera (-Z) -> blurred
+	npcs[205] = {
+		alive = function() return true end,
+		position = function() return mkvec(1.5, 0, 3.0) end,
+		_head = mkvec(1.5, 1.53, 3.0),
+		get_bone_id = function() return 65535 end,
+		bone_position = function(self) return self._head end,
+		direction = function() return mkvec(0, 0, -1) end,
+	}
+	-- 206: Alive stalker without eye bones, direction() facing away (+Z) -> NOT blurred
+	npcs[206] = {
+		alive = function() return true end,
+		position = function() return mkvec(2.0, 0, 3.0) end,
+		_head = mkvec(2.0, 1.53, 3.0),
+		get_bone_id = function() return 65535 end,
+		bone_position = function(self) return self._head end,
+		direction = function() return mkvec(0, 0, 1) end,
+	}
+	-- 207: Alive stalker without eye bones, body facing away (+Z) but head_orientation() turned toward camera (-Z) -> blurred
+	npcs[207] = {
+		alive = function() return true end,
+		position = function() return mkvec(-1.8, 0, 3.0) end,
+		_head = mkvec(-1.8, 1.53, 3.0),
+		get_bone_id = function() return 65535 end,
+		bone_position = function(self) return self._head end,
+		direction = function() return mkvec(0, 0, 1) end,
+		head_orientation = function() return mkvec(0, 0, -1) end,
+	}
+
+	for id, npc in pairs(npcs) do fenv.db.storage[id] = { object = npc } end
+	local actor = { position = function() return mkvec(0, 0, 0) end, see = function() return true end }
+	fenv.update(actor, 64)
+	fenv.time_global = function() return 1200 end
+	local rows, n = fenv.update(actor, 64)
+	check(n == 4, "facing filter blurs only the 4 facing NPCs (201, 203, 205, 207), got n=" .. tostring(n))
+	if n == 4 then
+		local exp_201 = 0.5 + (-1.0 / 2.92) * 0.5
+		local exp_203 = 0.5 + (0.3 / 3.07) * 0.5
+		local exp_205 = 0.5 + (1.5 / 2.92) * 0.5
+		local exp_207 = 0.5 + (-1.8 / 2.92) * 0.5
+		local got_201, got_203, got_205, got_207 = false, false, false, false
+		for i = 1, n do
+			if math.abs(rows[i][1] - exp_201) < 1e-4 then got_201 = true end
+			if math.abs(rows[i][1] - exp_203) < 1e-4 then got_203 = true end
+			if math.abs(rows[i][1] - exp_205) < 1e-4 then got_205 = true end
+			if math.abs(rows[i][1] - exp_207) < 1e-4 then got_207 = true end
+		end
+		check(got_201, "alive stalker facing cam via eye bones is blurred at eye_mid")
+		check(got_203, "face-up corpse via eye/jaw bones is blurred")
+		check(got_205, "alive stalker facing cam via direction() fallback is blurred")
+		check(got_207, "alive stalker with head_orientation() toward cam is blurred despite body facing away")
+	end
+end
+
 if failures > 0 then
 	print(failures .. " check(s) failed")
 	os.exit(1)
