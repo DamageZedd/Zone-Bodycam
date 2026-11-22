@@ -1520,14 +1520,47 @@ do
 	check(s_stk ~= nil and any_glyph_shown(s_stk.lbl.name) and any_glyph_shown(s_stk.lbl.fac) and any_glyph_shown(s_stk.lbl.info),
 		"non-companion aimed at: name, faction, and info glyphs are all shown")
 
-	-- Look away again -> label hides while box stays
+	-- Look away again -> label fades out smoothly over ~0.25s while box stays
 	cam_dir_v.x, cam_dir_v.z = 0, 1
 	now_ms = now_ms + 80
 	ae.update(pool, cfg, lens, true)
 	p_stk = persp_world2ui(npcs[301]._head)
 	s_stk = find_slot_near(p_stk.x)
+	check(s_stk ~= nil and s_stk.brk.shown and label_shown(s_stk.lbl),
+		"looking away from non-companion fades label out smoothly (still visible at 80ms)")
+	for _ = 1, 5 do
+		now_ms = now_ms + 80
+		ae.update(pool, cfg, lens, true)
+	end
+	s_stk = find_slot_near(p_stk.x)
 	check(s_stk ~= nil and s_stk.brk.shown and not label_shown(s_stk.lbl),
-		"looking away from non-companion hides label while keeping box visible")
+		"looking away from non-companion hides label after fade while keeping box visible")
+
+	-- Remembered stalker popping back in: quick ~0.30s re-decode sweep (scrambled at 80ms, decoded by 400ms)
+	ae.load_state({ zbc_known = { 301 } })
+	storage[301] = { object = npcs[301] }
+	storage[302] = { object = npcs[302] }
+	now_ms = now_ms + 300
+	cam_dir_v.x, cam_dir_v.z = 0, 1
+	ae.update(pool, cfg, lens, true)
+	-- Look at remembered stalker 301
+	cam_dir_v.x, cam_dir_v.z = 8 / l301, 15 / l301
+	now_ms = now_ms + 80
+	ae.update(pool, cfg, lens, true)
+	p_stk = persp_world2ui(npcs[301]._head)
+	s_stk = find_slot_near(p_stk.x)
+	local mid_text = s_stk and s_stk.lbl.name.text
+	check(mid_text ~= nil and mid_text ~= "STALKERBOB",
+		("remembered stalker popping back in plays quick re-decode (got %s at 80ms)"):format(tostring(mid_text)))
+	for _ = 1, 5 do
+		now_ms = now_ms + 80
+		ae.update(pool, cfg, lens, true)
+	end
+	s_stk = find_slot_near(p_stk.x)
+	check(s_stk ~= nil and s_stk.lbl.name.text == "STALKERBOB",
+		("remembered stalker finishes quick re-decode cleanly (got %s)"):format(tostring(s_stk and s_stk.lbl.name.text)))
+	-- Look away again before companion LOS test
+	cam_dir_v.x, cam_dir_v.z = 0, 1
 
 	-- Companion failing LOS: loses both box and label after LOS grace expires
 	npcs[302]._los = false

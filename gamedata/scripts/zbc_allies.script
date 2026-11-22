@@ -29,6 +29,9 @@ local LOS_MAX_STEPS = 3
 
 local POP_IN_RATE = 2.5
 local POP_OUT_RATE = 2.5
+local LABEL_IN_RATE = 6.0
+local LABEL_OUT_RATE = 4.5
+local REAPPEAR_DECODE = 0.30         -- seconds for a remembered name/faction to quickly re-decode when popping back in
 local DEAD_OUT_RATE = 5.0
 local MORPH_RATE = 1.8
 local HEAD_MORPH_RATE = 6.0
@@ -55,8 +58,8 @@ FACTION_CHARS       = 20     -- longest faction drawn
 INFO_CHARS          = 24     -- longest info line drawn ("IDENT 45%  142 M", "VETERAN  87 M", "KIA")
 DEAD_HOLD           = 5      -- seconds a body keeps its grey KIA box before it fades
 DEAD_COL            = { 150, 150, 150 }
-local LABEL_VW      = 0.85   -- name height in % of the effective 16:9 width (the overlay is 1.2)
-local FACTION_SCALE = 0.72   -- faction line size relative to the name
+local LABEL_VW      = 0.62   -- label line height in % of the effective 16:9 width (same size for name, faction & info)
+local FACTION_SCALE = 1.0    -- faction and info match the name font size
 local LABEL_GAP     = 0.30   -- space between the faction line and the top of the box, in name ems
 local LINE_GAP      = 0.12   -- space between the two lines, in name ems
 
@@ -1437,8 +1440,12 @@ local function queue_label(slot, ent, cx, top, bottom, alpha, r, g, b)
 	local name = ent.name or ""
 	if LG.known_only and not ent.mutant and not (ent.id and met[ent.id]) then name = words().unknown end
 	local t_full = DECODE_DELAY + max(#name, 1) * DECODE_STEP
-	q.name = (decode_text(name, t, seed, LG.now, LG.random, t_full))
-	q.fac = (decode_text(ent.faction or "", t, seed + 17, LG.now, LG.random, t_full))
+	local dt_t = t
+	if ent.pop_t ~= nil then
+		dt_t = DECODE_DELAY + clamp01(ent.pop_t / REAPPEAR_DECODE) * (t_full - DECODE_DELAY)
+	end
+	q.name = (decode_text(name, dt_t, seed, LG.now, LG.random, t_full))
+	q.fac = (decode_text(ent.faction or "", dt_t, seed + 17, LG.now, LG.random, t_full))
 	q.info = lbl.info and ent.info or ""                -- a slot without an info line just has two
 	q.argb = GetARGB(a, r, g, b)
 	q.cx, q.top, q.bottom = cx, top, bottom
@@ -1671,14 +1678,34 @@ local function draw_slot(slot, ent, dot_w, dot_h, style)
 	local st = brackets and slot.brk or slot.box
 	local other = brackets and slot.box or slot.brk
 	local show_label = ent.companion or ent.aimed or ent.is_target
+	local dt = LG.dt or 0
+	local want_label = (m < 0.98) and show_label
+	if want_label and not ent.want_label then
+		-- remembered entity popping back in: play a quick re-decode sweep without re-identifying
+		if dt > 0 and ent.id and known[ent.id] then
+			ent.pop_t = 0
+		end
+	end
+	ent.want_label = want_label
+	if ent.pop_t ~= nil then
+		ent.pop_t = ent.pop_t + dt
+		if ent.pop_t >= REAPPEAR_DECODE then ent.pop_t = nil end
+	end
+	if ent.label_vis == nil then
+		ent.label_vis = want_label and (dt > 0 and move_toward(0, 1, LABEL_IN_RATE * dt) or 1) or 0
+	else
+		local rate = want_label and LABEL_IN_RATE or LABEL_OUT_RATE
+		ent.label_vis = move_toward(ent.label_vis, want_label and 1 or 0, rate * dt)
+	end
+	local lbl_fade = smoothstep(0, 1, ent.label_vis)
 
 	if m <= 0.02 then
 		local argb = GetARGB(floor(255 * clamp01(pop_alpha)), r, g, b)
 		apply_wnd(st, bx, by, bw * box_pop_scale, bh * box_pop_scale, argb)
 		other:Show(false)
 		slot.dot:Show(false)
-		if show_label then
-			queue_label(slot, ent, bx, by - bh * box_pop_scale * 0.5, by + bh * box_pop_scale * 0.5, pop_alpha, r, g, b)
+		if ent.label_vis > 0.001 then
+			queue_label(slot, ent, bx, by - bh * box_pop_scale * 0.5, by + bh * box_pop_scale * 0.5, pop_alpha * lbl_fade, r, g, b)
 		else
 			hide_label(slot.lbl)
 		end
@@ -1692,6 +1719,9 @@ local function draw_slot(slot, ent, dot_w, dot_h, style)
 		slot.box:Show(false)
 		slot.brk:Show(false)
 		hide_label(slot.lbl)
+		ent.label_vis = 0
+		ent.want_label = false
+		ent.pop_t = nil
 		ent.reveal_t = nil                       -- decodes again when it turns back into a box
 	else
 		local mcx = lerp(bx, dx, m)
@@ -1702,8 +1732,8 @@ local function draw_slot(slot, ent, dot_w, dot_h, style)
 		local box_a = (1 - smoothstep(0.15, 0.95, m)) * pop_alpha
 		apply_wnd(st, mcx, mcy, box_w, box_h, GetARGB(floor(255 * clamp01(box_a)), r, g, b))
 		other:Show(false)
-		if show_label then
-			queue_label(slot, ent, mcx, mcy - box_h * 0.5, mcy + box_h * 0.5, box_a, r, g, b)
+		if ent.label_vis > 0.001 then
+			queue_label(slot, ent, mcx, mcy - box_h * 0.5, mcy + box_h * 0.5, box_a * lbl_fade, r, g, b)
 		else
 			hide_label(slot.lbl)
 		end
