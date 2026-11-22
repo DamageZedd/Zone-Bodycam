@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.2.0 - 2026-11-22
 
 ### Added
 - **Blur faces** (MCM **Lens > Blur faces**, on by default): the faces of stalkers the camera sees are pixelated into a coarse mosaic, like released bodycam footage.

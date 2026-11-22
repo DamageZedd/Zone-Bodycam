@@ -6,7 +6,7 @@
 
 *See the Zone through a chest-mounted police bodycam.*
 
-![Version](https://img.shields.io/badge/version-v1.1.0-e0a43c?style=for-the-badge) ![Author](https://img.shields.io/badge/by-Damage__Zedd-8fae5a?style=for-the-badge) ![Game](https://img.shields.io/badge/S.T.A.L.K.E.R.-Anomaly%201.5.3%20%2F%20GAMMA-555555?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-v1.2.0-e0a43c?style=for-the-badge) ![Author](https://img.shields.io/badge/by-Damage__Zedd-8fae5a?style=for-the-badge) ![Game](https://img.shields.io/badge/S.T.A.L.K.E.R.-Anomaly%201.5.3%20%2F%20GAMMA-555555?style=for-the-badge)
 
 [![Zone Bodycam gameplay](docs/images/gameplay.webp)](docs/images/gameplay.mp4)
 
@@ -14,12 +14,13 @@
 
 </div>
 
-## What's new in v1.1.0
+## What's new in v1.2.0
 
-- **Optional Body Camera item.** Tick it in the installer and the bodycam only works while you carry a charged, battery-powered camera, with hand animations when it dies and when you swap the battery. [More below](#optional-body-camera-item).
-- **Battery gauge** above the REC dot (with the item).
-- **Fixed the crash on start with modded exes older than 2026.10.11.** On those exes the lens is off, while the overlay and markers still work.
-- Performance pass on the shaders and scripts, plus safety fixes.
+- **Front-only Face Blur (Pixelation).** Pixelates visible human faces (front, 3/4, and side profiles — never the back of heads) at true face size before the lens warp, with dual-view 3DSS PiP scope support, frame-ahead motion prediction, and a model skip list (`configs/zbc_face_models.ltx`).
+- **Overhauled Entity Markers & Identification.** Skeleton-fit boxes for all stalkers and mutants, scoped head/spine fallback for partial bodies, dual-view 3DSS PiP scope magnification (keeping 1x boxes outside the lens), aim-only label text with smooth fade & quick re-decode (companions always on), lockstep name/faction decode, saved distance identification, `KIA` boxes, white-until-identified dots, and zero dots while scoped in.
+- **Camera Effects.** Interference (emissions, psy storms/fields, radiation, anomalies, heavy hits), `SIGNAL LOST` death cutoff, night/underground IR mode, rain drops & blood splatter on the lens, auto-exposure lag, `EVENT` tag, GPS coordinates, and low-battery warnings.
+- **Event Log & Footage Review.** Live 8 s evidence tags under `REC`, plus an interactive timeline review screen (`Delete` by default).
+- **Full Russian Localization** across all MCM menus, overlay text, marker labels, and the optional Body Camera item (plus default device name `AXON BODY 4`).
 
 Full history in [CHANGELOG.md](CHANGELOG.md).
 
