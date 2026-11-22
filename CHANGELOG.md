@@ -52,6 +52,9 @@
   - Test: `tools/tests/zbc_allies_label_test.lua`.
 
 ### Changed
+- **Aim-gated marker labels (`zbc_allies.script`)**:
+  - Non-companion stalkers and mutants keep their bounding box visible whenever on screen and in line of sight, but their name, faction, and info/distance label text is shown only while looking at them (`aimed` or `is_target`) and hidden when looking away (preserving identification progress and `known` state).
+  - Companions (`npcx_is_companion`) show both their bounding box and label text at all times from frame 1 while on screen and in line of sight.
 - **Ally marker scope, decode & dot behaviour (`zbc_allies.script`)**:
   - Gated head-tracking and spine fallback strictly on being scoped in (`pip_active()` or `view_zoom() > 1.05`), so unscoped close-up/clipped targets stay on `project_full_box()` and smoothly morph back from `head_t` when unscoping.
   - Aligned faction label decoding with the name line (`total_t` in `decode_text()`, `FACTION_DELAY` removed) so both start and finish decoding together regardless of string length.

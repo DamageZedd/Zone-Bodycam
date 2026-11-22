@@ -1328,6 +1328,223 @@ do
 		("stepping past base_range does NOT flash alpha upward (%s -> %s)"):format(tostring(near_alpha), tostring(past_alpha)))
 end
 
+-- 13. Aim-gated labels: non-companion shows box only when not aimed, box+label when aimed;
+--     companion shows box+label at all times while on screen & in LOS, hidden when LOS fails.
+do
+	local now_ms = 1000
+	local sw, sh = 1920, 1080
+	local cur_fov = 75
+	local cam_pos_v = { x = 0, y = 1.6, z = 0 }
+	local cam_dir_v = { x = 0, y = 0, z = 1 }
+
+	local function make_vec(x, y, z)
+		local v = { x = x or 0, y = y or 0, z = z or 0 }
+		function v:set(nx, ny, nz) self.x, self.y, self.z = nx or 0, ny or 0, nz or 0; return self end
+		function v:distance_to(o) local dx, dy, dz = self.x - o.x, self.y - o.y, self.z - o.z; return math.sqrt(dx*dx+dy*dy+dz*dz) end
+		function v:distance_to_sqr(o) local dx, dy, dz = self.x - o.x, self.y - o.y, self.z - o.z; return dx*dx+dy*dy+dz*dz end
+		return v
+	end
+
+	local function make_wnd()
+		local w = { shown = false, cx = 0, cy = 0, w = 0, h = 0 }
+		return setmetatable(w, { __index = {
+			Show = function(self, v) self.shown = v and true or false end,
+			SetWndPos = function(self, p) self._px, self._py = p.x, p.y end,
+			SetWndSize = function(self, s)
+				self.w, self.h = s.x, s.y
+				self.cx = (self._px or 0) + s.x * 0.5
+				self.cy = (self._py or 0) + s.y * 0.5
+			end,
+			SetTextureColor = function(self, c) self._col = c end,
+			SetTextureRect = function() end,
+			InitTexture = function() end,
+			SetStretchTexture = function() end,
+		} })
+	end
+
+	local function make_glyphs(n)
+		local g = {}
+		for i = 1, n do g[i] = make_wnd() end
+		return g
+	end
+
+	local function make_slot()
+		return {
+			box = make_wnd(), brk = make_wnd(), dot = make_wnd(),
+			lbl = {
+				name = { glyphs = make_glyphs(24) },
+				fac  = { glyphs = make_glyphs(20) },
+				info = { glyphs = make_glyphs(24) },
+			},
+		}
+	end
+
+	local function any_glyph_shown(line)
+		if not line then return false end
+		for i = 1, #line.glyphs do
+			if line.glyphs[i].shown then return true end
+		end
+		return false
+	end
+
+	local function label_shown(lbl)
+		return any_glyph_shown(lbl.name) or any_glyph_shown(lbl.fac) or any_glyph_shown(lbl.info)
+	end
+
+	local function make_npc(name, x, y, z, is_companion)
+		local pos = make_vec(x, y, z)
+		local head = make_vec(x, y + 1.6, z)
+		local spine = make_vec(x, y + 1.0, z)
+		return {
+			_pos = pos, _head = head, _spine = spine,
+			_los = true,
+			alive = function() return true end,
+			position = function() return pos end,
+			relation = function() return 0 end,
+			has_info = function(_, info) return is_companion and info == "npcx_is_companion" or false end,
+			character_name = function() return name end,
+			character_community = function() return "stalker" end,
+			rank = function() return 500 end,
+		}
+	end
+
+	-- 301: non-companion off-center (x=8, z=15 -> ~28 deg off camera centre, cos ~ 0.88 < 0.984)
+	-- 302: companion off-center (x=-8, z=15 -> ~28 deg off camera centre, cos ~ 0.88 < 0.984)
+	local npcs = {
+		[301] = make_npc("StalkerBob", 8, 0, 15, false),
+		[302] = make_npc("CompanionMax", -8, 0, 15, true),
+	}
+	local storage = { [301] = { object = npcs[301] }, [302] = { object = npcs[302] } }
+	local actor = {
+		position = function() return make_vec(0, 0, 0) end,
+		see = function(_, obj) return obj._los == true end,
+	}
+
+	local function persp_world2ui(v)
+		local dx, dy, dz = v.x - cam_pos_v.x, v.y - cam_pos_v.y, v.z - cam_pos_v.z
+		-- project relative to cam_dir_v (yaw in XZ plane)
+		local fwd_x, fwd_z = cam_dir_v.x, cam_dir_v.z
+		local fl = math.sqrt(fwd_x * fwd_x + fwd_z * fwd_z)
+		fwd_x, fwd_z = fwd_x / fl, fwd_z / fl
+		local right_x, right_z = fwd_z, -fwd_x
+		local cz = dx * fwd_x + dz * fwd_z
+		local cx = dx * right_x + dz * right_z
+		if cz <= 0.1 then return { x = -9999, y = -9999 } end
+		local tan_half = math.tan(math.rad(cur_fov) * 0.5)
+		local aspect = sw / sh
+		local u = 0.5 + 0.5 * (cx / (cz * tan_half * aspect))
+		local vv = 0.5 - 0.5 * (dy / (cz * tan_half))
+		return { x = u * 1024, y = vv * 768 }
+	end
+
+	local ae = setmetatable({
+		db = { actor = actor, storage = storage },
+		level = { object_by_id = function(id) return npcs[id] end },
+		game_object = { enemy = 2, friend = 0, neutral = 1 },
+		IsStalker = function() return true end,
+		IsMonster = function() return false end,
+		utils_obj = {
+			safe_bone_pos = function(obj, bone)
+				if bone == "bip01_head" then return obj._head end
+				if bone == "bip01_spine" then return obj._spine end
+				return nil
+			end,
+		},
+		game = { world2ui = persp_world2ui, translate_string = function(s) return s end },
+		device = function()
+			return {
+				width = sw, height = sh, fov = cur_fov,
+				cam_pos = make_vec(cam_pos_v.x, cam_pos_v.y, cam_pos_v.z),
+				cam_dir = make_vec(cam_dir_v.x, cam_dir_v.y, cam_dir_v.z),
+			}
+		end,
+		zbc_font_metrics = { em = 32, advance = 20, cell_w = 32, cell_h = 40, pad = 4, cols = 16, rows = 16, tex_w = 512, tex_h = 512, first = 33, last = 126 },
+		get_console = function() return { get_float = function() return 75 end } end,
+		time_global = function() return now_ms end,
+		vector = make_vec, vector2 = make_vec, Frect = make_vec,
+		GetARGB = function(a, r, g, b) return { a = a, r = r, g = g, b = b } end,
+		RegisterScriptCallback = function() end,
+	}, { __index = _G })
+
+	local c = assert(loadfile(PATH))
+	setfenv(c, ae)
+	c()
+
+	local pool = { make_slot(), make_slot(), make_slot(), make_slot() }
+	local cfg = {
+		allies = true, allies_range = 100, allies_dot_ratio = 0.7, allies_los = true,
+		allies_enemies = true, allies_mutants = true, allies_size = 1, allies_opacity = 1,
+		allies_color_companion = 2, allies_color_friend = 1, allies_color_enemy = 5,
+		allies_names = true, allies_style = 0, allies_companion_edge = false,
+	}
+	local lens = { k = 0, ox = 0, oy = 0, roll = 0, dist = 0, zoom = 1, shutter = 0 }
+
+	local function find_slot_near(target_cx)
+		local best, best_d = nil, 40
+		for i = 1, #pool do
+			if pool[i].brk.shown then
+				local d = math.abs(pool[i].brk.cx - target_cx)
+				if d < best_d then best, best_d = pool[i], d end
+			end
+		end
+		return best
+	end
+
+	-- Seed last_t with empty storage so dt > 0 on the very first entity-creation frame
+	storage[301], storage[302] = nil, nil
+	ae.update(pool, cfg, lens, true)
+	storage[301] = { object = npcs[301] }
+	storage[302] = { object = npcs[302] }
+	now_ms = now_ms + 600
+
+	-- Frame 1 (first drawn frame): camera looking straight (0, 0, 1). Neither 301 nor 302 is aimed at.
+	ae.update(pool, cfg, lens, true)
+	local p_stk = persp_world2ui(npcs[301]._head)
+	local p_cmp = persp_world2ui(npcs[302]._head)
+	local s_stk = find_slot_near(p_stk.x)
+	local s_cmp = find_slot_near(p_cmp.x)
+	check(s_stk ~= nil and s_stk.brk.shown, "non-companion not aimed at: bounding box IS shown on frame 1")
+	check(s_stk ~= nil and not label_shown(s_stk.lbl), "non-companion not aimed at: label text is HIDDEN")
+	check(s_cmp ~= nil and s_cmp.brk.shown, "companion not aimed at: bounding box IS shown on frame 1")
+	check(s_cmp ~= nil and label_shown(s_cmp.lbl), "companion not aimed at: label text IS shown on frame 1")
+
+	-- Aim directly at non-companion 301 (x=8, z=15)
+	local l301 = math.sqrt(8 * 8 + 15 * 15)
+	cam_dir_v.x, cam_dir_v.z = 8 / l301, 15 / l301
+	now_ms = now_ms + 80
+	ae.update(pool, cfg, lens, true)
+	p_stk = persp_world2ui(npcs[301]._head)
+	s_stk = find_slot_near(p_stk.x)
+	check(s_stk ~= nil and s_stk.brk.shown, "non-companion aimed at: bounding box IS shown")
+	check(s_stk ~= nil and label_shown(s_stk.lbl), "non-companion aimed at: label text IS shown")
+	check(s_stk ~= nil and any_glyph_shown(s_stk.lbl.name) and any_glyph_shown(s_stk.lbl.fac) and any_glyph_shown(s_stk.lbl.info),
+		"non-companion aimed at: name, faction, and info glyphs are all shown")
+
+	-- Look away again -> label hides while box stays
+	cam_dir_v.x, cam_dir_v.z = 0, 1
+	now_ms = now_ms + 80
+	ae.update(pool, cfg, lens, true)
+	p_stk = persp_world2ui(npcs[301]._head)
+	s_stk = find_slot_near(p_stk.x)
+	check(s_stk ~= nil and s_stk.brk.shown and not label_shown(s_stk.lbl),
+		"looking away from non-companion hides label while keeping box visible")
+
+	-- Companion failing LOS: loses both box and label after LOS grace expires
+	npcs[302]._los = false
+	for _ = 1, 25 do
+		now_ms = now_ms + 100
+		ae.update(pool, cfg, lens, true)
+	end
+	p_cmp = persp_world2ui(npcs[302]._head)
+	s_cmp = find_slot_near(p_cmp.x)
+	check(s_cmp == nil, "companion failing LOS: box is hidden")
+	local any_cmp_lbl = false
+	for i = 1, #pool do
+		if not pool[i].brk.shown and label_shown(pool[i].lbl) then any_cmp_lbl = true end
+	end
+	check(not any_cmp_lbl, "companion failing LOS: label is hidden when box is hidden")
+end
+
 if failures > 0 then
 	print(failures .. " check(s) failed")
 	os.exit(1)

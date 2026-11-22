@@ -1130,6 +1130,8 @@ local function step_entity(
 		ent.los_grace = 0
 		ent.col = col
 		ent.dist = obj:position():distance_to(apos)
+		ent.is_target = (id == aim_target)
+		ent.aimed = aimed_at(obj, cam_vec)
 		refresh_projections(ent, obj, L, a, ux, uy, allies_size, dot_w, dot_h, W, dt, ent.dist <= base_range)
 		if frame_scoped and ent.target_dot == 1 and ent.dot_t >= 0.98 then
 			if ent.target_vis ~= 1 then
@@ -1190,10 +1192,16 @@ local function step_entity(
 			quad = is_quad,
 			name = npc_name(obj),
 			faction = npc_faction(obj),
+			rank = npc_rank(obj),
 			seed = id % 9973,
 			id = id,
 			dist = dist,
+			is_target = is_target,
 			aimed = aimed_at(obj, cam_vec),
+			companion = companion,
+			health = companion and tonumber(obj.health) or nil,
+			mutant = is_mon and true or false,
+			hostile = (is_mon or rel == game_object.enemy) and true or false,
 			base_alpha = alpha_at(dist, outside and base_range or range),
 			bcx = bcx, bcy = bcy, bw = bw, bh = bh,
 			dcx = dcx, dcy = dcy, dw = dot_w, dh = dot_h,
@@ -1662,13 +1670,18 @@ local function draw_slot(slot, ent, dot_w, dot_h, style)
 	local brackets = (style ~= 1)
 	local st = brackets and slot.brk or slot.box
 	local other = brackets and slot.box or slot.brk
+	local show_label = ent.companion or ent.aimed or ent.is_target
 
 	if m <= 0.02 then
 		local argb = GetARGB(floor(255 * clamp01(pop_alpha)), r, g, b)
 		apply_wnd(st, bx, by, bw * box_pop_scale, bh * box_pop_scale, argb)
 		other:Show(false)
 		slot.dot:Show(false)
-		queue_label(slot, ent, bx, by - bh * box_pop_scale * 0.5, by + bh * box_pop_scale * 0.5, pop_alpha, r, g, b)
+		if show_label then
+			queue_label(slot, ent, bx, by - bh * box_pop_scale * 0.5, by + bh * box_pop_scale * 0.5, pop_alpha, r, g, b)
+		else
+			hide_label(slot.lbl)
+		end
 	elseif m >= 0.98 then
 		if frame_scoped then
 			slot.dot:Show(false)
@@ -1689,7 +1702,11 @@ local function draw_slot(slot, ent, dot_w, dot_h, style)
 		local box_a = (1 - smoothstep(0.15, 0.95, m)) * pop_alpha
 		apply_wnd(st, mcx, mcy, box_w, box_h, GetARGB(floor(255 * clamp01(box_a)), r, g, b))
 		other:Show(false)
-		queue_label(slot, ent, mcx, mcy - box_h * 0.5, mcy + box_h * 0.5, box_a, r, g, b)
+		if show_label then
+			queue_label(slot, ent, mcx, mcy - box_h * 0.5, mcy + box_h * 0.5, box_a, r, g, b)
+		else
+			hide_label(slot.lbl)
+		end
 
 		if frame_scoped then
 			slot.dot:Show(false)
