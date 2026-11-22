@@ -86,6 +86,80 @@ check(rv.rec_clock(3725) == "01:02:05", "recorded time as hh:mm:ss")
 check(rv.timeline_x(50, 0, 100, 100, 300) == 200 and rv.timeline_x(500, 0, 100, 100, 300) == 300, "timeline position, clamped")
 check(rv.list_start(1, 30, 9) == 1 and rv.list_start(30, 30, 9) == 22 and rv.list_start(15, 30, 9) == 11, "the list keeps the selection in view")
 
+-- footage review toggle & same-keypress debounce + Delete (211) default keybind
+do
+	local bc
+	bc = setmetatable({
+		CUIScriptWnd = {},
+		class = function(name) return function() bc[name] = {} end end,
+	}, { __index = _G })
+	local bc_chunk = assert(loadfile("gamedata/scripts/zbc_bodycam.script"))
+	setfenv(bc_chunk, bc)
+	check(pcall(bc_chunk), "zbc_bodycam.script loads for review_key check")
+	check(bc.defaults and bc.defaults.review_key == 211, "default footage review key is Delete (211)")
+
+	local now_ms, shown, reg_n, unreg_n = 1000, false, 0, 0
+	local function mk_ctrl()
+		local c = {}
+		local tc = { SetText = function() end, SetTextColor = function() end }
+		return setmetatable(c, { __index = {
+			SetWndPos = function() end, SetWndSize = function() end, SetTextureColor = function() end,
+			Show = function() end, TextControl = function() return tc end,
+		} })
+	end
+	local env = setmetatable({
+		time_global = function() return now_ms end,
+		Frect = function() return { set = function(s) return s end } end,
+		vector2 = function() return { set = function(s) return s end } end,
+		GetARGB = function() return 0 end,
+		CScriptXmlInit = function()
+			return { ParseFile = function() end, InitStatic = function() return mk_ctrl() end }
+		end,
+		DIK_keys = { DIK_ESCAPE = 1, DIK_LEFT = 203, DIK_RIGHT = 205, DIK_UP = 200, DIK_DOWN = 208, DIK_A = 30, DIK_D = 32, DIK_W = 17, DIK_S = 31, DIK_HOME = 199, DIK_END = 207 },
+		ui_events = { WINDOW_KEY_PRESSED = 1 },
+		zbc_bodycam = { review_key_now = function() return 211 end, rec_seconds = function() return 42 end },
+		zbc_eventlog = { HISTORY_MAX = 8, history = {} },
+		Register_UI = function() reg_n = reg_n + 1 end,
+		Unregister_UI = function() unreg_n = unreg_n + 1 end,
+		CUIScriptWnd = { OnKeyboard = function() return false end },
+		super = function() end,
+	}, { __index = _G })
+	env.class = function(name)
+		return function()
+			local cls = {}
+			cls.__index = cls
+			function cls:SetWndRect() end
+			function cls:SetAutoDelete() end
+			function cls:ShowDialog() shown = true end
+			function cls:HideDialog() shown = false end
+			function cls:Show(v) if not v then shown = false end end
+			function cls:IsShown() return shown end
+			env[name] = setmetatable(cls, {
+				__call = function(t)
+					local o = setmetatable({}, t)
+					o:__init()
+					return o
+				end,
+			})
+		end
+	end
+	local rc = assert(loadfile("gamedata/scripts/zbc_review.script"))
+	setfenv(rc, env)
+	rc()
+
+	env.toggle()
+	check(env.is_open() and reg_n == 1, "toggle() opens review dialog and calls Register_UI")
+	-- same-keypress OnKeyboard(211) right after opening must NOT self-close
+	local inst = env.ZbcReview()
+	inst.opened_at = 1000
+	inst:OnKeyboard(211, 1)
+	check(env.is_open(), "same-keypress OnKeyboard(review_key) does not immediately self-close")
+	-- pressing review_key after debounce closes it cleanly
+	now_ms = 1200
+	env.toggle()
+	check(not env.is_open() and unreg_n == 1, "toggle() after debounce closes review dialog and calls Unregister_UI")
+end
+
 if failures > 0 then
 	print(failures .. " check(s) failed")
 	os.exit(1)

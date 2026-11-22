@@ -63,7 +63,7 @@ defaults = {
 	event_marker      = true,   -- "EVENT" after REC when you fire or take a big hit
 	gps_line          = true,   -- coordinates line in the overlay
 	event_log         = true,   -- SHOTS FIRED, CONTACT n... under the recording timer (zbc_eventlog.script)
-	review_key        = 210,    -- DIK_INSERT: opens the footage review screen (zbc_review.script)
+	review_key        = 211,    -- DIK_DELETE: opens the footage review screen (zbc_review.script)
 	auto_exposure     = true,   -- exposure follows the light where you stand, with a small sensor's lag
 	-- motion
 	motion         = 1.0,
@@ -1686,8 +1686,14 @@ end
 function review_key_now() return cfg.review_key end
 
 function on_key_press(key)
-	if not (cfg.enabled and db.actor and zbc_review and zbc_review.toggle) then return end
-	if key == cfg.review_key then zbc_review.toggle() end
+	if not (cfg.enabled and not in_menu and db.actor and zbc_review and zbc_review.toggle) then return end
+	local rk = tonumber(cfg.review_key)
+	if not rk or rk <= 0 or key ~= rk then return end
+	if not (zbc_review.is_open and zbc_review.is_open()) then
+		if Check_UI and Check_UI() then return end
+		if actor_menu and actor_menu.last_mode and actor_menu.last_mode ~= 0 then return end
+	end
+	zbc_review.toggle()
 end
 
 function on_game_start()

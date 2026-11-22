@@ -1,7 +1,7 @@
 --[[
 	Zone Bodycam - footage review screen (zbc_review.script)
 
-	Opens on the MCM key (Insert by default): the camera's event history (zbc_eventlog.script) as a
+	Opens on the MCM key (Delete by default): the camera's event history (zbc_eventlog.script) as a
 	timeline of the recording, with a tick for every event coloured by kind, and the list around the
 	selected one. Left / right scrub through the events, Home / End jump to the first / last, Escape
 	or the key again closes it.
@@ -57,6 +57,8 @@ class "ZbcReview" (CUIScriptWnd)
 
 function ZbcReview:__init() super()
 	self:SetWndRect(Frect():set(0, 0, 1024, 768))
+	self:SetAutoDelete(true)
+	self.opened_at = time_global and time_global() or 0
 	local xml = CScriptXmlInit()
 	xml:ParseFile("ui_zbc_bodycam.xml")
 	self.bg = xml:InitStatic("zbc_fill", self)
@@ -83,7 +85,9 @@ function ZbcReview:__init() super()
 	self:Refresh()
 end
 
-function ZbcReview:__finalize() end
+function ZbcReview:__finalize()
+	if Unregister_UI then Unregister_UI("ZbcReview") end
+end
 
 function ZbcReview:Refresh()
 	local hist = zbc_eventlog and zbc_eventlog.history or {}
@@ -140,17 +144,24 @@ function ZbcReview:Refresh()
 	end
 end
 
+local CLOSE_DEBOUNCE_MS = 150
+
 function ZbcReview:OnKeyboard(dik, action)
 	CUIScriptWnd.OnKeyboard(self, dik, action)
 	if action ~= ui_events.WINDOW_KEY_PRESSED then return true end
 	local count = zbc_eventlog and #zbc_eventlog.history or 0
 	local K = DIK_keys
-	if dik == K.DIK_ESCAPE or (zbc_bodycam and dik == zbc_bodycam.review_key_now()) then
+	local now = time_global and time_global() or 0
+	local rk = zbc_bodycam and zbc_bodycam.review_key_now and tonumber(zbc_bodycam.review_key_now())
+	if dik == K.DIK_ESCAPE then
 		close()
 		return true
-	elseif dik == K.DIK_LEFT or dik == K.DIK_A then
+	elseif rk and dik == rk then
+		if now - (self.opened_at or 0) >= CLOSE_DEBOUNCE_MS then close() end
+		return true
+	elseif dik == K.DIK_LEFT or dik == K.DIK_A or dik == K.DIK_UP or dik == K.DIK_W then
 		self.sel = max((self.sel or 1) - 1, 1)
-	elseif dik == K.DIK_RIGHT or dik == K.DIK_D then
+	elseif dik == K.DIK_RIGHT or dik == K.DIK_D or dik == K.DIK_DOWN or dik == K.DIK_S then
 		self.sel = min((self.sel or count) + 1, count)
 	elseif dik == K.DIK_HOME then
 		self.sel = 1
@@ -165,17 +176,30 @@ end
 
 local WND = nil
 
+function is_open()
+	return WND ~= nil and WND:IsShown()
+end
+
 function close()
 	if WND then
-		if WND:IsShown() then WND:HideDialog() end
+		if WND:IsShown() then
+			WND:HideDialog()
+			WND:Show(false)
+		end
 		WND = nil
 	end
+	if Unregister_UI then Unregister_UI("ZbcReview") end
 end
 
 function toggle()
-	if WND and WND:IsShown() then return close() end
+	if WND and WND:IsShown() then
+		local now = time_global and time_global() or 0
+		if now - (WND.opened_at or 0) >= CLOSE_DEBOUNCE_MS then close() end
+		return
+	end
 	WND = ZbcReview()
 	WND:ShowDialog(true)
+	if Register_UI then Register_UI("ZbcReview", "zbc_review") end
 end
 
 function on_game_start()
