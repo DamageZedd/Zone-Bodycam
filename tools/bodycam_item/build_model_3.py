@@ -7,8 +7,8 @@ Creates the scene "zbc_bodycam_3", every part its own single-material object, re
 Reference: the front-view line drawing of the official Axon Body 3 User Manual (13.97 px per mm across),
 its top and bottom views, and Axon's product renders (glamor and isolated shots). 66 x 93.2 x 28 mm: the
 manual's drawing at one scale gives 93.2 mm high (some retailer sheets say 96.5).
-Look: black octagonal body with six Torx screws in a flat frame, a raised textured centre panel that swells
-into a round boss around the Event button, the lens centred near the top with a six-slot speaker grille to
+Look: black octagonal body with six Torx screws in a stippled frame, a the frame sloping up to a smooth raised centre platform that swells
+into a round boss around the Event button, the lens centred near the top with a seven-slot speaker grille to
 its right, a knurled button ring with three red LED arcs (upper left, upper right, bottom) around a centre
 disc carrying the Axon delta, AXON under the button; the control buttons down the left side, the status
 display on top, USB-C underneath, RapidLock mount on the back.
@@ -36,8 +36,6 @@ CORNER_R = 2.6
 FRONT_R = 1.6
 BACK_BEVEL = 2.6
 Y0 = -D / 2                       # front of the frame
-H_PANEL = 1.6                     # centre panel stands this far in front of the frame
-YP = Y0 - H_PANEL
 
 LENS = (0.0, 31.2)
 GRILLE = (17.6, 30.7)
@@ -52,7 +50,6 @@ knurl(M_3_BUTTON, BTN[0], BTN[1], 13.1, 19.3, 0.80,
 M_3_LCD = own_material("zbc_3_lcd", (0.010, 0.014, 0.012), 0.08, spec=1.0)
 M_3_LCD_SEG = own_material("zbc_3_lcd_seg", (0.028, 0.038, 0.031), 0.14, spec=0.80)
 M_3_YELLOW = own_material("zbc_3_yellow", (0.950, 0.630, 0.005), 0.38, spec=0.55)
-M_3_GRIP = own_material("zbc_3_grip", (0.018, 0.018, 0.020), 0.82, noise=True)
 M_3_RED = own_material("zbc_3_red", (0.85, 0.05, 0.04), 0.30, emission=(0.6, 0.02, 0.02))
 M_LED = shared_material("zbc_led", (0.35, 0.03, 0.03), 0.20)
 
@@ -75,39 +72,49 @@ bm.free()
 assign(body, M_BODY)
 
 # ------------------------------------------------------------------------------------------------
-# centre panel: rounded strip + round boss, chamfered sides, its own textured finish
+# centre platform: the stippled frame slopes gently UP from the outer edge to a raised flat platform (the
+# centre panel); the platform swells into a round boss around the button (user-confirmed: no step, a ramp)
 # ------------------------------------------------------------------------------------------------
+H_PLAT = 1.6                      # platform height above the frame's outer edge
+YP = Y0 - H_PLAT
+ramp = hull("ramp", [(sx * (hw + 1.0), Y0 + 0.01, sz * (Z_TOP + 1.0)) for sx in (-1, 1) for sz in (-1, 1)]
+            + [(sx * PANEL_X, YP, z) for sx in (-1, 1) for z in PANEL_Z]
+            + [(sx * (hw + 1.0), Y0 + 1.0, sz * (Z_TOP + 1.0)) for sx in (-1, 1) for sz in (-1, 1)])
+clip = prism_y("ramp_clip", outline, D / 2, D + 4.0)
+boolean(ramp, clip, op="INTERSECT")
+boolean(body, ramp, op="UNION")
 strip = rounded_poly([(-PANEL_X, PANEL_Z[0]), (PANEL_X, PANEL_Z[0]), (PANEL_X, PANEL_Z[1]), (-PANEL_X, PANEL_Z[1])],
                      3.0, 6)
-panel = prism_y("panel", strip, Y0 + 0.4, H_PANEL + 0.4, chamfer=0.9, seg=2)
-boolean(panel, disc("boss", BOSS_R, BTN[0], BTN[1], Y0 + 0.4, YP, seg=160, chamfer=0.9, cseg=2), op="UNION")
+panel = prism_y("panel", strip, YP + 0.3, 0.4, chamfer=0.08)   # smooth platform skin, 0.1 mm proud (no z-fighting)
+boolean(panel, disc("boss", BOSS_R, BTN[0], BTN[1], Y0 + 0.4, YP - 0.1, seg=160, chamfer=0.6, cseg=2), op="UNION")
 assign(panel, M_FACE)
 
 # ------------------------------------------------------------------------------------------------
-# lens: stepped round bezel in a pocket of the panel, dark glass
+# lens: its bezel sits sunk in a pocket of the panel, bezel top flush with the panel, dark glass
 # ------------------------------------------------------------------------------------------------
 lx, lz = LENS
-cut(["panel"], lambda: disc("lens_pocket_cut", 9.4, lx, lz, YP + 0.7, YP - 5.0, seg=120))
-assign(annulus("lens_gap", lx, lz, 8.9, 9.4, YP + 0.68, YP + 0.9, seg=120), M_HOLE)
+YPL = YP
+cut(["panel", "body"], lambda: disc("lens_pocket_cut", 9.4, lx, lz, YPL + 0.7, YPL - 5.0, seg=120))
+assign(annulus("lens_gap", lx, lz, 8.9, 9.4, YPL + 0.68, YPL + 0.9, seg=120), M_HOLE)
 assign(lathe("lens_bezel", lx, lz, [(8.9, 0.7), (8.9, -0.6), (8.3, -0.8), (7.0, -0.8), (6.4, -0.2), (5.0, 0.2),
-                                     (5.0, 0.9)], YP, seg=120), M_BEZEL)
-assign(disc("lens_seat", 5.0, lx, lz, YP + 1.0, YP + 0.7, seg=96), M_HOLE)
+                                     (5.0, 0.9)], YPL, seg=120), M_BEZEL)
+assign(disc("lens_seat", 5.0, lx, lz, YPL + 1.0, YPL + 0.7, seg=96), M_HOLE)
 bm = bmesh.new()
 bmesh.ops.create_uvsphere(bm, u_segments=36, v_segments=18, radius=4.6 * MM)
 for v in bm.verts:
     v.co.y *= 0.95 / 4.6
 bmesh.ops.delete(bm, geom=[v for v in bm.verts if v.co.y > 1e-7], context="VERTS")
 glass = assign(finish(bm, "lens_glass"), M_GLASS)
-glass.location = v3(lx, YP + 0.7, lz)
+glass.location = v3(lx, YPL + 0.7, lz)
 
-# speaker grille: six horizontal slots right of the lens
+# speaker grille: seven horizontal slots cut into the stippled frame right of the panel
 gx, gz = GRILLE
-for i in range(6):
-    z = gz + (2.5 - i) * 1.95
-    sl = [(gx + x, z + q) for x, q in stadium_pts_2d(4.8, 0.95, seg_half=6)]
-    cut(["panel"], lambda: prism_y("grille_cut", sl, YP + 0.9, 3.0))
-    assign(prism_y("grille_%d" % i, [(gx + x, z + q) for x, q in stadium_pts_2d(4.7, 0.85, seg_half=6)],
-                   YP + 1.0, 0.1), M_HOLE)
+for i in range(7):
+    z = gz + (3 - i) * 1.75
+    sl = [(gx + x, z + q) for x, q in stadium_pts_2d(4.8, 0.9, seg_half=6)]
+    cut(["body"], lambda: prism_y("grille_cut", sl, Y0 + 0.9, 3.0))
+    assign(prism_y("grille_%d" % i, [(gx + x, z + q) for x, q in stadium_pts_2d(4.7, 0.8, seg_half=6)],
+                   Y0 + 1.0, 0.1), M_HOLE)
 
 # ------------------------------------------------------------------------------------------------
 # Event button: groove, smooth collar, knurled dish with three red LED arcs, centre disc with the delta
@@ -136,7 +143,7 @@ lg.location = v3(0, YP + DISH1 - 0.02, 0)
 # screws in the frame, microphones, wordmark
 # ------------------------------------------------------------------------------------------------
 for i, (x, z) in enumerate(((-27.5, 37.4), (27.5, 37.4), (-29.3, 0.0), (29.3, 0.0), (-27.5, -37.4), (27.5, -37.4))):
-    screw("screw_%d" % i, x, z, Y0 + 0.35)
+    screw("screw_%d" % i, x, z, surface_at(x, z)[0].y / MM + 0.35)   # seated on the sloped frame
 front_mic("mic_1", -16.2, 11.4, 0.62)
 front_mic("mic_2", 0.0, -39.0, 0.62)
 front_text("axon_txt", "AXON", 0.0, -34.4, 16.1, M_TEXT, font=r"C:\Windows\Fonts\segoeuil.ttf")
@@ -258,19 +265,11 @@ assign(prism_x("mark_program_pip", pip_pts, xf_pr - 0.15, 0.60, chamfer=0.22, se
 
 
 # ------------------------------------------------------------------------------------------------
-# 8. Ribbed grip (built on -X, mirrored to the right side below): Clean Uninterrupted TPE Pad w/ 9 Horizontal Anti-Slip Grip Ribs
+# 8. The right side is smooth in the glamor render (no ribs): only the seam where the front and back shells
+#    meet, a shallow groove all the way down each side
 # ------------------------------------------------------------------------------------------------
-
-# Overmolded TPE pad (1.0 mm proud to -34.0, 18.5 mm Y centered at Y = 0.0, Z = -29.0..+29.0)
-assign(box("left_grip_pad", 1.8, 18.5, 58.0, (-hw - 0.1, 0.0, 0.0), bevel=0.75, seg=3), M_3_GRIP)
-
-# 9 horizontal anti-slip grip ribs (pitch = 5.5 mm -> Z = -22.0 .. +22.0, height = 0.35 mm, width = 1.2 mm)
-for i in range(9):
-    zr = (-4 + i) * 5.5
-    rib_pts = [(y, zr + z) for y, z in stadium_pts_2d(14.8, 1.2, seg_half=6)]
-    assign(prism_x("left_grip_rib_%d" % i, rib_pts, -hw - 0.85, -0.50, chamfer=0.22, seg=2), M_3_GRIP)
-
-
+for s_ in (-1, 1):
+    boolean(body, box("seam_cut", 1.2, 0.6, Z_TOP - Z_BOT, (s_ * hw, 2.0, (Z_TOP + Z_BOT) / 2)))
 
 
 def mirror_x(o):
@@ -282,8 +281,8 @@ def mirror_x(o):
     o.data.update()
 
 
-# the manual's front view has the control buttons on the left edge (items 2-5) and the ribbed grip on the
-# right: the side parts above were laid out the other way round, so mirror them
+# the manual's front view has the control buttons on the left edge (items 2-5): the strip above was laid out
+# on the right, so mirror it
 for o in [o for o in sc.objects if o.name not in _side_before]:
     mirror_x(o)
 

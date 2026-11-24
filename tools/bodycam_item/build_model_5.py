@@ -8,9 +8,9 @@ Reference: Axon's own launch images (the near-frontal og image on axon.com, meas
 the two-camera 3/4 render published with the launch on officer.com and PR Newswire). Axon has not published
 dimensions; 62 x 99 x 28 mm is scaled from those images (front aspect 1.59, depth about 0.45 of the width).
 Look: a tall black body with six Torx screws in the side rails, a lighter faceted centre plate carrying one
-lens in an octagonal boss inside an X of four green LED bars, diamond-hole speaker grilles either side, an IR
-window above the lens and a sensor pill below it, a big octagonal cushioned Event button with the Axon delta,
-AXON under it; a ribbed grip down the right side, buttons on the left, RapidLock mount on the back.
+lens in the low centre of an X-shaped channel holding four green LED bars, raised trapezoids between its arms, diamond-hole speaker grilles either side, an IR
+window above the lens and a sensor pill below it, a big octagonal dished Event button with the engraved Axon delta,
+AXON under it; a knurled panel down the right side, buttons on the left, RapidLock mount on the back.
 Units are metres in Blender, millimetres below. Front faces -Y, Z is up, X is right as seen from the front.
 """
 import math
@@ -36,7 +36,7 @@ Y0 = -D / 2                       # front of the side rails
 H_PLATE = 1.4                     # centre plate in front of the rails
 YP = Y0 - H_PLATE
 PX = 21.5                         # centre plate half width
-PZ = (45.0, -45.5)                # centre plate top and bottom
+PZ = (45.0, -47.5)                # centre plate top and bottom
 
 LENS = (0.0, 25.7)
 BTN = (0.0, -11.1)
@@ -65,42 +65,144 @@ bm.free()
 assign(body, M_BODY)
 
 # ------------------------------------------------------------------------------------------------
-# centre plate: faceted, the big angled facets of the photo above the LED X and below AXON
+# centre plate (user-checked against Axon's renders): the whole front is slopes and valleys, only the AXON
+# label is flat. The plate's own face is the VALLEY level; every region between the X arms (top, left, right,
+# under the lens) and between the bottom legs (bottom block, lower side panels) is a faceted block whose
+# sides fall into the valleys and whose top tilts down away from its junction. The valleys left between the
+# blocks are the X around the lens and the legs under AXON.
 # ------------------------------------------------------------------------------------------------
-plate_pts = [(-PX + 9.0, PZ[0]), (PX - 9.0, PZ[0]), (PX, PZ[0] - 9.0), (PX, PZ[1] + 9.0), (PX - 9.0, PZ[1]),
-             (-PX + 9.0, PZ[1]), (-PX, PZ[1] + 9.0), (-PX, PZ[0] - 9.0)]
-plate = prism_y("plate", rounded_poly(plate_pts, 1.2, 3), Y0 + 0.4, H_PLATE + 0.4, chamfer=0.7, seg=2)
-# the big angled facets: from the LED arms the front falls away 3 mm to the top corners, and from under
-# AXON to the bottom corners; they cut through the plate into the body
+YC = YP + 1.2                     # valley floor (0.2 mm in front of the body face: no z-fighting)
+plate_pts = [(-PX + 9.0, PZ[0]), (PX - 9.0, PZ[0]), (PX, PZ[0] - 9.0), (PX, PZ[1] + 5.0), (PX - 5.0, PZ[1]),
+             (-PX + 5.0, PZ[1]), (-PX, PZ[1] + 5.0), (-PX, PZ[0] - 9.0)]
+plate = prism_y("plate", rounded_poly(plate_pts, 1.2, 3), Y0 + 0.4, (Y0 + 0.4) - YC, chamfer=0.5, seg=2)
+
+
+def clip(poly, a_, b_, c_):
+    """Keep the part of a convex polygon where a_ * x + b_ * z >= c_."""
+    out = []
+    n = len(poly)
+    for i in range(n):
+        p0, p1 = poly[i], poly[(i + 1) % n]
+        f0, f1 = a_ * p0[0] + b_ * p0[1] - c_, a_ * p1[0] + b_ * p1[1] - c_
+        if f0 >= 0:
+            out.append(p0)
+        if (f0 >= 0) != (f1 >= 0):
+            tt = f0 / (f0 - f1)
+            out.append((p0[0] + (p1[0] - p0[0]) * tt, p0[1] + (p1[1] - p0[1]) * tt))
+    return out
+
+
+def plate_clip(poly, inset):
+    n = len(plate_pts)
+    for i in range(n):
+        (x0, z0), (x1, z1) = plate_pts[i], plate_pts[(i + 1) % n]
+        a_, b_ = -(z1 - z0), (x1 - x0)                 # inward normal of a CCW? polygon edge
+        ln = math.hypot(a_, b_)
+        a_, b_ = a_ / ln, b_ / ln
+        if a_ * (0 - x0) + b_ * (0 - z0) < 0:          # make it point inside
+            a_, b_ = -a_, -b_
+        poly = clip(poly, a_, b_, a_ * x0 + b_ * z0 + inset)
+    return poly
+
+
+def line_side(poly, p, d, w, left=True):
+    """Keep the side of the line through p with direction d, at least w away from it."""
+    nl = (-d[1], d[0]) if left else (d[1], -d[0])
+    return clip(poly, nl[0], nl[1], nl[0] * p[0] + nl[1] * p[1] + w)
+
+
+RISE = 1.8                        # blocks stand 3 mm above the valley floor
+
+
+def block(name, region, centre, base_w, top_w, tilt=1.4):
+    """Frustum over region(w): base outline (valley edge) at the valley floor, top outline set in by the slope
+    width; the top sinks by `tilt` mm with distance from `centre` (it falls away from its junction)."""
+    base = region(base_w)
+    top = region(top_w)
+    if len(base) < 3 or len(top) < 3:
+        return
+    ds = [math.hypot(x - centre[0], z - centre[1]) for x, z in top]
+    d0, d1 = min(ds), max(ds)
+    pts = [(x, YC + 0.3, z) for x, z in base]
+    pts += [(x, YP - RISE + tilt * (dd - d0) / max(d1 - d0, 1e-6), z) for (x, z), dd in zip(top, ds)]
+    boolean(plate, hull(name, pts), op="UNION")
+
+
+lx, lz = LENS
+C = (lx, lz)
+ARMS = ((-11.6, 36.0, -35), (12.1, 36.0, 35), (-12.1, 15.0, 35), (12.1, 15.0, -35))
+ang = {}
+for x, z, a in ARMS:
+    ang[(x, z)] = math.atan2(z - lz, x - lx)
+order = sorted(ang, key=lambda q: ang[q] % (2 * math.pi))     # UR, UL, LL, LR
+BIG = [(-40, 60), (40, 60), (40, -60), (-40, -60)][::-1]
+Z_BEZ_TOP = BTN_OUT[1] + 1.2                                  # blocks stop above the button bezel
+for i in range(4):
+    pa, pb = order[i], order[(i + 1) % 4]
+    ua = Vector((pa[0] - lx, pa[1] - lz)).normalized()
+    ub = Vector((pb[0] - lx, pb[1] - lz)).normalized()
+    m = (ua + ub).normalized()
+
+    def region(w, ua=ua, ub=ub, m=m):
+        r = line_side(BIG, C, ua, w, left=True)
+        r = line_side(r, C, ub, w, left=False)
+        r = clip(r, m.x, m.y, m.x * lx + m.y * lz + 8.4 + (w - 2.4))
+        r = clip(r, 0, 1, Z_BEZ_TOP + (w - 2.4))
+        return plate_clip(r, 0.4 + (w - 2.4))
+    block("x_block_%d" % i, region, C, 2.4, 4.2)
+
+# bottom: AXON junction (flat, recessed) with two legs running out to the bottom corners
+AX_TOP = [(-11.5, -31.0), (11.5, -31.0), (12.4, -33.0), (6.8, -39.8), (-6.8, -39.8), (-12.4, -33.0)]
+AX_FLOOR = [(-9.6, -32.6), (9.6, -32.6), (10.2, -33.8), (5.6, -38.6), (-5.6, -38.6), (-10.2, -33.8)]
+LEG = {sx: (Vector((sx * 6.8, -38.6)), (Vector((sx * 24.0, -50.5)) - Vector((sx * 6.8, -38.6))).normalized())
+       for sx in (-1, 1)}
+Z_BEZ_BOT = BTN_OUT[2] - 1.0
+AXC = (0.0, -36.0)
+
+
+def bottom_region(w):
+    r = line_side(BIG, LEG[-1][0], LEG[-1][1], w, left=True)        # below / right of the left leg
+    r = line_side(r, LEG[1][0], LEG[1][1], w, left=False)           # below / left of the right leg
+    r = clip(r, 0, -1, 39.8 + (w - 2.4) + 0.8)                     # under the AXON junction
+    return plate_clip(r, 0.4 + (w - 2.4))
+
+
+block("bottom_block", bottom_region, AXC, 2.4, 4.0)
 for sx in (-1, 1):
-    for name, zs in (("brow", (40.0, 46.0, 33.0, 52.0)), ("chin", (-41.5, -47.0, -34.0, -53.0))):
-        z_in, z_mid, z_side, z_out = zs
-        k = 1 if z_in > 0 else -1
-        pts = [(sx * x, y, z) for x, y, z in (
-            (5.0, YP - 0.01, z_in + 2.5 * k), (14.0, YP - 0.01, z_in), (PX + 1.0, YP - 0.01, z_side),
-            (hw + 2, Y0 + 0.2, z_side + 3.0 * k), (5.0, Y0 + 3.0, z_out), (hw + 2, Y0 + 3.0, z_out),
-            (5.0, YP - 3, z_in + 2.5 * k), (hw + 2, YP - 3, z_side), (5.0, YP - 3, z_out), (hw + 2, YP - 3, z_out))]
-        for tgt in ("plate", "body"):
-            boolean(sc.objects[tgt], hull(name + "_cut", pts))
-# recessed triangles either side of the lens between the LED arms (the grilles sit in them)
+    def side_region(w, sx=sx):
+        r = line_side(BIG, LEG[sx][0], LEG[sx][1], w, left=(sx > 0))  # above / outside the leg
+        r = clip(r, 0, -1, -Z_BEZ_BOT + (w - 2.4))                  # below the bezel
+        r = clip(r, sx, 0, 12.6 + (w - 2.4) - 0.8)                  # beside the AXON junction
+        return plate_clip(r, 0.4 + (w - 2.4))
+    block("side_block_%d" % (sx > 0), side_region, AXC, 2.4, 4.0)
+
+boolean(plate, hull("axon_pocket_cut", [(x, YP - 3.0, z) for x, z in AX_TOP] + [(x, YC + 0.4, z) for x, z in AX_FLOOR]
+                    + [(x, YC - 0.01, z) for x, z in AX_TOP]))
+
+# top corners: the front falls away 3 mm to the top corners (cut through the plate and the body)
 for sx in (-1, 1):
-    tri = [(sx * 22.5, 39.0), (sx * 8.0, 25.7), (sx * 22.5, 12.0)]
-    boolean(plate, hull("side_recess_cut", [(x, y, z) for x, z in tri for y in (YP + 0.9, YP - 3.0)]
-                        + [(sx * 24.0, YP + 0.9, 25.7)]))
+    z_in, z_side, z_out = 40.0, 33.0, 52.0
+    pts = [(sx * x, y, z) for x, y, z in (
+        (5.0, YP - 0.01, z_in + 2.5), (14.0, YP - 0.01, z_in), (PX + 1.0, YP - 0.01, z_side),
+        (hw + 2, Y0 + 0.2, z_side + 3.0), (5.0, Y0 + 3.0, z_out), (hw + 2, Y0 + 3.0, z_out),
+        (5.0, YP - 3, z_in + 2.5), (hw + 2, YP - 3, z_side), (5.0, YP - 3, z_out), (hw + 2, YP - 3, z_out))]
+    for tgt in ("plate", "body"):
+        boolean(sc.objects[tgt], hull("brow_cut", pts))
+# the screw rails slope down from the plate to the outer edges as well
+for sx in (-1, 1):
+    boolean(body, hull("rail_slope_cut", [(sx * x, y, z) for x, y in ((PX + 0.6, Y0), (hw + 1.0, Y0 + 1.8),
+                                                                      (PX + 0.6, Y0 - 6.0), (hw + 1.0, Y0 - 6.0))
+                                          for z in (-hh - 2, hh + 2)]))
 assign(plate, M_FACE)
 
 # ------------------------------------------------------------------------------------------------
-# lens in an octagonal boss, IR window above, sensor pill below
+# lens in the low junction, IR window on the top trapezoid, sensor pill on the bottom one
 # ------------------------------------------------------------------------------------------------
-lx, lz = LENS
-octo = [(lx + 8.2 * math.cos(math.radians(22.5 + 45 * i)), lz + 8.2 * math.sin(math.radians(22.5 + 45 * i)))
-        for i in range(8)]
-YL = YP - 1.4
-boolean(plate, prism_y("lens_boss", octo, YP + 0.3, 1.7, chamfer=0.9, seg=2), op="UNION")
-cut(["plate"], lambda: disc("lens_pocket_cut", 6.9, lx, lz, YL + 0.9, YL - 5, seg=96))
+YL = YC + 0.3                     # bezel top level with the channel floor
+cut(["plate", "body"], lambda: disc("lens_pocket_cut", 6.9, lx, lz, YL + 0.9, YL - 5, seg=96))
 assign(annulus("lens_gap", lx, lz, 6.4, 6.9, YL + 0.88, YL + 1.1, seg=96), M_HOLE)
 assign(lathe("lens_bezel", lx, lz, [(6.4, 0.9), (6.4, -0.1), (5.9, -0.3), (5.0, -0.3), (4.5, 0.3), (4.5, 1.0)],
-             YL, seg=96), M_SCREW)
+             YL, seg=96), M_SCREW)          # bright metal bezel ring
 assign(disc("lens_seat", 4.5, lx, lz, YL + 1.2, YL + 0.9, seg=72), M_HOLE)
 bm = bmesh.new()
 bmesh.ops.create_uvsphere(bm, u_segments=36, v_segments=18, radius=4.3 * MM)
@@ -111,28 +213,30 @@ glass = assign(finish(bm, "lens_glass"), M_GLASS)
 glass.location = v3(lx, YL + 0.9, lz)
 
 cut(["plate"], lambda: prism_y("ir_cut", [(x, 39.7 + z) for x, z in stadium_pts_2d(7.0, 3.0, seg_half=8)],
-                               YP + 0.6, 4.0))
-assign(prism_y("ir_window", [(x, 39.7 + z) for x, z in stadium_pts_2d(6.8, 2.8, seg_half=8)], YP + 0.7, 0.3,
+                               YP - 0.9, 4.0))
+assign(prism_y("ir_window", [(x, 39.7 + z) for x, z in stadium_pts_2d(6.8, 2.8, seg_half=8)], YP - 0.8, 0.3,
                chamfer=0.1), M_GLASS)
-assign(prism_y("sensor", [(x, 13.1 + z) for x, z in stadium_pts_2d(3.6, 1.5, seg_half=6)], YP + 0.2, 0.25,
+assign(prism_y("sensor", [(x, 13.1 + z) for x, z in stadium_pts_2d(3.6, 1.5, seg_half=6)], YP - 0.4, 1.0,
                chamfer=0.1), M_LABEL)
 
-# four green LED bars in an X around the lens, each in a dark slot
-for i, (x, z, a) in enumerate(((-11.6, 36.0, -35), (12.1, 36.0, 35), (-12.1, 15.0, 35), (12.1, 15.0, -35))):
+# four green LED bars, each in a pointed window sunk into the channel floor
+for i, (x, z, a) in enumerate(ARMS):
     c, s = math.cos(math.radians(a)), math.sin(math.radians(a))
-
-    def bar(L, Wd, x=x, z=z, c=c, s=s):
-        return [(x + u * c - v * s, z + u * s + v * c) for u, v in stadium_pts_2d(L, Wd, seg_half=4)]
-    cut(["plate"], lambda: prism_y("led_slot_cut", bar(8.2, 2.9), YP + 0.8, 4.0))
-    assign(prism_y("led_slot_%d" % i, bar(8.2, 2.9), YP + 0.85, 0.1), M_HOLE)
-    assign(prism_y("led_%d" % i, bar(7.3, 2.1), YP + 0.8, 0.55, chamfer=0.2, seg=2), M_5_GREEN)
+    win_o = [(x + u * c - v * s, z + u * s + v * c) for u, v in ((-4.6, 0), (-3.2, 1.55), (3.2, 1.55), (4.6, 0),
+                                                                    (3.2, -1.55), (-3.2, -1.55))]
+    win_i = [(x + u * c - v * s, z + u * s + v * c) for u, v in ((-3.9, 0), (-2.8, 0.95), (2.8, 0.95), (3.9, 0),
+                                                                    (2.8, -0.95), (-2.8, -0.95))]
+    for tgt in ("plate", "body"):
+        boolean(sc.objects[tgt], hull("led_window_cut", [(a_, YC - 0.01, b_) for a_, b_ in win_o]
+                                      + [(a_, YC - 2.0, b_) for a_, b_ in win_o] + [(a_, YC + 0.6, b_) for a_, b_ in win_i]))
+    assign(prism_y("led_%d" % i, win_i, YC + 0.7, 0.25, chamfer=0.1, seg=1), M_5_GREEN)
 
 # speaker grilles: diamond grids of round holes in dark pads either side of the lens
 for sx, gx, gz in ((-1, -17.0, 27.1), (1, 17.4, 27.6)):
     pad_pts = rounded_poly([(gx - 3.9, gz + 5.3), (gx + 3.9, gz + 5.3), (gx + 3.9, gz - 5.3), (gx - 3.9, gz - 5.3)],
                            1.4, 3)
-    cut(["plate"], lambda: prism_y("grille_cut", pad_pts, YP + 1.4, 3.0))
-    assign(prism_y("grille_pad_%d" % (sx > 0), pad_pts, YP + 1.5, 0.12), M_BODY)
+    cut(["plate"], lambda: prism_y("grille_cut", pad_pts, YP - 0.2, 4.0))       # into the sloped block top
+    assign(prism_y("grille_pad_%d" % (sx > 0), pad_pts, YP - 0.1, 0.12), M_BODY)
     bm = bmesh.new()
     for iz in range(-3, 4):
         for ix in range(-2, 3):
@@ -140,7 +244,7 @@ for sx, gx, gz in ((-1, -17.0, 27.1), (1, 17.4, 27.6)):
                 continue
             hx, hz = gx + ix * 1.45, gz + iz * 1.45
             bmesh.ops.create_circle(bm, cap_ends=True, segments=10, radius=0.55 * MM,
-                                    matrix=Matrix.Translation(v3(hx, YP + 1.37, hz))
+                                    matrix=Matrix.Translation(v3(hx, YP - 0.23, hz))
                                     @ Matrix.Rotation(math.radians(90), 4, "X"))
     assign(finish(bm, "grille_holes_%d" % (sx > 0)), M_HOLE)
 
@@ -155,30 +259,86 @@ def octagon(hwid, top, bot, ch):
             (-hwid + ch, bot), (-hwid, bot + ch), (-hwid, top - ch)]
 
 
-boolean(plate, prism_y("btn_bezel_add", rounded_poly(octagon(*BTN_OUT, 7.0), 2.0, 4), YP + 0.3, 1.9, chamfer=1.2,
+# bezel: a frame standing 1.6 mm proud with only a small outer chamfer; its inner wall is a wide funnel down
+# to the pad (the photo's lit lower inner rim)
+boolean(plate, prism_y("btn_bezel_add", rounded_poly(octagon(*BTN_OUT, 7.0), 2.0, 4), YP + 0.3, 1.9, chamfer=1.0,
                        seg=2), op="UNION")
 well = rounded_poly(octagon(17.0, 5.6, -27.9, 6.0), 1.6, 4)
-cut(["plate"], lambda: prism_y("btn_well_cut", well, YP - 0.2, 4.0))
-assign(prism_y("btn_well", well, YP - 0.1, 0.1), M_HOLE)
-assign(prism_y("btn_pad", rounded_poly(octagon(*BTN_PAD, 5.6), 2.2, 4), YP - 0.1, 2.3, chamfer=1.8, seg=5), M_5_PAD)
-lg = flat_logo("logo", delta_polys(7.0, bx, bz), 0.25, M_LOGO, chamfer=0.08)
-lg.location = v3(0, YP - 2.35, 0)
+mouth = octagon(19.0, 7.0, -29.4, 6.8)
+boolean(plate, hull("btn_funnel_cut", [(a_, YP - 1.61, b_) for a_, b_ in mouth] + [(a_, YP - 4.0, b_) for a_, b_ in mouth]
+                    + [(a_, YP - 0.2, b_) for a_, b_ in octagon(17.0, 5.6, -27.9, 6.0)]))
+cut(["plate"], lambda: prism_y("btn_well_cut", well, YP + 0.25, 4.0))
+assign(prism_y("btn_well", well, YP + 0.3, 0.05), M_HOLE)
+# the pad sits inside the raised bezel and is a shallow DISH (photo: its lower part faces the top light);
+# the delta on it is an engraved outline, plus four tick grooves at its corners
+PAD_FRONT = YP - 1.1
+DISH = 1.0                        # depth at the centre
+RS = (14.5 ** 2 + DISH ** 2) / (2 * DISH)
+
+
+def dish_pad(name, outline_pts, cx, cz, y_back, y_front, chamfer=0.6):
+    """Clean manifold pad: side wall, a rounded rim, then rings shrinking to the centre whose depth follows a
+    sphere of radius RS (the dish), and a flat back. (Booleans with a big sphere left holes.)"""
+    bm = bmesh.new()
+    n = len(outline_pts)
+    span = max(math.hypot(x - cx, z - cz) for x, z in outline_pts)
+    prof = [(1.0, y_back), (1.0, y_front + chamfer)]
+    prof += [(1.0 - (chamfer / span) * (1 - math.cos(math.pi / 2 * k / 3)),
+              y_front + chamfer * (1 - math.sin(math.pi / 2 * k / 3))) for k in range(1, 4)]
+    s0 = prof[-1][0]
+    rings = [[bm.verts.new(v3(cx + (x - cx) * s, yy, cz + (z - cz) * s)) for x, z in outline_pts] for s, yy in prof]
+    for k in range(1, 16):
+        s = s0 * (1 - k / 16)
+        ring = []
+        for x, z in outline_pts:
+            px_, pz_ = cx + (x - cx) * s, cz + (z - cz) * s
+            r_ = math.hypot(px_ - cx, pz_ - cz)
+            ring.append(bm.verts.new(v3(px_, y_front + max(0.0, DISH - r_ * r_ / (2 * RS)), pz_)))
+        rings.append(ring)
+    centre = bm.verts.new(v3(cx, y_front + DISH, cz))
+    for r0, r1 in zip(rings, rings[1:]):
+        for i in range(n):
+            j = (i + 1) % n
+            bm.faces.new([r0[i], r0[j], r1[j], r1[i]])
+    for i in range(n):
+        bm.faces.new([rings[-1][i], rings[-1][(i + 1) % n], centre])
+    bm.faces.new(list(reversed(rings[0])))
+    return finish(bm, name)
+
+
+pad = assign(dish_pad("btn_pad", rounded_poly(octagon(*BTN_PAD, 5.6), 2.2, 4), bx, bz, YP + 0.25, PAD_FRONT), M_5_PAD)
+
+
+def dish_depth(px_, pz_):
+    return DISH - (math.hypot(px_ - bx, pz_ - bz) ** 2) / (2 * RS)
+
+
+for poly in delta_polys(7.0, bx, bz):
+    ring = poly + [poly[0]]
+    for p0, p1 in zip(ring, ring[1:]):
+        floor = PAD_FRONT + min(dish_depth(*p0), dish_depth(*p1)) + 0.3
+        cut(["btn_pad"], lambda: prism_y("delta_groove_cut", stroke([p0, p1], 0.4), floor, 3.0))
+for sx in (-1, 1):
+    for sz in (-1, 1):
+        cx, cz = bx + sx * 12.6, bz + sz * 8.6
+        cut(["btn_pad"], lambda: prism_y("tick_cut", stroke([(cx - sx * 1.3, cz + sz * 1.3),
+                                                             (cx + sx * 1.3, cz - sz * 1.3)], 0.35),
+                                         PAD_FRONT + 0.3, 4.0))
 
 # screws, microphones, wordmark
 for i, (x, z) in enumerate(((-26.5, 38.8), (26.5, 38.8), (-26.5, -1.0), (26.5, -1.0), (-26.5, -40.2), (26.5, -40.2))):
     screw("screw_%d" % i, x, z, surface_at(x, z)[0].y / MM + 0.35)   # seated on the (possibly sloped) rail
 front_mic("mic_1", -22.6, 4.4, 0.5)
 front_mic("mic_2", 22.6, 4.4, 0.5)
-front_text("axon_txt", "AXON", 0.0, -36.8, 11.6, M_TEXT, font=r"C:\Windows\Fonts\segoeuil.ttf")
+front_text("axon_txt", "AXON", 0.0, -35.6, 11.6, M_TEXT, font=r"C:\Windows\Fonts\segoeuil.ttf")
 
 # ------------------------------------------------------------------------------------------------
 # sides, top, bottom, back
 # ------------------------------------------------------------------------------------------------
-# right side: ribbed grip panel
+# right side: a recessed panel of fine diagonal knurl (Axon's render), not ribs
 boolean(body, box("grip_cut", 3.0, 18.0, 62.0, (hw + 0.6, 0.5, -3.0), bevel=0.5, seg=2))
 assign(box("grip_floor", 0.3, 17.6, 61.6, (hw - 0.85, 0.5, -3.0)), M_RUBBER)
-for i in range(22):
-    assign(box("grip_rib_%d" % i, 1.1, 16.4, 1.3, (hw - 0.45, 0.5, -32.0 + i * 2.75), bevel=0.35, seg=2), M_RUBBER)
+knurl_patch("grip", "x", hw - 0.7, (-8.0, 9.0), (-33.4, 27.4), 1.1, 0.45, M_RUBBER, sign=1)
 
 # left side: programmable, volume up / down and power buttons, each with a tactile mark
 for i, (zc, zl, mark) in enumerate(((30.0, 9.0, "dot"), (17.0, 9.0, "up"), (5.0, 9.0, "down"), (-12.0, 12.0, "bar"))):

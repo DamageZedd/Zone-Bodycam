@@ -30,10 +30,10 @@ hw = W / 2
 Z_TOP, Z_BOT = 40.5, -42.4
 Y_BACK = 12.0                    # back face
 Y_PLAT = -12.0                   # front plateau (24 mm body)
-H_MAX = 3.8                      # plateau height above the zero lines of the roof planes
+H_MAX = 4.0                      # plateau height above the zero lines of the roof planes
 Y0 = Y_PLAT + H_MAX              # roof base level (h = 0)
 XA, ZA_T, ZA_B = 36.5, 43.5, -44.0   # zero lines of the four roof planes (just outside the outline)
-KX, KZ = 0.312, 0.253            # roof slopes; KX / KZ = 1.23 is the hip-ridge angle measured on the drawing
+KX, KZ = 0.360, 0.293            # roof slopes; KX / KZ = 1.23 is the hip-ridge angle measured on the drawing
 CORNER_R = 3.2
 FRONT_R = 2.0
 BACK_BEVEL = 2.2
@@ -92,6 +92,8 @@ boolean(body, disc("pod", POD_R, lx, lz, Y0 + 2.0, Y_POD, seg=96, chamfer=1.0, c
 boolean(body, hull("hump", [(x, y, z) for x, z in ((4.7, Z_TOP - 1.0), (22.7, Z_TOP - 1.0), (8.0, 43.0),
                                                     (19.2, 43.0)) for y in (-8.0, 5.0)]), op="UNION")
 boolean(body, box("sync_block", 11.6, 10.0, 5.2, (-9.3, -1.0, Z_TOP), bevel=2.4, seg=5), op="UNION")
+# the photo's U-shaped scoop in the front of that block (a valley: dark inside, lit rim): a cylinder along Y
+boolean(body, disc("scoop_cut", 3.6, -9.3, Z_TOP + 3.0, -2.5, -16.0, seg=48))
 
 # round the front perimeter
 bm = bmesh.new()
@@ -109,13 +111,13 @@ bm.to_mesh(body.data)
 bm.free()
 
 # side grip bands: 0.9 mm deep recess down each side, filled with diamond knurl teeth
-GRIP = {-1: (19.5, -28.3), 1: (16.0, -28.3)}
+GRIP = {-1: (19.5, -28.3), 1: (16.0, -28.3)}   # z ranges; the bands run most of the side's depth
 for s in (-1, 1):
     zt, zb = GRIP[s]
-    boolean(body, box("grip_cut", 4.0, 16.0, zt - zb, (s * (hw + 1.1), -1.5, (zt + zb) / 2), bevel=0.4, seg=2))
-    assign(box("grip_floor_%d" % (s > 0), 0.3, 15.6, zt - zb - 0.4, (s * (hw - 1.0), -1.5, (zt + zb) / 2)),
+    boolean(body, box("grip_cut", 4.0, 17.0, zt - zb, (s * (hw + 1.1), 1.0, (zt + zb) / 2), bevel=0.4, seg=2))
+    assign(box("grip_floor_%d" % (s > 0), 0.3, 16.6, zt - zb - 0.4, (s * (hw - 1.0), 1.0, (zt + zb) / 2)),
            M_RUBBER)
-    knurl_patch("grip_%s" % ("l" if s < 0 else "r"), "x", s * (hw - 0.9), (-9.3, 6.3), (zb + 0.6, zt - 0.6),
+    knurl_patch("grip_%s" % ("l" if s < 0 else "r"), "x", s * (hw - 0.9), (-7.2, 9.2), (zb + 0.6, zt - 0.6),
                 1.25, 0.85, M_RUBBER, sign=s)
 
 # ------------------------------------------------------------------------------------------------
@@ -142,10 +144,10 @@ assign(disc("lens_pupil", 1.0, lx, lz, Y_POD + 0.6, Y_POD + 0.1, seg=32), M_GLAS
 bx, bz = BTN
 cut(["body"], lambda: disc("btn_seat_cut", BTN_R + 0.3, bx, bz, Y_PLAT + 1.2, Y_PLAT - 6.0, seg=160))
 assign(annulus("btn_gap", bx, bz, BTN_R - 0.1, BTN_R + 0.3, Y_PLAT + 1.18, Y_PLAT + 1.4, seg=160), M_HOLE)
-assign(lathe("btn_bezel", bx, bz, [(BTN_R, 1.2), (BTN_R, -0.15), (BTN_R - 0.5, -0.45), (21.6, -0.45),
-                                    (21.3, -0.1), (21.3, 0.8)], Y_PLAT, seg=160), M_GLOSS)
-assign(annulus("btn_ring", bx, bz, 19.9, 21.3, Y_PLAT + 0.25, Y_PLAT + 0.9, seg=160), M_GREEN)
-Y_FACE = Y_PLAT + 0.05
+assign(lathe("btn_bezel", bx, bz, [(BTN_R, 1.2), (BTN_R, -0.8), (BTN_R - 0.5, -1.3), (21.0, -1.3),
+                                    (20.6, -0.9), (20.6, 0.8)], Y_PLAT, seg=160), M_GLOSS)   # stands 1.3 mm proud
+assign(annulus("btn_ring", bx, bz, 19.9, 20.6, Y_PLAT + 0.45, Y_PLAT + 1.0, seg=160), M_GREEN)
+Y_FACE = Y_PLAT + 0.6                # the face sits 1.9 mm below the bezel top
 assign(disc("btn_face", 19.9, bx, bz, Y_PLAT + 1.0, Y_FACE, seg=160, chamfer=0.5, cseg=3), M_FACE)
 
 
@@ -154,13 +156,13 @@ SWIRL = [((1.0, -1.0), (-8.6, 3.4), (-3.4, 15.6)),     # top blade: bows out to 
          ((1.0, -1.0), (12.4, 5.4), (17.2, -8.4)),     # right blade: arcs over to the right, tip down-right
          ((1.0, -1.0), (-2.6, -11.6), (-12.2, -13.8))]  # lower blade: drops, then sweeps out to the left
 
-arms = [prism_y("swirl_%d" % i, stroke(bezier(*pts, n=14), 3.0), Y_FACE + 0.1, 0.55, chamfer=0.18, seg=2)
+arms = [prism_y("swirl_%d" % i, stroke(bezier(*pts, n=14), 4.4), Y_FACE + 0.1, 0.35, chamfer=0.2, seg=2)
         for i, pts in enumerate(SWIRL)]
 for a in arms[1:]:
     boolean(arms[0], a, op="UNION")
 arms[0].name = "swirl"
 assign(arms[0], M_GLOSS)
-assign(disc("swirl_hub", 1.5, 1.0, -1.0, Y_FACE + 0.1, Y_FACE - 0.55, seg=32, chamfer=0.18), M_GLOSS)
+assign(disc("swirl_hub", 2.2, 1.0, -1.0, Y_FACE + 0.1, Y_FACE - 0.35, seg=32, chamfer=0.18), M_GLOSS)
 
 # ------------------------------------------------------------------------------------------------
 # battery-status window (raised hood over a light window) and the AXON wordmark on the bottom facet
@@ -174,6 +176,17 @@ assign(prism_y("window", [(-6.5, -27.5), (6.5, -27.5), (8.3, -30.5), (-8.3, -30.
                chamfer=0.12), M_WINDOW)
 for i, z in enumerate((-28.2, -29.4)):
     assign(box("window_slat_%d" % i, 9.0 + 2.5 * i, 0.3, 0.45, (0, Y_PLAT + 0.0, z), bevel=0.1, seg=1), M_LIGHTPIPE)
+
+# the AXON chin is its own plate, set in with dark gap lines along all four edges (photo: dark line under
+# the window hood and above the bottom lip); each gap is at least 0.6 mm deep on the sloped facets
+def roof_h(x, z):
+    return min(KX * (XA - abs(x)), KZ * (ZA_T - z), KZ * (z - ZA_B), H_MAX)
+
+
+CHIN = [(-11.4, -32.0), (11.4, -32.0), (30.2, -41.0), (-30.2, -41.0)]
+for p0, p1 in zip(CHIN, CHIN[1:] + CHIN[:1]):
+    floor = Y0 - min(roof_h(*p0), roof_h(*p1)) + 0.6
+    cut(["body"], lambda: prism_y("chin_gap_cut", stroke([p0, p1], 0.55), floor, 8.0))
 
 front_text("axon_txt", "AXON", 2.6, -37.5, 16.9, M_TEXT, font=r"C:\Windows\Fonts\segoeuil.ttf")
 place_on_front(flat_logo("axon_delta", delta_polys(3.4), 0.10, M_TEXT), -9.3, -37.6, 0.02)
@@ -193,17 +206,17 @@ assign(hull("flag", [(x, y, z) for x, z in ((21.8, 42.8), (29.2, 41.2), (29.2, 3
                      for y in (-9.6, -4.6)]), M_RED)
 for i, (x, mat) in enumerate(((-3.6, M_LIGHTPIPE), (-1.2, M_RED))):
     assign(box("top_led_%d" % i, 1.2, 2.6, 0.5, (x, -2.0, Z_TOP + 0.1), bevel=0.25, seg=2), mat)
-assign(cyl_z("sync_ring", 2.6, -9.3, -1.0, Z_TOP + 2.45, Z_TOP + 2.8, seg=32, chamfer=0.2), M_BEZEL)
-assign(cyl_z("sync_port", 1.6, -9.3, -1.0, Z_TOP + 2.65, Z_TOP + 2.9, seg=24), M_HOLE)
+assign(cyl_z("sync_port", 1.3, -9.3, 0.6, Z_TOP + 2.55, Z_TOP + 2.75, seg=24), M_HOLE)   # behind the scoop
 
 # right side: Function button near the top
 assign(box("function_seam", 1.2, 10.0, 9.0, (hw - 0.3, -2.5, 24.5), bevel=0.6, seg=2), M_HOLE)
 assign(box("function_btn", 2.2, 9.0, 8.0, (hw + 0.4, -2.5, 24.5), bevel=0.8, seg=3), M_RUBBER)
 
-# bottom: dock window with contacts
-assign(box("dock_window", 16.0, 4.6, 0.4, (0, 2.0, Z_BOT + 0.05), bevel=0.3, seg=2), M_HOLE)
-for i, x in enumerate((-6.0, -2.0, 2.0, 6.0)):
-    assign(box("dock_pin_%d" % i, 1.6, 2.4, 0.4, (x, 2.0, Z_BOT - 0.05), bevel=0.15, seg=1), M_SCREW)
+# bottom (guide's bottom view): a recessed window 42 x 6 mm with the red battery bar, behind it the seam of
+# the front and back shells across the bottom
+cut(["body"], lambda: box("bottom_window_cut", 42.0, 6.0, 2.0, (0, -3.2, Z_BOT), bevel=0.5, seg=2))
+assign(box("bottom_window", 41.6, 5.6, 0.3, (0, -3.2, Z_BOT + 0.85), bevel=0.4, seg=2), M_HOLE)
+assign(box("battery_bar", 25.0, 1.2, 0.4, (0, -3.0, Z_BOT + 0.75), bevel=0.15, seg=1), M_RED)
 
 # ------------------------------------------------------------------------------------------------
 # back: square holster plate with a round boss and four screws, regulatory label
