@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- **Markers through a variable-zoom scope were wrong at its highest zoom** (`zbc_allies.script`, also the face blur): a zoom factor of 8 or less was read as a plain power, so the 24x top of a 3-24x scope was placed as 4x. Every zoom step now uses 100 / zoom factor, as the Bodycam exes render it.
+
 ## v1.3.0 - 2026-11-22
 
 ### Changed

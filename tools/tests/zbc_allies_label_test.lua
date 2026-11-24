@@ -279,13 +279,41 @@ if type(pm) == "function" and type(pmag) == "function" then
 	end
 
 	-- magnification: GAMMA's 3DSS zoom factors work out at 100 / zf (as the Bodycam exes' scope
-	-- projection uses them), small values are a plain power
+	-- projection uses them, svp_runtime_factor_to_magnification), at every zoom step
 	local m30 = pmag(30, 75, 75)
 	check(m30 > 3.3 and m30 < 3.35, ("3DSS zoom factor 30: 100 / 30, got %.2f"):format(m30))
 	check(pmag(20, 75, 75) > m30, "zoom factor 20 magnifies more than 30")
-	check(pmag(4, 75, 75) > 3.99 and pmag(4, 75, 75) < 4.01, "a small value is a plain 4x")
 	check(pmag(30, 75, 60) < m30, "main view already zoomed a little: less relative magnification")
 	check(pmag(nil, 75, 75) == 1 and pmag(0.5, 75, 75) == 1, "no or bad zoom factor: 1")
+
+	-- regression: variable-zoom scopes, every step of the ladder (the exe steps the factor linearly,
+	-- zoom_step_count 3). The top of a 3-24x (March F) is factor 4.167 = 24x, it was read as 4.17x.
+	local function ladder(f_min, f_top, steps)
+		local t, d = {}, (f_min - f_top) / steps
+		for i = 0, steps do t[#t + 1] = f_min - d * i end
+		return t
+	end
+	local function mag_ok(f, want, fov)
+		local got = pmag(f, fov, fov)
+		check(math.abs(got - want) < 0.01, ("zoom factor %.3f at fov %d: %.2fx, got %.2fx"):format(f, fov, want, got))
+		return got
+	end
+	for _, fov in ipairs({ 75, 90 }) do
+		local prev = 0
+		for i, f in ipairs(ladder(100 / 3, 100 / 24, 3)) do              -- March F 3-24x
+			local m = mag_ok(f, 100 / f, fov)
+			check(m > prev, ("March F step %d magnifies more than step %d"):format(i, i - 1))
+			prev = m
+		end
+		for _, f in ipairs(ladder(100, 20, 3)) do mag_ok(f, math.max(100 / f, 1), fov) end   -- 1-6x
+		for _, f in ipairs({ 5, 6, 6.66 }) do mag_ok(f, 100 / f, fov) end -- 3DSS 20x / 16.7x / 15x tops
+	end
+	-- mapping at the top step: a point 0.01 right of the aim point lands 0.24 right of the lens centre
+	local Ptop = { m = pmag(100 / 24, 90, 90), r = 0.2, a = 16 / 9, au = 0.5, av = 0.5 }
+	local tu, tv, tin = pm(0.51, 0.5, Ptop)
+	check(math.abs(tu - 0.74) < 1e-6 and tv == 0.5 and not tin, ("24x: 0.01 off the aim point maps 0.24 out, got %.4f"):format(tu))
+	local su, _, sin = pm(0.502, 0.5, Ptop)
+	check(math.abs(su - 0.548) < 1e-6 and sin, "24x: a point near the aim point stays inside the lens")
 end
 
 -- scope zoom
