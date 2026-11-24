@@ -1508,6 +1508,7 @@ local dead = false
 local death_real = nil                       -- real time of death in seconds, nil while alive
 local death_game_t = 0                       -- the death time sent in the glitch lane's z
 local death_clock = nil                      -- the window that ticks the clock
+local death_logged = false                   -- one log line on the clock's first tick
 
 local function real_now()
 	if time_continual then return time_continual() / 1000 end
@@ -1521,12 +1522,19 @@ function death_age(now)
 end
 
 function death_clock_tick()
-	if death_real then send("glitch", 0, 0, death_game_t, death_age()) end
+	if not death_real then return end
+	if not death_logged then
+		death_logged = true
+		printf("[Zone Bodycam] signal lost: clock running (game time %.2f s, real age %.2f s)",
+			time_global() / 1000 - death_game_t, death_age())
+	end
+	send("glitch", 0, 0, death_game_t, death_age())
 end
 
 class "ZbcDeathClock" (CUIScriptWnd)
 
 function ZbcDeathClock:__init() super()
+	self:SetWndRect(Frect():set(0, 0, 1, 1))
 	self:SetAutoDelete(true)
 end
 
@@ -1548,7 +1556,9 @@ local function death_clock_start(death_t)
 	death_clock_stop()
 	death_real = real_now()
 	death_game_t = death_t
+	death_logged = false
 	death_clock = ZbcDeathClock()
+	death_clock:Show(true)                   -- shown, like any HUD dialog, or the HUD skips its Update
 	get_hud():AddDialogToRender(death_clock)
 end
 
@@ -1648,7 +1658,8 @@ function signal_lost(death_t)
 	if dead or not bus_ready() then return end
 	dead = true
 	send("glitch", 0, 0, death_t, 0)               -- the shader times the break-up from death_t
-	pcall(death_clock_start, death_t)              -- and from the real clock, if game time stops
+	local ok, err = pcall(death_clock_start, death_t)   -- and from the real clock, if game time stops
+	printf("[Zone Bodycam] signal lost at %.2f s%s", death_t, ok and "" or (": clock failed: " .. tostring(err)))
 	-- the in-shader text: line 4 carries the translated "SIGNAL LOST", line 1 the last timestamp
 	local date = date_line()
 	upload_osd_chars(date, "", "", zbc_allies and zbc_allies.upper_cp1251

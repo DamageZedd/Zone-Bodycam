@@ -107,6 +107,12 @@ end
 local bc = io.open("gamedata/scripts/zbc_bodycam.script", "rb"):read("*a")
 check(bc:find("function ZbcDeathClock:Update%(%)%s+CUIScriptWnd%.Update%(self%)%s+death_clock_tick%(%)") ~= nil,
 	"the ZbcDeathClock window ticks the clock every frame")
+do
+	local sh = bc:find("death_clock:Show(true)", 1, true)
+	local ad = bc:find("get_hud():AddDialogToRender(death_clock)", 1, true)
+	check(sh and ad and sh < ad and ad - sh < 120,
+		"the clock window is shown before it is added (the HUD only updates shown dialogs)")
+end
 check(bc:find('send("glitch", F.glitch, F.burst, F.death_t, death_age())', 1, true) ~= nil,
 	"the per-frame glitch write keeps the real-clock age instead of zeroing it")
 
