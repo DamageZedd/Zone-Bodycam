@@ -169,6 +169,8 @@ end
 
 local cfg = {}
 local fx_event = false       -- EVENT shown after REC (zbc_fx.script), for the HUD-drawn timer
+local fx_event_on = false    -- ... and in the lit part of its blink
+local fx_shake = 0           -- how fast the camera swings 0..1 (zbc_fx.script)
 
 local function mcm_get(id)
 	if ui_mcm and ui_mcm.get then
@@ -221,7 +223,8 @@ local LANES = {
 	face_rows  = "zbc_face_rows",
 	glitch     = "zbc_glitch",     -- x interference, y hit burst, z time of death (0 alive)
 	ir         = "zbc_ir",         -- x low-light mix, y auto-exposure gain
-	dirt       = "zbc_dirt",       -- y blood seed, z time blood hit (0 none)
+	dirt       = "zbc_dirt",       -- hit times of up to 4 blood splatters (0 empty)
+	blood      = "zbc_blood",      -- how far each splatter's drips have run
 	event      = "zbc_event",      -- x EVENT shown after REC
 }
 local UINT_LANES = {
@@ -392,6 +395,7 @@ local function fx_off()
 	send("glitch", 0, 0, 0, 0)
 	send("ir",     0, 0, 0, 0)
 	send("dirt",   0, 0, 0, 0)
+	send("blood",  0, 0, 0, 0)
 	send("event",  0, 0, 0, 0)
 end
 
@@ -1301,7 +1305,7 @@ function ZbcHud:RefreshRec(visible, lens_on)
 	else
 		if tokens then send("rec", 0, 0, 0, 0) end
 		if show and self.glyph then
-			local ev = fx_event
+			local ev = fx_event and fx_event_on   -- blinks; " EVENT" is last, so nothing else moves
 			if self.rec_line.text == nil or secs ~= self.rec_sec or ev ~= self.rec_ev then
 				self.rec_sec, self.rec_ev = secs, ev
 				local G = self.glyph
@@ -1566,10 +1570,22 @@ local function fx_update()
 	fx_last = now
 	local F = zbc_fx.frame(cfg, dt)
 	fx_event = F.event and cfg.rec_timer or false
+	fx_event_on = fx_event and F.event_on or false
+	fx_shake = F.shake or 0
 	send("glitch", F.glitch, F.burst, F.death_t, 0)
 	send("ir",     F.ir, F.exposure or 1, 0, 0)
-	send("dirt",   0, F.blood_seed, F.blood_t, 0)
-	send("event",  fx_event and 1 or 0, 0, 0, 0)
+	local b = F.blood or {}
+	local function bt(i) return b[i] and b[i].t or 0 end
+	local function bd(i) return b[i] and b[i].drip or 0 end
+	send("dirt",   bt(1), bt(2), bt(3), bt(4))
+	send("blood",  bd(1), bd(2), bd(3), bd(4))
+	send("event",  fx_event and 1 or 0, fx_event_on and 1 or 0, 0, 0)
+end
+
+-- compression blocks up while the camera swings (zbc_fx.compression_level)
+function compression_now()
+	if zbc_fx and zbc_fx.compression_level then return zbc_fx.compression_level(cfg.compression, fx_shake) end
+	return cfg.compression
 end
 
 -- Called by zbc_fx on the actor's death: the shader takes it from here (glitch, cut to black,
@@ -1578,7 +1594,7 @@ end
 function signal_lost(death_t)
 	if dead or not bus_ready() then return end
 	dead = true
-	send("glitch", 1, 1, death_t, 0)
+	send("glitch", 0, 0, death_t, 0)               -- the shader times the break-up from death_t
 	-- the in-shader text: line 4 carries the translated "SIGNAL LOST", line 1 the last timestamp
 	local date = date_line()
 	upload_osd_chars(date, "", "", zbc_allies and zbc_allies.upper_cp1251
@@ -1627,7 +1643,7 @@ function actor_on_update()
 		send("motion",  inten, ox, oy, orr)
 		send("vig",     vx, vy, vt, vr)
 		send("vig_occ", occ_x, occ_y, cfg.rig_occlusion, housing_power())
-		send("sensor",  cfg.highlight_blowout, cfg.compression, rs, cfg.sensor_grade)
+		send("sensor",  cfg.highlight_blowout, compression_now(), rs, cfg.sensor_grade)
 	else
 		lens_off(true)
 		rs = 0

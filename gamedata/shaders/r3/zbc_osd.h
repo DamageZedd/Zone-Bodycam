@@ -15,7 +15,7 @@
 uniform float4 bus_zbc_osd_info;        // x: active (>0.5), y: logo_style (0=official, 1=swirl, 2=plain, 3=none), z: text_opacity, w: logo_opacity
 uniform float4 bus_zbc_osd_layout;       // x: logo_x (0.950), y: logo_y (0.026*asp.x), z: logo_w (0.035), w: em_v (em_px / H)
 uniform uint4  bus_zbc_osd_chars[41];    // row 0: (len0, len1, len2, len3); row 1+i*10+(c>>2) comp (c&3) = Windows-1251 byte
-uniform float4 bus_zbc_event;            // x: "EVENT" shown after the recording timer (>0.5)
+uniform float4 bus_zbc_event;            // x: "EVENT" after the recording timer (>0.5)  y: its blink, 0 hidden .. 1 shown
 uniform uint4  bus_zbc_osd_atlas[1344];  // rows 0..751: ASCII 33..126 16x32 2-bit (8 uint4s/glyph); rows 752..815: 64x64 2-bit logo;
                                          // rows 816..1343: Russian letters, Windows-1251 168, 184, 192..255 (scripts\zbc_osd_atlas_cyr.script)
 uniform float4 bus_zbc_rec;              // top-left recording timer. x: active (>0.5), y: dot lit (>0.5), z: whole seconds recorded, w: text_opacity
@@ -316,6 +316,7 @@ float4 zbc_rec_eval(float2 uv_s, float text_op, float2 asp)
 		uint  secs  = (uint)clamp(bus_zbc_rec.z, 0.0, 3599999.0);
 		uint  nh    = zbc_rec_hdigits(secs);
 		uint  len   = zbc_rec_len(nh);
+		float ev_op = saturate(bus_zbc_event.y);                             // " EVENT" blinks; the length stays
 		float x0_u  = left_u + 2.0 * half_v / asp.x + ZBC_REC_GAP * em_u - pad_u;
 		float end_u = x0_u + (float)(len - 1u) * adv_u + cell_w_u;
 		if (uv_s.x >= x0_u && uv_s.x < end_u)
@@ -332,7 +333,7 @@ float4 zbc_rec_eval(float2 uv_s, float text_op, float2 asp)
 					{
 						uint   ch    = zbc_rec_char((uint)ci, secs, nh);
 						float2 la    = zbc_osd_glyph_sample(ch, float2((uv_s.x - cx0) / cell_w_u, gy));
-						float  src_a = saturate(la.y * text_op);
+						float  src_a = saturate(la.y * text_op * (((uint)ci >= 10u + nh) ? ev_op : 1.0));
 						if (src_a > 0.0001)
 						{
 							acc.rgb = la.xxx * src_a + acc.rgb * (1.0 - src_a);
@@ -389,8 +390,7 @@ void zbc_osd_filter(inout float3 image, float2 uv, float2 uv_o, bool rec, float 
 		c_b = lerp(c_b, v_avg, 0.20);
 
 		float2 px    = floor(uv * screen_res.xy);
-		float2 t_off = floor(timers.x * 30.0) * float2(37.0, 17.0);
-		float  osd_n = (zbc_hash(px + t_off) - 0.5) * 0.05 * (0.4 + 0.6 * saturate(bus_zbc_extra.z));
+		float  osd_n = (zbc_hash13(float3(px, zbc_tstep(30.0))) - 0.5) * 0.05 * (0.4 + 0.6 * saturate(bus_zbc_extra.z));
 
 		c_r.r = clamp(c_r.r + osd_n * c_r.a, 0.0, c_r.a);
 		c_g.g = clamp(c_g.g + osd_n * c_g.a, 0.0, c_g.a);
@@ -549,19 +549,28 @@ float2 zbc_center_line(float2 uv, uint line_idx, float top_v, float em_v, float2
 	return out_la;
 }
 
-// After death: the picture cuts to black, then "SIGNAL LOST" (overlay line 4, in the game's language)
-// and the last timestamp (line 1) appear in the middle, with a faint flicker.
+// After death: the picture breaks up and dies block by block, then "SIGNAL LOST" (overlay line 4, in
+// the game's language) and the last timestamp (line 1) come in with their slices out of place, which
+// happens again whenever the camera tries to reconnect.
 float3 zbc_signal_lost(float3 image, float2 uv)
 {
-	image *= 1.0 - zbc_death_black();
 	float e = zbc_death_age();
+	image   = zbc_death_picture(image, uv, e);
 	float show = smoothstep(1.4, 1.6, e);
 	if (show <= 0.0)
 		return image;
-	float  flick = 0.85 + 0.15 * zbc_hash(float2(floor(timers.x * 12.0), 9.0));
+	float  ts    = zbc_tstep(15.0);
+	float  flick = 0.9 + 0.1 * zbc_hash(float2(ts, 9.0));
+	float  n     = floor(max(e - 1.6, 0.0) / 3.0);
+	float  ph    = (e - 1.6) - n * 3.0 - zbc_hash(float2(n, 3.3)) * 1.5;
+	float  jit   = saturate((1.0 - step(1.9, e)) + step(0.0, ph) * (1.0 - step(0.3, ph)));
+	float  mb    = zbc_mb_px();
+	float  srow  = floor(uv.y * screen_res.y / (mb * 0.5));
+	float2 uv_t  = uv;
+	uv_t.x      += (zbc_hash(float2(srow, ts)) < 0.35) ? floor((zbc_hash(float2(srow, ts + 0.5)) - 0.5) * 6.0 + 0.5) * mb * screen_res.z * jit : 0.0;
 	float2 asp   = zbc_aspect();
-	float2 a     = zbc_center_line(uv, 3u, 0.44, 0.060, asp);
-	float2 b     = zbc_center_line(uv, 0u, 0.53, 0.026, asp);
+	float2 a     = zbc_center_line(uv_t, 3u, 0.44, 0.060, asp);
+	float2 b     = zbc_center_line(uv_t, 0u, 0.53, 0.026, asp);
 	float2 la    = (a.y >= b.y) ? a : b;
 	float  src_a = saturate(la.y * show);
 	return image * (1.0 - src_a) + la.x * src_a * flick;
@@ -575,10 +584,10 @@ void zbc_osd_composite(inout float3 image, float2 uv, inout float osd_mask)
 	osd_mask = 0.0;
 }
 
-// Old exes: the feed still cuts to black on death, without the text.
+// Old exes: the feed still dies block by block on death, without the text.
 float3 zbc_signal_lost(float3 image, float2 uv)
 {
-	return image * (1.0 - zbc_death_black());
+	return zbc_death_picture(image, uv, zbc_death_age());
 }
 
 #endif // SHADER_BUS >= 7

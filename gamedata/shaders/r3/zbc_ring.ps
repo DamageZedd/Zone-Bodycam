@@ -19,8 +19,7 @@ float4 main(p_TL I) : SV_Target
 		float  edge = zbc_edge(uv) * on;
 
 		float2 px    = floor(uv * screen_res.xy);
-		float2 t_off = floor(timers.x * 30.0) * float2(37.0, 17.0);
-		float  nl    = zbc_hash(px + t_off) - 0.5;
+		float  nl    = zbc_hash13(float3(px, zbc_tstep(30.0))) - 0.5;
 		float  g_amt = saturate(saturate(bus_zbc_extra.z) * (1.0 + 1.5 * saturate(bus_zbc_ir.x))) * ZBC_INTENSITY;
 		float  ga    = abs(nl) * g_amt * 0.14 * (1.0 - edge);
 		float3 gcol  = (nl > 0.0) ? float3(0.35, 0.35, 0.35) : float3(0.0, 0.0, 0.0);

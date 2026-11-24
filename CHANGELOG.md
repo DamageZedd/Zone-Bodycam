@@ -3,7 +3,19 @@
 ## Unreleased
 
 ### Fixed
+- **Interference, grain and compression noise froze after ~15 minutes of play** (`zbc_lens.h`, `zbc_osd.h`, `zbc_ring.ps`): the noise was seeded from the game clock, which in 32-bit floats stops changing in the hash once the game has run a while, so tearing showed the same bands every frame and the grain slid one fixed pattern across the screen. All animated effects now run on a wrapped clock and a hash that keeps its precision, with fresh noise every frame.
 - **Markers through a variable-zoom scope were wrong at its highest zoom** (`zbc_allies.script`, also the face blur): a zoom factor of 8 or less was read as a plain power, so the 24x top of a 3-24x scope was placed as 4x. Every zoom step now uses 100 / zoom factor, as the Bodycam exes render it.
+
+### Changed
+- **Every camera effect moves** instead of sitting still:
+  - **Interference** swells and fades around its level from the source, gets short random spikes (more often and stronger the more interference there is), tracking bands roll through the picture, a hum wobble scrolls up it and the colour split jitters. An **emission or psy storm builds up** over its first 40 s instead of switching straight to one flat level.
+  - **Hard hits** jolt the picture 2-4 times, each weaker, instead of one smooth fade.
+  - **Signal lost**: the picture stutters, collapses to a bright line and a dot, and goes black over faint snow that dies down with a noise line still rolling; SIGNAL LOST tears in, then flickers with a short glitch now and then. Timed by the shader, so it plays out even after the scripts stop.
+  - **Night mode (IR)**: the gain hunts a little and a faint hum bar drifts up the picture; it has its own per-frame noise when the lens grain is off.
+  - **Blood on the lens** hits as an irregular splash with side lobes and droplets flung outward (no more star shapes), and its drips run like viscous blood on glass, out of the middle of the splat: the head, a teardrop bulb, stays pinned while blood gathers in it, then slips down to the next stop (faster for heavier drips, and faster while the camera swings); the thin, even rivulet behind it stays where it was laid. A splat's size decides how it drips: small ones don't, mid-sized ones run a short way and stop, large ones run all the way off the bottom of the lens. The splats drain a little as their drips run; the blood still dries and fades as before. **Blood now stacks**: every hit in front of the camera adds a new splatter instead of restarting the old one, and each stays until it has faded (up to 4 at once; with 4 up the oldest gives way). Each splatter is worked out once per pixel instead of twice, so the post shader is smaller than in v1.3.0. Needs the new `zbc_blood` Shader Bus lane. The blood is also softer, out of focus this close to the lens, with a faint red glow against bright light.
+  - **Compression** blocks up a little while the camera swings, like a real bodycam encoder.
+  - **EVENT** after REC flashes three times, then blinks (also on the HUD-drawn timer).
+- Tests: storm build-up, swells, spike and hit-jolt timing, drip speed, camera swing, EVENT blink, and a check that no shader seeds noise from the raw game clock (`tools/tests/zbc_dynamic_fx_test.lua`).
 
 ## v1.3.0 - 2026-11-22
 

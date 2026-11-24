@@ -18,24 +18,49 @@ uniform float4 bus_zbc_sensor;   // x: highlight blowout & auto-exposure punch (
 uniform float4 bus_zbc_faces;    // x: number of faces in use (0..64), y/z: packed 12-bit union AABB (u, v), w: >0.5 if valid
 
 // Camera effects (scripts\zbc_fx.script), independent of the lens.
-uniform float4 bus_zbc_glitch;   // x: interference 0..1  y: hit burst 0..1  z: time of death (timers.x clock, 0 alive)
+uniform float4 bus_zbc_glitch;   // x: interference 0..1 (with its swells)  y: spikes and hit bursts 0..1  z: time of death (timers.x clock, 0 alive)
 uniform float4 bus_zbc_ir;       // x: low-light (infrared) mix 0..1  y: auto-exposure gain (0 = off, 1 = neutral)  z: unused
-uniform float4 bus_zbc_dirt;     // x: unused  y: blood seed  z: time the blood hit (0 none)  w: unused
+uniform float4 bus_zbc_dirt;     // x..w: hit times of up to 4 blood splatters on the lens (timers.x clock, 0 empty)
+uniform float4 bus_zbc_blood;    // x..w: how far each splatter's drips have run (1 at ~14 s, up to 3)
 
 #define ZBC_INTENSITY (saturate(bus_zbc_motion.x))
 #define ZBC_ACTIVE    (bus_zbc_motion.x > 0.0005)
 #define ZBC_FACES     (bus_zbc_faces.x > 0.5)
-#define ZBC_FX        (bus_zbc_glitch.x + bus_zbc_glitch.y + bus_zbc_glitch.z + bus_zbc_dirt.z > 0.0005)
+#define ZBC_FX        (bus_zbc_glitch.x + bus_zbc_glitch.y + bus_zbc_glitch.z + dot(bus_zbc_dirt, 1.0) > 0.0005)
 
 // width / height of the display
 float2 zbc_aspect() { return float2(max(screen_res.x * screen_res.w, 0.1), 1.0); }
 
-// 2D -> 1D hash in [0, 1)
+// Clock for animated effects. timers.x counts seconds since the game started and float32 loses the
+// fraction once it is large, so a hash of floor(timers.x * 24) stops changing after about 15 minutes
+// and the "per-frame" noise freezes. Everything animated runs on this clock, wrapped every 10 minutes
+// (one frame jumps there), and every hash takes small inputs.
+#define ZBC_TWRAP 600.0
+float zbc_time() { return fmod(max(timers.x, 0.0), ZBC_TWRAP); }
+float zbc_tstep(float rate) { return floor(zbc_time() * rate); }   // frame counter at rate Hz
+
+// 2D -> 1D hash in [0, 1), safe for inputs up to ~1e5
 float zbc_hash(float2 p)
 {
-	p  = frac(p * float2(443.897, 441.423));
-	p += dot(p, p.yx + 19.19);
-	return frac((p.x + p.y) * p.x);
+	float3 p3 = frac(float3(p.xyx) * 0.1031);
+	p3 += dot(p3, p3.yzx + 33.33);
+	return frac((p3.x + p3.y) * p3.z);
+}
+
+// 3D -> 1D hash, for noise that changes per pixel AND per frame (x, y, frame)
+float zbc_hash13(float3 p3)
+{
+	p3  = frac(p3 * 0.1031);
+	p3 += dot(p3, p3.zyx + 31.32);
+	return frac((p3.x + p3.y) * p3.z);
+}
+
+// 3D -> 3D hash
+float3 zbc_hash33(float3 p3)
+{
+	p3  = frac(p3 * float3(0.1031, 0.1030, 0.0973));
+	p3 += dot(p3, p3.yxz + 33.33);
+	return frac((p3.xxy + p3.yxx) * p3.zyx);
 }
 
 // Vectorized 2D -> 3D hash in [0, 1) for decorrelated luma + chroma sensor grain
@@ -126,65 +151,249 @@ float3 zbc_plain_sample(Texture2D tex, float2 uv)
 // seconds since death, or -1 while alive
 float zbc_death_age() { return (bus_zbc_glitch.z > 0.0) ? max(timers.x - bus_zbc_glitch.z, 0.0) : -1.0; }
 
-// how broken the picture is now, 0..1
-float zbc_glitch_amount()
+// death: breaks up within 0.25 s, with the signal stuttering back for moments until it collapses
+float zbc_death_glitch(float e)
 {
-	float g = saturate(max(bus_zbc_glitch.x, bus_zbc_glitch.y));
-	float e = zbc_death_age();
-	if (e >= 0.0)
-		g = max(g, saturate(e / 0.3));             // death: full breakup within 0.3 s
-	return g;
+	float dip = step(zbc_hash(float2(floor(e * 9.0), 41.0)), 0.3) * (1.0 - smoothstep(0.55, 0.75, e));
+	return saturate(e / 0.25) * (1.0 - 0.65 * dip);
 }
 
-// tearing: sideways-shifted bands, line jitter, an occasional vertical roll (24 updates a second)
+// How broken the picture is now, 0..1. While alive the script sends the level from its sources with
+// their swells and random spikes (zbc_fx.script); after death the shader times it all itself.
+float zbc_glitch_amount()
+{
+	float e = zbc_death_age();
+	if (e >= 0.0)
+		return zbc_death_glitch(e);
+	return saturate(max(bus_zbc_glitch.x, bus_zbc_glitch.y));
+}
+
+//------------------------------------------------------------------------------------------------
+// Digital codec breakdown: what a body camera's H.264 stream does when the signal fails. This pass
+// has no previous frame, so damaged blocks show other parts of the current picture.
+//   - slice errors: from a random macroblock to the end of its row the blocks are wrong
+//   - single bad blocks: shuffled, smeared sideways, flat with a stuck DCT pattern, or off-colour
+//   - broken frame (strong interference): below a random row the last good line smears down, or
+//     the picture is the flat green of an empty YUV frame
+//   - starved bitrate (strongest spikes): the whole picture drops to big blocks
+// The grid is in screen pixels (16 at 1080p), the same in the uv and colour stages.
+//------------------------------------------------------------------------------------------------
+
+float zbc_mb_px() { return max(floor(16.0 * screen_res.y / 1080.0 + 0.5), 8.0); }
+
+struct zbc_cell
+{
+	float2 blk;    // macroblock coordinates
+	float  bad;    // 1: this block is damaged
+	float  kind;   // 0..1: how (one way along a whole slice)
+	float  seed;   // random per damage event
+	float  cut;    // >0: in a broken frame, 1 + the last good block row
+	float  fill;   // 1: the broken frame is green, 0: smeared
+	float  starve; // >0: block size of a starved frame, in pixels
+};
+
+zbc_cell zbc_codec_cell(float2 uv, float g)
+{
+	zbc_cell o;
+	float  mb   = zbc_mb_px();
+	o.blk       = floor(uv * screen_res.xy / mb);
+	float  cols = ceil(screen_res.x / mb);
+	float  tf   = zbc_time() * 15.0;
+	// a slice error holds for ~3 frames; rows are staggered so they don't all change together
+	float  tr    = floor((tf + zbc_hash(float2(o.blk.y, 7.0)) * 3.0) / 3.0);
+	float  tb    = floor(tf * 0.5);
+	float  start = floor(zbc_hash(float2(o.blk.y + 0.5, tr + 0.5)) * cols);
+	float  ps    = 0.3 * pow(saturate((g - 0.25) / 0.75), 2.0);   // no slices in a light psy flicker
+	float  slice = (zbc_hash(float2(o.blk.y, tr)) < ps && o.blk.x >= start) ? 1.0 : 0.0;
+	float  one   = (zbc_hash13(float3(o.blk, tb)) < 0.02 * pow(g, 2.5)) ? 1.0 : 0.0;
+	o.bad  = max(slice, one);
+	o.seed = (slice > 0.5) ? zbc_hash(float2(o.blk.y + 0.25, tr + 2.3)) : zbc_hash13(float3(o.blk, tb + 0.37));
+	o.kind = (slice > 0.5) ? zbc_hash(float2(o.blk.y + 0.75, tr + 1.7)) : zbc_hash13(float3(o.blk + 0.5, tb));
+	// broken frame, ~2 frames at a time, only once the interference is strong
+	float  tc  = floor(tf * 0.5);
+	float  pc  = 0.22 * pow(saturate((g - 0.35) / 0.65), 2.0);
+	float  row = floor(lerp(0.2, 0.9, zbc_hash(float2(tc, 93.0))) * screen_res.y / mb);
+	o.cut  = (zbc_hash(float2(tc, 91.0)) < pc && o.blk.y > row) ? 1.0 + row : 0.0;
+	o.fill = step(zbc_hash(float2(tc, 95.0)), 0.4);
+	float  pst = 0.30 * saturate((g - 0.7) / 0.3);
+	o.starve = (zbc_hash(float2(tc, 97.0)) < pst) ? mb * lerp(0.5, 1.5, zbc_hash(float2(tc, 98.0))) : 0.0;
+	return o;
+}
+
+// A stuck DCT coefficient: the cosine stripes of one 8x8 basis pattern (-1..1). p: screen pixels.
+float zbc_dct(float2 p, float seed)
+{
+	float  hb = max(zbc_mb_px() * 0.5, 4.0);
+	float2 x  = floor(frac(p / hb) * 8.0);
+	float2 f  = 1.0 + floor(float2(zbc_hash(float2(seed * 37.0, 5.0)), zbc_hash(float2(seed * 41.0, 9.0))) * 7.0);
+	return cos(3.14159 * (2.0 * x.x + 1.0) * f.x / 16.0) * cos(3.14159 * (2.0 * x.y + 1.0) * f.y / 16.0);
+}
+
+// where the damaged picture samples
 float2 zbc_glitch_uv(float2 uv, float g)
 {
 	if (g < 0.002)
 		return uv;
-	float t    = floor(timers.x * 24.0);
-	float rows = lerp(6.0, 36.0, zbc_hash(float2(t, 3.1)));
-	float band = floor(uv.y * rows);
-	float on   = step(zbc_hash(float2(band, t)), g * 0.55);
-	uv.x += on * (zbc_hash(float2(band, t + 7.0)) - 0.5) * 0.14 * g;
-	uv.x += (zbc_hash(float2(floor(uv.y * screen_res.y * 0.5), t)) - 0.5) * 0.004 * g * g;
-	float roll = step(zbc_hash(float2(t, 11.0)), g * g * 0.15) * (zbc_hash(float2(t, 13.0)) - 0.5) * 0.25;
-	uv.y = frac(uv.y + roll);
+	zbc_cell z  = zbc_codec_cell(uv, g);
+	float    mb = zbc_mb_px();
+	float2   bs = mb * screen_res.zw;                       // block size in uv
+	float2   b0 = z.blk * bs;                               // block origin
+	if (z.starve > 0.0)
+	{
+		float2 sb = z.starve * screen_res.zw;
+		uv = (floor(uv / sb) + 0.5) * sb;
+	}
+	if (z.cut > 0.0)
+	{
+		if (z.fill < 0.5)
+			uv.y = z.cut * bs.y - 0.5 * screen_res.w;           // the last good line smears down
+		return uv;
+	}
+	if (z.bad > 0.5)
+	{
+		if (z.kind < 0.4)                                     // shuffled: another part of the picture
+		{
+			float2 mv = floor((float2(zbc_hash(float2(z.seed * 59.0, 1.0)), zbc_hash(float2(z.seed * 61.0, 2.0))) - 0.5)
+			                  * (3.0 + 12.0 * g) + 0.5);
+			uv += mv * bs;
+		}
+		else if (z.kind < 0.65)                               // smeared: its left pixel column drawn across
+			uv.x = b0.x + 0.5 * screen_res.z;
+		else if (z.kind < 0.82)                               // flat: one colour (the stuck pattern comes later)
+			uv = b0 + 0.5 * bs;
+	}
 	return uv;
 }
 
-// colour damage: noise bars, corrupted macroblocks, whole-frame dropouts
+// colour damage of the same blocks: stuck DCT patterns, wrong chroma, posterized luma, green frames
 float3 zbc_glitch_color(float3 c, float2 uv, float g)
 {
 	if (g < 0.002)
 		return c;
-	float  t   = floor(timers.x * 24.0);
-	float  bar = floor(uv.y * 90.0);
-	float  nb  = step(zbc_hash(float2(bar, t + 1.0)), g * 0.12);
-	float  n   = zbc_hash(floor(uv * screen_res.xy * 0.5) + t);
-	c = lerp(c, n.xxx * 0.8, nb * 0.85);
-	float2 blk = floor(uv * float2(24.0, 14.0));
-	float  bc  = step(zbc_hash(blk + t * 1.7), g * g * 0.10);
-	c = lerp(c, c.gbr * 1.4, bc);
-	float drop = step(zbc_hash(float2(t, 5.0)), g * g * 0.06);
-	return c * (1.0 - drop * 0.85);
+	zbc_cell z  = zbc_codec_cell(uv, g);
+	float2   p  = uv * screen_res.xy;
+	float    y  = dot(c, float3(0.299, 0.587, 0.114));
+	float3   ch = c - y;
+	if (z.cut > 0.0)
+	{
+		if (z.fill > 0.5)                                     // an empty YUV frame decodes to flat green
+			return float3(0.0, 0.53, 0.0) * (1.0 + 0.12 * zbc_dct(p, z.cut));
+		return c * 0.9;
+	}
+	if (z.starve > 0.0)
+		y = floor(y * 10.0 + 0.5) / 10.0;                     // starved: few levels left
+	if (z.bad > 0.5)
+	{
+		float d = zbc_dct(p, z.seed);
+		if (z.kind >= 0.65 && z.kind < 0.82)
+			y += d * 0.22;                                    // flat block with its stuck pattern
+		else if (z.kind >= 0.82)                              // chroma lost: green or magenta
+			ch = (zbc_hash(float2(z.seed, 7.0)) < 0.5) ? float3(-0.18, 0.14, -0.18) : float3(0.2, -0.15, 0.2);
+		else
+			y += d * 0.06;
+		y = floor(y * 24.0 + 0.5) / 24.0;
+	}
+	return max(y + ch, 0.0);
 }
 
-// signal lost: the picture is gone (black) from 0.9 to 1.4 s after death
-float zbc_death_black()
+// Signal lost, block by block. From 0.35 s after death the picture dies from the bottom up with a
+// ragged edge (all gone by ~1.2 s). A dying block first shows the picture smeared down from the edge
+// above it, or decoder green, for a few frames, then goes black. After that the camera tries to
+// reconnect every ~3 s: for a moment a few blocks come back, green or the live picture.
+float zbc_death_td(float2 blk, float col)                           // when a block dies
+{
+	float v = (blk.y + 0.5) * zbc_mb_px() * screen_res.w;
+	return 0.35 + 0.75 * saturate(0.62 * (1.0 - v) + 0.22 * col + 0.16 * zbc_hash(blk + 0.31));
+}
+
+// Returns x: black (0..1), y: decoder green (0..1).
+float2 zbc_death_block(float2 uv, float e)
+{
+	if (e < 0.0)
+		return float2(0.0, 0.0);
+	float2 blk  = floor(uv * screen_res.xy / zbc_mb_px());
+	float  td   = zbc_death_td(blk, zbc_hash(float2(blk.x, 0.77)));
+	float  dead = step(td, e);
+	float  garb = dead * (1.0 - step(td + 0.18, e));
+	if (e > 1.6)
+	{
+		float n  = floor((e - 1.6) / 3.0);
+		float ph = (e - 1.6) - n * 3.0 - zbc_hash(float2(n, 3.3)) * 1.5;
+		if (ph > 0.0 && ph < 0.16 && zbc_hash13(float3(blk, n)) < 0.06)
+			return float2(0.0, step(0.5, zbc_hash13(float3(blk, n + 0.5))));
+	}
+	return float2(dead * (1.0 - garb), garb * step(zbc_hash(floor(blk * 0.5) + 0.13), 0.15));   // green in 2x2 clumps
+}
+
+// a dying block samples the picture at the dying edge above it: streaks smeared down
+float2 zbc_death_uv(float2 uv)
 {
 	float e = zbc_death_age();
-	return (e < 0.0) ? 0.0 : smoothstep(0.9, 1.4, e);
+	if (e < 0.35 || e > 1.35)
+		return uv;
+	float2 blk = floor(uv * screen_res.xy / zbc_mb_px());
+	float  col = zbc_hash(float2(blk.x, 0.77));
+	float  td  = zbc_death_td(blk, col);
+	if (e < td || e >= td + 0.18)
+		return uv;
+	float  front = 1.0 - ((e - 0.35) / 0.75 - 0.22 * col - 0.08) / 0.62;   // where this column still lives
+	uv.y = clamp(front, 0.0, uv.y);
+	return uv;
+}
+
+// decoder green with a stuck pattern
+float3 zbc_death_garbage(float2 uv)
+{
+	float2 p = uv * screen_res.xy;
+	float  h = zbc_hash(floor(p / zbc_mb_px()) + 0.13);
+	return float3(0.0, 0.53, 0.0) * (1.0 + 0.3 * zbc_dct(p, h));
+}
+
+// how much of the picture is gone (0 shows .. 1 black); the garbage is drawn by zbc_signal_lost
+float zbc_death_black(float2 uv) { return zbc_death_block(uv, zbc_death_age()).x; }
+
+// dying blocks with their garbage, the rest black
+float3 zbc_death_picture(float3 image, float2 uv, float e)
+{
+	float2 db = zbc_death_block(uv, e);
+	image = lerp(image, zbc_death_garbage(uv), db.y);
+	return image * (1.0 - db.x);
 }
 
 //------------------------------------------------------------------------------------------------
 // Low-light (infrared) mode
 //------------------------------------------------------------------------------------------------
 
-// strong gain with soft highlight roll-off, nearly black-and-white with a faint green cast
-float3 zbc_ir_pass(float3 c, float k)
+// Shadow blocking: the encoder spends few bits on dark, flat areas, so they quantize into 8 px blocks
+// whose levels jump a few times a second ("boiling"). amt 0..1.
+float zbc_shadow_blocks(float y, float2 uv, float amt)
 {
-	float l  = dot(c, float3(0.299, 0.587, 0.114));
-	float ir = 1.0 - exp(-l * 4.5);
+	if (amt <= 0.001)
+		return y;
+	float2 blk   = floor(uv * screen_res.xy / max(zbc_mb_px() * 0.5, 4.0));
+	float  off   = zbc_hash13(float3(blk, zbc_tstep(5.0))) - 0.5;
+	float  steps = lerp(96.0, 22.0, amt);
+	float  yq    = floor(y * steps + 0.5 + off * 0.9) / steps;
+	return lerp(y, max(yq, 0.0), amt * (1.0 - smoothstep(0.04, 0.32, y)));
+}
+
+// Strong gain with soft highlight roll-off, nearly black-and-white with a faint green cast. The
+// camera's IR lamp lights the middle of the picture and falls off to the edges, the gain hunts a
+// little, and the starved shadows boil in blocks; own_noise adds the sensor's per-frame noise when
+// the lens grain (which already runs noisier in this mode) is not drawn.
+float3 zbc_ir_pass(float3 c, float2 uv, float k, bool own_noise)
+{
+	float  tt   = zbc_time();
+	float  agc  = 1.0 + 0.045 * sin(tt * 1.7) + 0.025 * sin(tt * 4.3 + 1.3);
+	float2 d    = (uv - 0.5) * zbc_aspect();
+	float  lamp = 0.5 + 0.85 * exp(-dot(d, d) * 3.0);
+	float  l    = dot(c, float3(0.299, 0.587, 0.114)) * agc * lerp(1.0, lamp, saturate(k));
+	float  ir   = zbc_shadow_blocks(1.0 - exp(-l * 4.5), uv, 0.75 * saturate(k));
+	if (own_noise)
+	{
+		float n = zbc_hash13(float3(floor(uv * screen_res.xy), zbc_tstep(30.0))) - 0.5;
+		ir = max(ir + n * 0.07 * (1.0 - 0.6 * ir), 0.0);
+	}
 	return lerp(c, ir.xxx * float3(0.93, 1.0, 0.95), saturate(k));
 }
 
@@ -205,61 +414,107 @@ float3 zbc_drop_profile(float2 d, float r)
 	return float3(h, grad);
 }
 
-// Organic glossy dripping blood height + surface gradient (value, d/du, d/dv)
-float3 zbc_blood_field(float2 uv)
+// One splatter: organic glossy dripping blood height + surface gradient (value, d/du, d/dv). p: centred
+// screen position (screen heights); age: seconds since it hit; drip_t: how far its drips have run.
+// halo: the soft glow around each splat (0..1); blood this close to the lens is out of focus.
+float3 zbc_splatter(float2 p, float2 asp, float age, float seed, float drip_t, float fade, out float halo)
 {
-	if (bus_zbc_dirt.z <= 0.0)
-		return float3(0.0, 0.0, 0.0);
-	float age  = timers.x - bus_zbc_dirt.z;
-	float fade = 1.0 - smoothstep(14.0, 26.0, age);
-	if (age < 0.0 || fade <= 0.0)
-		return float3(0.0, 0.0, 0.0);
-
-	float  seed = bus_zbc_dirt.y;
-	float2 asp  = zbc_aspect();
-	float2 p    = (uv - 0.5) * asp;
-	float  drip_t = saturate(age / 14.0);
+	halo = 0.0;
+	// the splatter spreads out over its first ~0.12 s
+	float  grow = lerp(0.35, 1.0, smoothstep(0.0, 0.12, age));
 	float3 acc  = float3(0.0, 0.0, 0.0);
 
 	// 1. Primary organic splatter blobs + gravity drips sliding down from each impact
-	[unroll] for (int k = 0; k < 9; k++)
+	[loop] for (int k = 0; k < 9; k++)
 	{
 		float2 hk  = float2(seed * 1.13, (float)k * 17.31);
 		float3 h3  = zbc_hash3(hk);
 		float  ang = h3.x * 6.2832;
 		float  rc  = lerp(0.14, 0.52, h3.y);
 		float2 c   = float2(cos(ang) * rc * min(asp.x, 16.0 / 9.0) * 0.78, sin(ang) * rc * 0.85);
-		float  r   = lerp(0.018, 0.058, h3.z) * ((k < 2) ? 1.45 : 1.0);
+		float  rb  = lerp(0.018, 0.058, h3.z) * ((k < 2) ? 1.45 : 1.0);
+		float  r   = rb * grow;
 
-		// Slight organic wobble on the splat silhouette
+		// Drips run out of the middle of the splat; how many and how far depends on its size. A small
+		// splat holds too little blood to drip, a mid-sized one runs a short way and stops, a large one
+		// runs all the way down off the bottom of the lens. Blood is viscous and sticks to the glass: a
+		// drip's head is pinned while blood gathers in it, then breaks free and slips down to the next
+		// pinning point (stick-slip), the heavier the faster. Only the head moves. It is a teardrop bulb,
+		// widest at the bottom, tapering up into a thin rivulet of even width that stays where it was laid.
+		float  sz     = saturate((rb - 0.032) / 0.04);                    // 0 small .. 1 large
+		int    n_drip = (rb < 0.032) ? 0 : ((sz < 0.3) ? 1 : ((sz < 0.65) ? 2 : 3));
+		float  cap    = lerp(0.06, 1.6, sz * sz);                         // how far its blood can run
+
+		// The splat: an irregular blob (uneven, non-repeating edge) with two smaller lobes merged into
+		// it, so it reads as a splash, not a star. It drains a little as its drips run.
 		float2 d   = p - c;
 		float  len = length(d);
-		float  wob = (len > 1e-5) ? (1.0 + 0.22 * sin(atan2(d.y, d.x) * 4.0 + seed + (float)k)
-		                                + 0.12 * cos(atan2(d.y, d.x) * 7.0 - seed * 2.0)) : 1.0;
-		float3 splat = zbc_drop_profile(d, r * wob);
-
-		// Gravity drip running down from the splat as time passes
-		float drip_len = lerp(0.04, 0.22, h3.y) * smoothstep(0.0, 0.85, drip_t);
-		float hy       = c.y + drip_len;
-		float wx       = c.x + sin((p.y - c.y) * 28.0 + h3.x * 6.2832) * 0.005;
-		float2 hd      = p - float2(wx, hy);
-		hd.y          *= 0.75;
-		float3 dhead   = zbc_drop_profile(hd, r * 0.52) * smoothstep(0.0, 0.15, drip_t);
-		dhead.z       *= 0.75;
-
-		// Thin connecting drip streak between splat and drip head
-		float3 streak = float3(0.0, 0.0, 0.0);
-		if (p.y > c.y && p.y < hy && drip_len > 0.005)
+		float  an  = atan2(d.y, d.x);
+		float  wob = (len > 1e-5) ? (1.0 + 0.10 * sin(an * 3.0 + seed * 1.7 + (float)k)
+		                                + 0.07 * sin(an * 5.0 - seed + (float)k * 2.3)
+		                                + 0.04 * sin(an * 9.0 + (float)k * 4.1)) : 1.0;
+		float  drain = (n_drip > 0) ? 1.0 - 0.2 * saturate(drip_t * 1.5) : 1.0;
+		float3 splat = zbc_drop_profile(d, r * wob * drain);
+		[unroll] for (int q = 0; q < 2; q++)
 		{
-			float frac_y = saturate((p.y - c.y) / drip_len);
-			float sr     = r * lerp(0.32, 0.16, frac_y);
-			float sx     = p.x - wx;
-			if (abs(sx) < sr)
+			float3 hq  = zbc_hash3(float2(seed * 0.71 + (float)k * 3.3, (float)q * 7.9 + 1.3));
+			float  aq  = hq.x * 6.2832;
+			float2 oq  = float2(cos(aq), sin(aq)) * r * lerp(0.3, 0.55, hq.y);
+			float3 lb  = zbc_drop_profile(d - oq, r * lerp(0.55, 0.75, hq.z) * drain);
+			splat += lb * 0.6;                                      // smooth join, no seam
+		}
+		float  hl    = saturate(1.0 - len / (r * 1.7));
+		halo         = max(halo, hl * hl);
+
+		float3 dhead  = float3(0.0, 0.0, 0.0);
+		float3 streak = float3(0.0, 0.0, 0.0);
+		[unroll] for (int j = 0; j < 3; j++)
+		{
+			[branch] if (j < n_drip && drip_t > 0.06 * (float)j)
 			{
-				float st = 1.0 - abs(sx) / sr;
-				float sh = st * st * (3.0 - 2.0 * st) * 0.65;
-				float sg = -sign(sx) * 6.0 * st * (1.0 - st) / max(sr, 1e-4) * 0.65;
-				streak = float3(sh, sg, 0.0);
+				float3 hj     = zbc_hash3(float2(seed * 2.3 + (float)k * 5.1, (float)j * 13.7 + 0.5));
+				float  t_run  = drip_t - 0.06 * (float)j;
+				float  sp     = lerp(0.8, 1.2, hj.y) * lerp(0.8, 1.3, sz);       // the heavier the faster
+				float  steps  = 4.0 + 4.0 * hj.z;
+				float  s_run  = t_run * steps * sp + hj.x;
+				float  fs     = frac(s_run);
+				float  slide  = smoothstep(0.62, 1.0, fs);
+				float  travel = max(floor(s_run) + slide - smoothstep(0.62, 1.0, hj.x), 0.0) / steps * 0.9;
+				float  runs   = (travel < cap) ? 1.0 : 0.0;                    // 0 once its blood has run out
+				float  moving = saturate(slide * (1.0 - slide) * 4.0) * runs;  // 0 pinned .. 1 mid-slip
+				float  start  = smoothstep(0.0, 0.03, t_run);
+
+				float2 c0   = c + float2((hj.x - 0.5) * r * 0.7, 0.0);          // runs out of the middle
+				float  mph  = (float)(k * 3 + j) * 2.1 + seed;
+				float  tl   = min(travel, cap);                                 // rivulet length
+				float  mh   = 0.003 * sin(tl * 17.0 + mph);                     // a slight, fixed wander
+				// teardrop bulb: swells while pinned, stretches while slipping
+				float  fsw  = (runs > 0.0) ? saturate(fs / 0.62) : 1.0;
+				float  rh   = r * lerp(0.30, 0.48, fsw) * (1.0 - 0.25 * moving) * start * lerp(0.8, 1.2, hj.y);
+				float  st   = 1.25 + 0.6 * moving;
+				float2 head = c0 + float2(mh, tl);
+				float2 dd   = p - head;
+				float  tq   = saturate(-dd.y / (rh * st * 2.0));                // narrower toward its top
+				float3 hq   = zbc_drop_profile(float2(dd.x / lerp(1.0, 0.55, tq), dd.y / st), rh);
+				if (hq.x > dhead.x)
+					dhead = float3(hq.x, hq.y / lerp(1.0, 0.55, tq), hq.z / st);
+
+				// the rivulet: even width, flaring into the bulb over its last stretch
+				float dist = p.y - c0.y;
+				if (dist > 0.0 && dist < tl)
+				{
+					float ax = p.x - c0.x - 0.003 * sin(dist * 17.0 + mph);
+					float wt = r * lerp(0.09, 0.15, hj.z) * start;
+					float fl = saturate(1.0 - (tl - dist) / max(rh * 3.5, 1e-4));
+					float w  = wt + (rh * 0.8 - wt) * fl * fl;
+					if (abs(ax) < w)
+					{
+						float t1 = 1.0 - abs(ax) / w;
+						float sh = t1 * t1 * (3.0 - 2.0 * t1) * 0.6;
+						if (sh > streak.x)
+							streak = float3(sh, -sign(ax) * 6.0 * t1 * (1.0 - t1) / max(w, 1e-4) * 0.6, 0.0);
+					}
+				}
 			}
 		}
 
@@ -269,51 +524,94 @@ float3 zbc_blood_field(float2 uv)
 		acc = (s.x > acc.x) ? lerp(acc, s, 0.85) : (acc + s * 0.25);
 	}
 
-	// 2. Fine secondary mist/micro-droplets around the main impact
+	// 2. Satellite droplets thrown out by the impact: small, and stretched outward along the way
+	// they flew. They are there from the first frame (no grow-in).
 	[unroll] for (int m = 0; m < 8; m++)
 	{
-		float3 hm = zbc_hash3(float2(seed * 3.7 + (float)m * 23.1, (float)m * 9.3));
+		float3 hm  = zbc_hash3(float2(seed * 3.7 + (float)m * 23.1, (float)m * 9.3));
 		float  ang = hm.x * 6.2832;
 		float  rc  = lerp(0.10, 0.58, hm.y);
-		float2 c   = float2(cos(ang) * rc * min(asp.x, 16.0 / 9.0) * 0.82, sin(ang) * rc * 0.90);
-		float  r   = lerp(0.006, 0.016, hm.z);
-		float3 sp  = zbc_drop_profile(p - c, r);
+		float2 dir = float2(cos(ang), sin(ang));
+		float2 c   = float2(dir.x * rc * min(asp.x, 16.0 / 9.0) * 0.82, dir.y * rc * 0.90);
+		float  r   = lerp(0.005, 0.013, hm.z);
+		float2 dm  = p - c;
+		float  el  = lerp(1.4, 2.2, frac(hm.z * 7.3));                   // stretch along the flight
+		float  ra  = dot(dm, dir);
+		float  ta  = dm.x * -dir.y + dm.y * dir.x;
+		float3 sp  = zbc_drop_profile(float2(ra / el, ta), r);
+		sp.yz      = float2(sp.y * dir.x / el - sp.z * dir.y, sp.y * dir.y / el + sp.z * dir.x);
 		sp.yz     *= asp;
 		acc       += sp * 0.75;
 	}
 
+	halo *= fade;
 	return acc * fade;
 }
 
-// uv offset of blood refraction; spec: unused, always 0 (kept for the callers)
+// All the blood on the lens: up to four splatters, each staying until it has faded, so every new hit
+// adds to what is already there. Worked out once per pixel in the uv stage (zbc_fx_uv) and kept here
+// for the shading: x height, yz gradient, w halo; zbc_blood_dry: how dry it is where it is thickest.
+static float4 zbc_blood_px  = float4(0.0, 0.0, 0.0, 0.0);
+static float  zbc_blood_dry = 0.0;
+
+float4 zbc_blood_field(float2 uv, out float dry)
+{
+	float4 acc = float4(0.0, 0.0, 0.0, 0.0);
+	dry        = 0.0;
+	float  wsum = 0.0;
+	float2 asp  = zbc_aspect();
+	float2 p    = (uv - 0.5) * asp;
+	[loop] for (int i = 0; i < 4; i++)
+	{
+		float t0  = bus_zbc_dirt[i];
+		float age = timers.x - t0;
+		[branch] if (t0 > 0.0 && age >= 0.0 && age < 26.0)
+		{
+			float  fade   = 1.0 - smoothstep(14.0, 26.0, age);
+			float  seed   = 1.0 + floor(zbc_hash(float2(frac(t0 * 0.137) * 997.0, 3.7 + (float)i)) * 997.0);
+			float  drip_t = (bus_zbc_blood[i] > 0.0) ? min(bus_zbc_blood[i], 3.0) : min(age / 14.0, 3.0);
+			float  halo;
+			float3 f = zbc_splatter(p, asp, age, seed, drip_t, fade, halo);
+			// where splatters overlap the blood piles up, thickest on top
+			acc.xyz  = (f.x > acc.x) ? lerp(acc.xyz, f, 0.8) + acc.xyz * 0.2 : acc.xyz + f * 0.3;
+			acc.w    = max(acc.w, halo);
+			float wt = f.x + 0.001;
+			dry     += saturate((age - 4.0) / 18.0) * wt;
+			wsum    += wt;
+		}
+	}
+	dry = (wsum > 0.0) ? dry / wsum : 0.0;
+	return acc;
+}
+
+// uv offset of blood refraction (and the blood worked out for zbc_blood_shade); spec: unused, always 0
 float2 zbc_drop_offset(float2 uv, out float spec)
 {
 	spec = 0.0;
 	float2 offset = float2(0.0, 0.0);
 
-	[branch] if (bus_zbc_dirt.z > 0.0)
+	[branch] if (dot(bus_zbc_dirt, 1.0) > 0.0)
 	{
-		float3 bf = zbc_blood_field(uv);
+		zbc_blood_px = zbc_blood_field(uv, zbc_blood_dry);
 		// Thick wet blood refracts the scene slightly behind it
-		offset += clamp(-bf.yz * 0.0014, -0.014, 0.014);
+		offset += clamp(-zbc_blood_px.yz * 0.0014, -0.014, 0.014);
 	}
 
 	return offset;
 }
 
-// Physical glossy blood shading: Beer-Lambert dark crimson absorption, wet specular highlight,
-// and gradual drying over time.
+// Physical glossy blood shading: Beer-Lambert dark crimson absorption, soft out-of-focus edges, a red
+// glow where light shines through the haze around it, wet specular highlight, and gradual drying.
 float3 zbc_blood_shade(float3 c, float2 uv, float scene_vis)
 {
-	if (bus_zbc_dirt.z <= 0.0 || scene_vis <= 0.001)
+	if (dot(bus_zbc_dirt, 1.0) <= 0.0 || scene_vis <= 0.001)
 		return c;
-	float3 bf = zbc_blood_field(uv);
-	float  h  = saturate(bf.x) * scene_vis;
-	if (h <= 0.005)
+	float4 bf   = zbc_blood_px;
+	float  h    = saturate(bf.x) * scene_vis;
+	float  halo = bf.w * scene_vis;
+	if (h <= 0.005 && halo <= 0.005)
 		return c;
-
-	float age = max(timers.x - bus_zbc_dirt.z, 0.0);
-	float dry = saturate((age - 4.0) / 18.0);
+	float  dry  = zbc_blood_dry;
 
 	// Fresh arterial crimson darkens toward brownish-crimson as it dries
 	float3 fresh_tint = float3(0.42, 0.018, 0.018);
@@ -321,15 +619,21 @@ float3 zbc_blood_shade(float3 c, float2 uv, float scene_vis)
 	float3 tint       = lerp(fresh_tint, dry_tint, dry);
 
 	// Beer-Lambert transmission: thin edges stay translucent, thick core is deep dark crimson
-	float  cov    = smoothstep(0.04, 0.35, h);
+	float  cov    = smoothstep(0.0, 0.45, h);                 // soft: out of focus this close
 	float  thick  = smoothstep(0.15, 0.85, h);
 	float3 absorb = lerp(float3(1.0, 1.0, 1.0), tint, cov * lerp(0.75, 0.96, thick));
 	float3 shaded = c * absorb + float3(0.035, 0.002, 0.002) * cov * (1.0 - thick * 0.65) * (1.0 - dry * 0.5);
 
+	// the haze around it: a little contrast lost, and a red glow where the scene behind is bright
+	float  wet_g  = (1.0 - cov) * halo * (1.0 - dry * 0.6);
+	float  lum    = dot(c, float3(0.2126, 0.7152, 0.0722));
+	shaded        = lerp(shaded, shaded * 0.88 + lum * 0.06, wet_g);
+	shaded       += float3(0.55, 0.05, 0.03) * wet_g * (0.08 + lum) * 0.45;
+
 	// Wet glossy specular highlight along the blood droplet meniscus (fades as blood dries)
 	float3 N    = normalize(float3(-bf.y * 0.06, -bf.z * 0.06, 1.0));
-	float  spec = pow(saturate(dot(N, normalize(float3(-0.35, -0.55, 0.76)))), 36.0);
-	shaded     += float3(0.85, 0.55, 0.55) * spec * cov * (1.0 - dry * 0.75) * 0.38;
+	float  spec = pow(saturate(dot(N, normalize(float3(-0.35, -0.55, 0.76)))), 18.0);   // soft, out of focus
+	shaded     += float3(0.85, 0.55, 0.55) * spec * cov * (1.0 - dry * 0.75) * 0.30;
 
 	return shaded;
 }
@@ -337,7 +641,7 @@ float3 zbc_blood_shade(float3 c, float2 uv, float scene_vis)
 // screen uv -> uv to sample (interference tearing + blood refraction); g: zbc_glitch_amount()
 float2 zbc_fx_uv(float2 uv, float g, out float spec)
 {
-	float2 u = zbc_glitch_uv(uv, g);
+	float2 u = zbc_glitch_uv(zbc_death_uv(uv), g);
 	return u + zbc_drop_offset(uv, spec);
 }
 
@@ -348,7 +652,10 @@ float3 zbc_fx_color(float3 c, float2 uv, float g, float spec, float scene_vis)
 	c = zbc_blood_shade(c, uv, scene_vis);
 	c = zbc_glitch_color(c, uv, g);
 	[branch] if (bus_zbc_ir.x > 0.001)
-		c = zbc_ir_pass(c, bus_zbc_ir.x);
+	{
+		bool lens_grain = ZBC_ACTIVE && bus_zbc_extra.z > 0.001;   // drawn here or by the HUD layer (zbc_ring.ps)
+		c = zbc_ir_pass(c, uv, bus_zbc_ir.x, !lens_grain);
+	}
 	return c;
 }
 float3 zbc_fx_color(float3 c, float2 uv, float g, float spec) { return zbc_fx_color(c, uv, g, spec, 1.0); }
@@ -467,12 +774,14 @@ float3 zbc_sensor_pass(float3 c, float2 uv, float3 ddx_c, float3 ddy_c)
 		float3 ch    = lerp(c - y0.xxx, c_2x2 - y2.xxx, 0.55 * dc);
 
 		float2 blk   = floor(px / 8.0);
-		float  t_blk = floor(timers.x * 12.0);
-		float  bn    = (zbc_hash(blk + t_blk * float2(13.0, 29.0)) - 0.5) * 0.014 * dc
+		float  bn    = (zbc_hash13(float3(blk, zbc_tstep(12.0))) - 0.5) * 0.014 * dc
 		             * smoothstep(0.01, 0.08, y0) * (1.0 - saturate(y0 * 1.1));
 		float  steps = lerp(255.0, 72.0, dc);
 		float  yq    = floor(y0 * steps + 0.5) / steps;
 		float  y_out = lerp(y0, yq, 0.22 * dc) + bn;
+		// keyframe pumping: crisp on each keyframe (every 1.6 s), the shadows blocking up until the next
+		float  gop   = frac(zbc_time() / 1.6);
+		y_out        = zbc_shadow_blocks(y_out, uv, dc * (0.35 + 0.65 * gop));
 		c = max(y_out.xxx + ch, 0.0);
 	}
 
@@ -517,8 +826,7 @@ float3 zbc_grain(float3 c, float2 uv, float osd_mask, float scene_vis)
 	[branch] if (g >= 0.001)
 	{
 		float2 px    = floor(uv * screen_res.xy);
-		float2 t_off = floor(timers.x * 30.0) * float2(37.0, 17.0);
-		float3 h3    = zbc_hash3(px + t_off) - 0.5;
+		float3 h3    = zbc_hash33(float3(px, zbc_tstep(30.0))) - 0.5;   // new noise every frame, not a shifted copy
 		float  nl    = h3.x;
 		float  nc_r  = h3.y;
 		float  nc_b  = h3.z;

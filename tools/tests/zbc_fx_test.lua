@@ -307,6 +307,36 @@ do
 	cbs.on_key_release(DIK_T)
 	check(resets == 1, "Rain on the lens off: T leaves the visor drops to the game")
 	opts.lens_rain = true
+
+	-- T without a mask plays the game's mask-wipe hand animation (which wipes the drops in step),
+	-- told a mask is on only for that call; if it can't start, the plain drop wipe runs instead
+	local ae = fx_env.actor_effects
+	local anim_calls, anim_saw_mask, anim_allowed = 0, nil, true
+	ae.mc_anm_state = 0
+	ae.Hit_MaskCleaning = function()
+		anim_calls = anim_calls + 1
+		anim_saw_mask = ae.is_mask_on()
+		if anim_allowed and ae.is_mask_on() then ae.mc_anm_state = 1 end
+	end
+	resets = 0
+	cbs.on_key_release(DIK_T)
+	check(anim_calls == 1 and anim_saw_mask == true, "T without a mask plays the wipe animation, told a mask is on")
+	check(ae.is_mask_on() == false, "the real mask state is back after it")
+	check(resets == 0, "the animation does the wiping: no extra plain wipe")
+	cbs.on_key_release(DIK_T)
+	check(anim_calls == 1, "a press while the hand is still wiping does not start another")
+	ae.mc_anm_state, anim_allowed = 0, false
+	cbs.on_key_release(DIK_T)
+	check(anim_calls == 2 and resets == 1, "animation blocked (busy hands): the drops are still wiped")
+	ae.Hit_MaskCleaning = function() error("boom") end
+	cbs.on_key_release(DIK_T)
+	check(ae.is_mask_on() == false and resets == 2, "an error in the animation still restores the mask state and wipes")
+	mask_on, anim_calls = true, 0
+	ae.Hit_MaskCleaning = function() anim_calls = anim_calls + 1 end
+	cbs.on_key_release(DIK_T)
+	check(anim_calls == 0, "with a mask on, T is left to the game's own handler (no second animation)")
+	mask_on, ae.Hit_MaskCleaning, ae.mc_anm_state = false, nil, nil
+
 	le.droplets_reset = nil
 	check(fx_env.wipe_drops() == false, "no visor drops wipe available: nothing, no error")
 	fx_env.key_bindings, fx_env.dik_to_bind = nil, nil
