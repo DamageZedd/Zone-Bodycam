@@ -57,6 +57,8 @@ end
 ---------------------------------------------------------------------------------------------------
 
 local queued = nil         -- "dead" | "insert" | nil
+local queued_hud = nil     -- HUD section for `queued`
+local active_hud = nil     -- HUD section currently playing
 local phase = nil          -- nil | "holster" | "playing"
 local kind = nil
 local t_phase = 0
@@ -80,9 +82,12 @@ function holding_power()
 	return power_held(hold_since, time_global(), playing_since)
 end
 
-function request(what, now)
+function request(what, now, hud_sec)
 	if not enabled() or not ANIMS[what] then return end
 	if phase and kind == "insert" and what == "dead" then return end
+	if what == "insert" or (what == "dead" and queued ~= "insert") then
+		queued_hud = (type(hud_sec) == "string" and #hud_sec > 0) and hud_sec or HUD_SECTION
+	end
 	queued = next_queue(queued, what)
 	if what == "insert" then
 		hold_since = now or time_global()
@@ -108,7 +113,8 @@ end
 local function begin(now)
 	local actor = db.actor
 	kind = queued
-	queued = nil
+	active_hud = queued_hud or HUD_SECTION
+	queued, queued_hud = nil, nil
 	phase, t_phase = "holster", now
 	prev_slot = actor:active_slot()
 	local d = actor:active_detector()
@@ -121,12 +127,13 @@ end
 
 local function play(now)
 	local a = ANIMS[kind]
-	local len = game.get_motion_length and game.get_motion_length(HUD_SECTION, a.anm, 1) or 0
+	local hud = active_hud or HUD_SECTION
+	local len = game.get_motion_length and game.get_motion_length(hud, a.anm, 1) or 0
 	if fov_anim_manager and fov_anim_manager.change_fov then
 		fov_changed = pcall(fov_anim_manager.change_fov, HUD_FOV)
 	end
 	phase, t_phase = "playing", now
-	game.play_hud_motion(2, HUD_SECTION, a.anm, false, 1)
+	game.play_hud_motion(2, hud, a.anm, false, 1)
 	if level.add_cam_effector then level.add_cam_effector(a.cam, a.cam_id, false, "") end
 	t_end = now + ((tonumber(len) and len > 0) and len or 5000)
 	if kind == "insert" then playing_since = now end
@@ -157,7 +164,7 @@ local function finish()
 		end
 	end
 	if kind == "insert" then hold_since, playing_since = nil, nil end
-	phase, kind, det_id, prev_slot = nil, nil, nil, nil
+	phase, kind, active_hud, det_id, prev_slot = nil, nil, nil, nil, nil
 end
 
 -- an engine call that fails must never leave the player locked to movement keys: log it, give the hands back
@@ -165,13 +172,13 @@ local function guarded(fn, now)
 	local ok, err = pcall(fn, now)
 	if ok then return end
 	printf("! [Zone Bodycam] bodycam animation stopped: %s", tostring(err))
-	queued, hold_since, playing_since = nil, nil, nil
+	queued, queued_hud, active_hud, hold_since, playing_since = nil, nil, nil, nil, nil
 	if phase then
 		local ok2, err2 = pcall(finish)
 		if not ok2 then
 			printf("! [Zone Bodycam] bodycam animation cleanup: %s", tostring(err2))
 			pcall(game.only_allow_movekeys, false)
-			phase, kind, det_id, prev_slot = nil, nil, nil, nil
+			phase, kind, active_hud, det_id, prev_slot = nil, nil, nil, nil, nil
 		end
 	end
 end
@@ -180,7 +187,7 @@ end
 function update(now, carried)
 	if not phase then
 		if hold_since and not power_held(hold_since, now, playing_since) then hold_since = nil end
-		if queued and not carried then queued, hold_since = nil, nil end
+		if queued and not carried then queued, queued_hud, hold_since = nil, nil, nil end
 		if queued and allowed() then guarded(begin, now) end
 		return
 	end
@@ -201,6 +208,6 @@ end
 -- a load or a death in the middle: safe cleanup only, never touch stale slots or detectors
 function reset()
 	if phase then cleanup_hands() end
-	phase, kind, det_id, prev_slot = nil, nil, nil, nil
-	queued, hold_since, playing_since = nil, nil, nil
+	phase, kind, active_hud, det_id, prev_slot = nil, nil, nil, nil, nil
+	queued, queued_hud, hold_since, playing_since = nil, nil, nil, nil
 end

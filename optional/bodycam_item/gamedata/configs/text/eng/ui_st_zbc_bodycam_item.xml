@@ -1,10 +1,34 @@
 <?xml version="1.0" encoding="windows-1251"?>
 <string_table>
+  <string id="st_zbc_bodycam_1_name">
+    <text>Axon Body Camera (Gen 1)</text>
+  </string>
+  <string id="st_zbc_bodycam_1_descr">
+    <text>A first-generation TASER Axon Body chest camera (#73002) with a wide-angle lens, a top-right mechanical power slider and a pre-RapidLock holster mount. Carry it anywhere in your inventory and it records on its own.\n\nRuns on a standard battery (about 75% of an Axon Body 4 runtime, ~3.0 h at default settings): drag a battery onto the camera to swap it. When the charge runs out the camera shuts off, but the recording clock keeps counting.</text>
+  </string>
+  <string id="st_zbc_bodycam_2_name">
+    <text>Axon Body 2 Camera</text>
+  </string>
+  <string id="st_zbc_bodycam_2_descr">
+    <text>A rugged second-generation Axon Body 2 chest camera (#74001) with a rubberized bumper shell, a side power switch, a RapidLock rear mount and a yellow Delta event button. Carry it anywhere in your inventory and it records on its own.\n\nRuns on a standard battery (about 88% of an Axon Body 4 runtime, ~3.5 h at default settings): drag a battery onto the camera to swap it. When the charge runs out the camera shuts off, but the recording clock keeps counting.</text>
+  </string>
+  <string id="st_zbc_bodycam_3_name">
+    <text>Axon Body 3 Camera</text>
+  </string>
+  <string id="st_zbc_bodycam_3_descr">
+    <text>A third-generation Axon Body 3 chest camera with an octagonal armored housing, a top monochrome status LCD, four microphones and a RapidLock mount. Carry it anywhere in your inventory and it records on its own.\n\nRuns on a standard battery (about 95% of an Axon Body 4 runtime, ~3.8 h at default settings): drag a battery onto the camera to swap it. When the charge runs out the camera shuts off, but the recording clock keeps counting.</text>
+  </string>
   <string id="st_zbc_bodycam_item_name">
-    <text>Body Camera</text>
+    <text>Axon Body 4 Camera</text>
   </string>
   <string id="st_zbc_bodycam_item_descr">
-    <text>A rugged chest-mounted body camera with a wide-angle lens, a time-stamped overlay and a friend-or-foe tag display. Carry it anywhere in your inventory and it records on its own.\n\nRuns on a standard battery: drag a battery onto the camera to swap it. When the charge runs out the camera shuts off, but the recording clock keeps counting.</text>
+    <text>A fourth-generation Axon Body 4 chest camera with a wide-angle lens, top status display, time-stamped overlay and friend-or-foe tag display. Carry it anywhere in your inventory and it records on its own.\n\nRuns on a standard battery (100% baseline runtime, 4.0 h at default settings): drag a battery onto the camera to swap it. When the charge runs out the camera shuts off, but the recording clock keeps counting.</text>
+  </string>
+  <string id="st_zbc_bodycam_5_name">
+    <text>Axon Body 5 Pro Camera</text>
+  </string>
+  <string id="st_zbc_bodycam_5_descr">
+    <text>A fifth-generation Axon Body 5 Pro chest camera with a recessed sapphire-shielded wide-angle lens, high-visibility top OLED display, dual programmable side buttons and high-efficiency electronics. Carry it anywhere in your inventory and it records on its own.\n\nRuns on a standard battery (+20% extended endurance over Axon Body 4, ~4.8 h at default settings): drag a battery onto the camera to swap it. When the charge runs out the camera shuts off, but the recording clock keeps counting.</text>
   </string>
   <string id="st_zbc_bodycam_item_dead">
     <text>Body camera: battery dead</text>
@@ -19,7 +43,7 @@
     <text>Battery life (real hours)</text>
   </string>
   <string id="ui_mcm_zone_bodycam_item_battery_hours_desc">
-    <text>How long a full battery lasts while the camera records, in real-time hours. Scaled by the difficulty's battery consumption setting.</text>
+    <text>Baseline full-battery recording time for Axon Body 4, in real-time hours (Gen 1 ~75%, Body 2 ~88%, Body 3 ~95%, Body 5 Pro 120%). Also scaled by the difficulty battery consumption setting, and the highest-charge / newest-generation camera is selected automatically.</text>
   </string>
   <string id="ui_mcm_zone_bodycam_item_animations">
     <text>Hand animations</text>

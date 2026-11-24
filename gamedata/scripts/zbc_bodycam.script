@@ -447,6 +447,23 @@ local function battery_level()
 	return clamp01(v)
 end
 
+-- Device watermark: the item component registers a function giving the carried camera's model label
+-- (e.g. "AXON BODY 2"). Used only while device_label is at its default, so custom MCM text still wins.
+local device_source = nil
+
+function set_device_source(fn)
+	device_source = (type(fn) == "function") and fn or nil
+end
+
+function effective_device_label()
+	local cur = cfg.device_label or defaults.device_label
+	if cur == defaults.device_label and device_source then
+		local ok, v = pcall(device_source)
+		if ok and type(v) == "string" and #v > 0 then return v end
+	end
+	return cur
+end
+
 -- Each bar is a 25% chunk: lit bars (0..4) for a charge, any charge left shows at least one bar
 function battery_bars(level)
 	level = tonumber(level)
@@ -1349,7 +1366,7 @@ end
 -- the four overlay lines: date, device + serial, name, GPS. Hidden lines are left out, so the GPS
 -- line moves up when the name is off.
 function overlay_lines(date)
-	local dev_str, upper_name = actor_ident(cfg.device_label)
+	local dev_str, upper_name = actor_ident(effective_device_label())
 	local l = { date, dev_str }
 	if cfg.show_name then l[#l + 1] = upper_name end
 	local actor = db.actor
@@ -1390,9 +1407,10 @@ function ZbcHud:Refresh(visible, lens_on, lens)
 
 		send("osd_layout", 1.0 - 0.050 * self.eff_w_u, 0.026 * self.eff_asp, 0.035 * self.eff_w_u, self.em_v)
 		local date, sec = date_line()
+		local dev = effective_device_label()
 		if self.osd_dirty
 			or date ~= self.osd_date
-			or cfg.device_label ~= self.osd_dev
+			or dev ~= self.osd_dev
 			or cfg.show_name ~= self.osd_show_name
 			or cfg.timezone ~= self.osd_tz
 			or cfg.iso_t ~= self.osd_iso
@@ -1403,7 +1421,7 @@ function ZbcHud:Refresh(visible, lens_on, lens)
 		then
 			self.sec = sec
 			self.osd_date = date
-			self.osd_dev = cfg.device_label
+			self.osd_dev = dev
 			self.osd_show_name = cfg.show_name
 			self.osd_tz = cfg.timezone
 			self.osd_iso = cfg.iso_t
@@ -1434,9 +1452,11 @@ function ZbcHud:Refresh(visible, lens_on, lens)
 	end
 
 	local date, sec = date_line()
-	if date ~= self.sec_date or sec ~= self.sec or self.lines[1].text == nil then
+	local dev = effective_device_label()
+	if date ~= self.sec_date or sec ~= self.sec or dev ~= self.sec_dev or self.lines[1].text == nil then
 		self.sec = sec
 		self.sec_date = date
+		self.sec_dev = dev
 		local l = { overlay_lines(date) }
 		for i = 1, OSD_LINES do
 			self:SetLine(i, l[i])

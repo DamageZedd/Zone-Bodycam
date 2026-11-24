@@ -1,18 +1,36 @@
 --[[
 	Zone Bodycam - bodycam item (optional FOMOD component)
 
-	The bodycam effect only runs while the actor carries a charged bodycam (section zbc_bodycam_item)
+	The bodycam effect only runs while the actor carries a charged Axon Body camera (Gen 1, 2, 3, 4, or 5)
 	anywhere in the inventory, like the Wearable Devices items. The item's condition is its charge:
-	it drains in real time while the camera runs and is swapped with vanilla batteries (drag a battery
-	onto it, or "Unpack battery"), registered in items\settings\mod_devices_zbc_bodycam.ltx.
+	it drains in real time while the camera runs (scaled per camera generation) and is swapped with vanilla
+	batteries (drag a battery onto it, or "Unpack battery"), registered in items\settings\mod_devices_zbc_bodycam.ltx.
 
-	Hooks into zbc_bodycam.script through zbc_bodycam.set_power_gate(); the base mod never looks this
-	script up, so without this component it stays always-on. The REC timer keeps counting regardless.
+	Hooks into zbc_bodycam.script through zbc_bodycam.set_power_gate(), set_battery_source(), and
+	set_device_source(); the base mod never looks this script up, so without this component it stays always-on.
 ]]
 
 ITEM_SECTION = "zbc_bodycam_item"
 
-local DEFAULT_HOURS   = 4        -- real hours of recording per full charge
+CAMERA_ORDER = {
+	"zbc_bodycam_1",
+	"zbc_bodycam_2",
+	"zbc_bodycam_3",
+	"zbc_bodycam_item",
+	"zbc_bodycam_5",
+}
+
+CAMERAS = {
+	zbc_bodycam_1    = { gen = 1, hud = "zbc_bodycam_1_anim_hud", label = "AXON BODY",   drain_mult = 1.333 },
+	zbc_bodycam_2    = { gen = 2, hud = "zbc_bodycam_2_anim_hud", label = "AXON BODY 2", drain_mult = 1.143 },
+	zbc_bodycam_3    = { gen = 3, hud = "zbc_bodycam_3_anim_hud", label = "AXON BODY 3", drain_mult = 1.053 },
+	zbc_bodycam_item = { gen = 4, hud = "zbc_bodycam_anim_hud",   label = "AXON BODY 4", drain_mult = 1.000 },
+	zbc_bodycam_5    = { gen = 5, hud = "zbc_bodycam_5_anim_hud", label = "AXON BODY 5", drain_mult = 0.833 },
+}
+
+STICKY_EPS            = 0.002    -- anti-ping-pong charge bonus for the currently active charged camera
+local TIE_EPS         = 1e-6
+local DEFAULT_HOURS   = 4        -- real hours of recording per full charge (Axon Body 4 baseline)
 local MIN_HOURS       = 0.25
 local MAX_HOURS       = 48
 local DEFAULT_CRIT    = 0.05     -- vanilla condition_critical, used if item_device has no value
@@ -32,7 +50,7 @@ function clamp_hours(v)
 	return v
 end
 
--- charge after dt_ms milliseconds of recording; factor scales the drain (difficulty economy)
+-- charge after dt_ms milliseconds of recording; factor scales the drain (difficulty economy * generation)
 function drain_step(charge, dt_ms, hours, factor)
 	charge = tonumber(charge) or 0
 	dt_ms = tonumber(dt_ms) or 0
@@ -68,12 +86,25 @@ function low_warning(charge, given)
 	return given, false
 end
 
--- index of the entry with the highest charge in a list of charges (nil for an empty list)
-function best_index(charges)
-	local best, bi = nil, nil
+-- index of the entry with the highest charge in a list of charges (nil for an empty list).
+-- When `gens` is supplied, equal charges (within TIE_EPS) break ties toward higher camera generation.
+function best_index(charges, gens)
+	local best, best_gen, bi = nil, -1, nil
 	for i = 1, #charges do
 		local c = tonumber(charges[i])
-		if c and (not best or c > best) then best, bi = c, i end
+		if c then
+			if not gens then
+				if not best or c > best then best, bi = c, i end
+			else
+				local g = tonumber(gens[i]) or 0
+				if not best or c > best + TIE_EPS then
+					best, best_gen, bi = c, g, i
+				elseif math.abs(c - best) <= TIE_EPS and g > best_gen then
+					if c > best then best = c end
+					best_gen, bi = g, i
+				end
+			end
+		end
 	end
 	return bi
 end
@@ -89,11 +120,16 @@ local last_t = nil
 local hours = DEFAULT_HOURS
 local enabled = true
 local crit_charge = DEFAULT_CRIT
+local crit_by_sec = {}
 local eco_mult = 1
 local warned_dead = false
 local warned_low = 0         -- low-battery warnings given for this battery (low_warning)
 local last_charge = nil      -- charge of cam_id at the previous look, to spot a new battery
 local last_charge_id = nil
+
+local function crit_of(sec)
+	return (sec and crit_by_sec[sec]) or crit_charge
+end
 
 local function mcm(id, def)
 	if ui_mcm and ui_mcm.get then
@@ -106,8 +142,13 @@ end
 local function load_settings()
 	hours = clamp_hours(mcm("zone_bodycam_item/battery_hours", DEFAULT_HOURS))
 	enabled = mcm("zone_bodycam/enabled", true) == true
-	local c = item_device and item_device.get_power_critical and item_device.get_power_critical(ITEM_SECTION)
-	crit_charge = tonumber(c) or DEFAULT_CRIT
+	crit_by_sec = {}
+	for i = 1, #CAMERA_ORDER do
+		local sec = CAMERA_ORDER[i]
+		local c = item_device and item_device.get_power_critical and item_device.get_power_critical(sec)
+		crit_by_sec[sec] = tonumber(c) or DEFAULT_CRIT
+	end
+	crit_charge = crit_by_sec[ITEM_SECTION] or DEFAULT_CRIT
 	eco_mult = 1
 	if game_difficulties and game_difficulties.get_eco_factor then
 		local ok, f = pcall(game_difficulties.get_eco_factor, "battery_consumption")
@@ -125,22 +166,37 @@ local function carried_cam()
 	local obj = cam_id and level.object_by_id(cam_id)
 	local parent = obj and obj:parent()
 	if not (parent and parent:id() == (AC_ID or 0)) then return nil end
+	if not CAMERAS[obj:section()] then return nil end
 	return obj
 end
 
--- picks the carried bodycam with the most charge
+-- picks the carried bodycam with the most charge (breaking ties by generation, with STICKY_EPS
+-- hysteresis for the already-active charged camera so two full cameras do not ping-pong every second)
 local function scan()
 	local actor = db.actor
+	local prev_obj = carried_cam()
+	local sticky_id = nil
+	if prev_obj and is_charged(prev_obj:condition(), crit_of(prev_obj:section())) then
+		sticky_id = prev_obj:id()
+	end
 	cam_id = nil
 	if not actor then return end
-	local ids, charges = {}, {}
+	local ids, scores, gens = {}, {}, {}
 	actor:iterate_inventory(function(_, obj)
-		if obj and obj:section() == ITEM_SECTION then
-			ids[#ids + 1] = obj:id()
-			charges[#charges + 1] = obj:condition()
+		local sec = obj and obj:section()
+		local def = sec and CAMERAS[sec]
+		if def then
+			local id = obj:id()
+			local c = tonumber(obj:condition()) or 0
+			if sticky_id and id == sticky_id then
+				c = c + STICKY_EPS
+			end
+			ids[#ids + 1] = id
+			scores[#scores + 1] = c
+			gens[#gens + 1] = def.gen
 		end
 	end, actor)
-	local i = best_index(charges)
+	local i = best_index(scores, gens)
 	if i then cam_id = ids[i] end
 end
 
@@ -158,21 +214,26 @@ function low_battery_alert()
 end
 
 local function refresh(now, silent)
+	local prev_obj = carried_cam()
+	local prev_sec = prev_obj and prev_obj:section()
 	if now >= next_scan then
 		next_scan = now + SCAN_MS
 		scan()
 	end
 	local obj = carried_cam()
 	if not obj then cam_id = nil end
+	local sec = obj and obj:section()
+	local cam_def = sec and CAMERAS[sec]
 	local was = cam_charged
-	cam_charged = obj and is_charged(obj:condition(), crit_charge) or false
+	cam_charged = (obj and cam_def and is_charged(obj:condition(), crit_of(sec))) or false
 	local anim = zbc_item_anim
 	if was and not cam_charged and obj then
 		if not warned_dead and actor_menu and actor_menu.set_msg then
 			actor_menu.set_msg(1, game.translate_string("st_zbc_bodycam_item_dead"), 4)
 		end
 		warned_dead = true
-		if anim then anim.request("dead", now) end
+		local dead_hud = (prev_sec and CAMERAS[prev_sec] and CAMERAS[prev_sec].hud) or (cam_def and cam_def.hud)
+		if anim then anim.request("dead", now, dead_hud) end
 	elseif cam_charged then
 		warned_dead = false
 	end
@@ -188,7 +249,7 @@ local function refresh(now, silent)
 		if warn then low_battery_alert() end
 	end
 	if anim and charge and last_charge_id == cam_id and anim.is_insert(last_charge, charge) then
-		anim.request("insert", now)
+		anim.request("insert", now, cam_def and cam_def.hud)
 	end
 	last_charge, last_charge_id = charge, cam_id
 	return obj
@@ -207,6 +268,13 @@ function battery_level()
 	return obj and obj:condition() or nil
 end
 
+-- the overlay's default device label (zbc_bodycam.script): generation label of the carried camera, nil without one
+function active_device_label()
+	local obj = carried_cam()
+	local def = obj and CAMERAS[obj:section()]
+	return def and def.label or nil
+end
+
 local function actor_on_update()
 	if not enabled then return end
 	local now = time_global()
@@ -214,7 +282,9 @@ local function actor_on_update()
 	last_t = now
 	local obj = refresh(now)
 	if obj and has_power() and last then
-		local c = drain_step(obj:condition(), now - last, hours, eco_mult)
+		local def = CAMERAS[obj:section()]
+		local mult = def and def.drain_mult or 1
+		local c = drain_step(obj:condition(), now - last, hours, eco_mult * mult)
 		obj:set_condition(c)
 		last_charge = c                  -- our own drain is never mistaken for a new battery
 	end
@@ -250,6 +320,7 @@ function on_game_start()
 	if zbc_bodycam and zbc_bodycam.set_power_gate then
 		zbc_bodycam.set_power_gate(has_power)
 		if zbc_bodycam.set_battery_source then zbc_bodycam.set_battery_source(battery_level) end
+		if zbc_bodycam.set_device_source then zbc_bodycam.set_device_source(active_device_label) end
 	else
 		printf("! [Zone Bodycam] bodycam item: zbc_bodycam.script not found, the item component needs the base mod")
 	end

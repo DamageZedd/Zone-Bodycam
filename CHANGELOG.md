@@ -19,6 +19,17 @@
   - **EVENT** after REC flashes three times, then blinks (also on the HUD-drawn timer).
 - Tests: storm build-up, swells, spike and hit-jolt timing, drip speed, camera swing, EVENT blink, and a check that no shader seeds noise from the raw game clock (`tools/tests/zbc_dynamic_fx_test.lua`).
 
+### Added
+- **Full 5-generation Axon Body camera item & 3D model suite (`optional/bodycam_item`)**: expanded the optional physical bodycam item component into all five real-world Axon Body generations while keeping `[zbc_bodycam_item]` (`Axon Body 4`) 100% save-compatible:
+  - **Axon Body (Gen 1, `#73002`)** (`[zbc_bodycam_1]`): `0.20 kg`, `2400 RU`, Tier 1, `~3.0 h` battery endurance (`drain_mult = 1.333`), `AXON BODY` OSD watermark.
+  - **Axon Body 2 (`#74001`)** (`[zbc_bodycam_2]`): `0.24 kg`, `3300 RU`, Tier 1, `~3.5 h` battery endurance (`drain_mult = 1.143`), `AXON BODY 2` OSD watermark.
+  - **Axon Body 3** (`[zbc_bodycam_3]`): `0.30 kg`, `4200 RU`, Tier 2, `~3.8 h` battery endurance (`drain_mult = 1.053`), `AXON BODY 3` OSD watermark.
+  - **Axon Body 4** (`[zbc_bodycam_item]`): `0.32 kg`, `5000 RU`, Tier 2, `4.0 h` baseline battery endurance (`drain_mult = 1.000`), `AXON BODY 4` OSD watermark.
+  - **Axon Body 5 Pro** (`[zbc_bodycam_5]`): `0.33 kg`, `6800 RU`, Tier 3, `4.8 h` (+20%) battery endurance (`drain_mult = 0.833`), `AXON BODY 5` OSD watermark.
+  - **Bespoke 1:1 3D world & first-person HUD models**: procedural Blender builders (`tools/bodycam_item/build_model_{1,2,3,5}.py` alongside `build_model.py`), world physics meshes (`zbc_bodycam_{1,2,3,5}.ogf`), in-hand animated battery-swap HUD meshes (`zbc_bodycam_{1,2,3,5}_hud.ogf` bound to `[zbc_bodycam_{1,2,3,5}_anim_hud]`), uncompressed mipmapped BGRA material textures, and a `512×128` RGBA 5-camera inventory icon atlas (`ui_icon_zbc_bodycam.dds`, built via `make_item_textures.py --atlas`).
+  - **Smart multi-camera selection, endurance & dynamic OSD watermark (`zbc_item.script`, `zbc_item_anim.script`, `zbc_bodycam.script`)**: automatically runs the fullest carried camera with generation tie-breaking (`best_index(charges, gens)`) and `0.2%` active-camera hysteresis (`STICKY_EPS`) to prevent 1 Hz ping-ponging between two full cameras, routes `"dead"` and `"insert"` hand animations to the matching camera's HUD section, and dynamically updates the default top-right OSD device watermark (`set_device_source` / `effective_device_label()`) while still honoring custom MCM device labels.
+  - **21-trader Zone progression & full ENG/RUS localization**: tiered `supplies_1`–`supplies_3` DLTX stock across all 18 existing trader profiles plus 3 new Ecologist & ISG files (`mod_trade_ecolog_sakharov_zbc_bodycam.ltx`, `mod_trade_ecolog_hermann_zbc_bodycam.ltx`, `mod_trade_isg_zbc_bodycam.ltx`), and matching English + `windows-1251` Russian item names and descriptions.
+
 ## v1.3.0 - 2026-11-22
 
 ### Changed

@@ -410,6 +410,376 @@ do
 	check(anim_reqs == 0, "battery swapped while disabled does not trigger delayed insert animation")
 end
 
+---------------------------------------------------------------------------------------------------
+-- 5-Generation Axon Body Suite: CAMERAS table, tie-breaking, hysteresis, drain_mult, HUD routing,
+-- OSD watermark hook, LTX/DLTX/trade configs, and 3D/DDS asset checks
+---------------------------------------------------------------------------------------------------
+
+-- CAMERAS & CAMERA_ORDER contract
+do
+	check(M.ITEM_SECTION == "zbc_bodycam_item", "ITEM_SECTION stays zbc_bodycam_item for save compatibility")
+	check(type(M.CAMERA_ORDER) == "table" and #M.CAMERA_ORDER == 5, "CAMERA_ORDER lists all 5 cameras")
+	local expected = {
+		zbc_bodycam_1    = { gen = 1, hud = "zbc_bodycam_1_anim_hud", label = "AXON BODY",   drain_mult = 1.333 },
+		zbc_bodycam_2    = { gen = 2, hud = "zbc_bodycam_2_anim_hud", label = "AXON BODY 2", drain_mult = 1.143 },
+		zbc_bodycam_3    = { gen = 3, hud = "zbc_bodycam_3_anim_hud", label = "AXON BODY 3", drain_mult = 1.053 },
+		zbc_bodycam_item = { gen = 4, hud = "zbc_bodycam_anim_hud",   label = "AXON BODY 4", drain_mult = 1.000 },
+		zbc_bodycam_5    = { gen = 5, hud = "zbc_bodycam_5_anim_hud", label = "AXON BODY 5", drain_mult = 0.833 },
+	}
+	for sec, exp in pairs(expected) do
+		local got = M.CAMERAS and M.CAMERAS[sec]
+		check(type(got) == "table", "CAMERAS has " .. sec)
+		if got then
+			check(got.gen == exp.gen, sec .. " gen")
+			check(got.hud == exp.hud, sec .. " hud section")
+			check(got.label == exp.label, sec .. " OSD label")
+			check(near(got.drain_mult, exp.drain_mult, 1e-6), sec .. " drain_mult")
+		end
+	end
+end
+
+-- best_index(charges, gens): generation tie-breaking
+do
+	check(M.best_index({ 1.0, 1.0 }, { 1, 5 }) == 2, "tie at 100% picks higher generation (Body 5 over Gen 1)")
+	check(M.best_index({ 1.0, 1.0, 1.0 }, { 2, 5, 4 }) == 2, "tie across 3 cameras picks Body 5 regardless of order")
+	check(M.best_index({ 1.0, 1.0 - 5e-7 }, { 1, 4 }) == 2, "within 1e-6 epsilon still breaks tie by generation")
+	check(M.best_index({ 0.85, 0.80 }, { 1, 5 }) == 1, "meaningfully fuller Gen 1 (85%) beats 80% Body 5")
+	check(M.best_index({ 0.5, 0.5 }, { 3, 3 }) == 1, "equal charge and equal gen keeps first")
+end
+
+-- Anti-ping-pong hysteresis, per-generation drain_mult, active_device_label(), and HUD section routing
+do
+	local cbs = {}
+	local now_ms = 0
+	local anim_calls = {}
+	local items = {}
+
+	local function add_cam(id, sec, cond)
+		local o = { _cond = cond, _parent = 0 }
+		function o:id() return id end
+		function o:section() return sec end
+		function o:condition() return self._cond end
+		function o:set_condition(c) self._cond = c end
+		function o:parent() return self._parent and { id = function() return self._parent end } or nil end
+		items[#items + 1] = o
+		return o
+	end
+
+	local c1 = add_cam(201, "zbc_bodycam_1", 1.0)
+	local c5 = add_cam(205, "zbc_bodycam_5", 1.0)
+
+	local by_id = { [201] = c1, [205] = c5 }
+	local dev_src_fn = nil
+
+	local G = load_script({
+		AC_ID = 0,
+		db = {
+			actor = {
+				iterate_inventory = function(_, fn, ctx)
+					for i = 1, #items do
+						if items[i]._parent == 0 then fn(ctx, items[i]) end
+					end
+				end,
+			},
+		},
+		time_global = function() return now_ms end,
+		level = { object_by_id = function(id) return by_id[id] end },
+		ui_mcm = { get = function(k)
+			if k == "zone_bodycam/enabled" then return true end
+			if k == "zone_bodycam_item/battery_hours" then return 4 end
+			return nil
+		end },
+		item_device = { get_power_critical = function() return 0.05 end },
+		game_difficulties = { get_eco_factor = function() return 1 end },
+		actor_menu = { set_msg = function() end },
+		game = { translate_string = function(s) return s end },
+		zbc_bodycam = {
+			set_power_gate = function() end,
+			set_battery_source = function() end,
+			set_device_source = function(fn) dev_src_fn = fn end,
+		},
+		zbc_item_anim = {
+			holding_power = function() return false end,
+			is_insert = function(prev, cur) return prev and cur and (cur - prev > 0.02) end,
+			request = function(what, t, hud) anim_calls[#anim_calls + 1] = { what = what, t = t, hud = hud } end,
+			reset = function() end,
+			update = function() end,
+		},
+		RegisterScriptCallback = function(name, fn) cbs[name] = fn end,
+		printf = function() end,
+	})
+	G.on_game_start()
+	check(type(dev_src_fn) == "function", "on_game_start registers set_device_source")
+
+	-- Initial scan with both at 100%: Body 5 wins tie-break over Gen 1
+	cbs.actor_on_first_update()
+	check(G.active_device_label() == "AXON BODY 5", "100% tie selects Body 5 watermark")
+
+	-- 1 second drain on Body 5: drains at 0.833x rate, and next scan does NOT flip-flop to Gen 1 (1.0)
+	now_ms = 1000
+	cbs.actor_on_update() -- seeds last_t = 1000
+	now_ms = 2000
+	cbs.actor_on_update() -- drains 1000 ms AND triggers scan() at next_scan == 1000
+	local expected_c5 = 1.0 - (1 / (4 * 3600)) * 0.833
+	check(near(c5._cond, expected_c5, 1e-9), "Body 5 drains with drain_mult = 0.833")
+	check(c1._cond == 1.0, "inactive Gen 1 camera does not drain")
+
+	now_ms = 3000
+	cbs.actor_on_update() -- another scan() at 3000 ms; c5 is ~0.9999, within STICKY_EPS (0.002) of c1 (1.0)
+	check(G.active_device_label() == "AXON BODY 5", "STICKY_EPS prevents ping-pong to 100% Gen 1 every second")
+
+	-- Drop Body 5 to 0.50: Gen 1 (1.0) exceeds 0.50 + STICKY_EPS, so scan switches immediately to Gen 1
+	c5._cond = 0.50
+	now_ms = 4000
+	cbs.actor_on_update()
+	check(G.active_device_label() == "AXON BODY", "switches to Gen 1 once charge gap exceeds STICKY_EPS")
+	local before_c1 = c1._cond
+	now_ms = 5000
+	cbs.actor_on_update()
+	check(near(before_c1 - c1._cond, (1 / (4 * 3600)) * 1.333, 1e-9), "Gen 1 drains with drain_mult = 1.333")
+
+	-- Remove Gen 1; drain Body 5 across critical threshold -> requests dead with zbc_bodycam_5_anim_hud
+	c1._parent = nil
+	c5._cond = 0.05001
+	cbs.actor_on_item_drop()
+	now_ms = 6000
+	cbs.actor_on_update()
+	check(G.has_power() == true and G.active_device_label() == "AXON BODY 5", "Body 5 active just above critical")
+	c5._cond = 0.049
+	now_ms = 6500
+	cbs.actor_on_update()
+	check(#anim_calls == 1 and anim_calls[1].what == "dead" and anim_calls[1].hud == "zbc_bodycam_5_anim_hud",
+		"dead animation receives Body 5 HUD section")
+
+	-- Insert fresh battery into Body 5 -> requests insert with zbc_bodycam_5_anim_hud
+	c5._cond = 1.0
+	now_ms = 6800
+	cbs.actor_on_update()
+	check(#anim_calls == 2 and anim_calls[2].what == "insert" and anim_calls[2].hud == "zbc_bodycam_5_anim_hud",
+		"insert animation receives Body 5 HUD section")
+end
+
+-- zbc_item_anim.script: HUD section propagation & queue priority
+do
+	local chunk = assert(loadfile("optional/bodycam_item/gamedata/scripts/zbc_item_anim.script"))
+	local played_huds, len_huds = {}, {}
+	local actor = {
+		alive = function() return true end,
+		active_slot = function() return 0 end,
+		active_detector = function() return nil end,
+		active_item = function() return nil end,
+		activate_slot = function() end,
+	}
+	local A = setmetatable({
+		db = { actor = actor },
+		game = {
+			only_allow_movekeys = function() end,
+			play_hud_motion = function(_, hud, anm) played_huds[#played_huds + 1] = { hud = hud, anm = anm } end,
+			get_motion_length = function(hud) len_huds[#len_huds + 1] = hud; return 500 end,
+			stop_hud_motion = function() end,
+		},
+		level = {},
+		printf = function() end,
+		time_global = function() return 0 end,
+	}, { __index = _G })
+	setfenv(chunk, A)
+	chunk()
+
+	-- Default nil hud_sec falls back to HUD_SECTION (Body 4)
+	A.request("dead", 0, nil)
+	A.update(0, true)
+	A.update(10, true)
+	check(played_huds[1] and played_huds[1].hud == "zbc_bodycam_anim_hud", "nil hud_sec defaults to zbc_bodycam_anim_hud")
+	check(len_huds[1] == "zbc_bodycam_anim_hud", "get_motion_length receives default HUD section")
+	A.update(600, true) -- finish
+
+	-- Pending "dead" (Gen 1) replaced by "insert" (Gen 3) updates HUD section, and subsequent "dead" (Gen 2) cannot overwrite it
+	A.request("dead", 700, "zbc_bodycam_1_anim_hud")
+	A.request("insert", 710, "zbc_bodycam_3_anim_hud")
+	A.request("dead", 720, "zbc_bodycam_2_anim_hud")
+	A.update(730, true)
+	A.update(740, true)
+	check(played_huds[2] and played_huds[2].hud == "zbc_bodycam_3_anim_hud" and played_huds[2].anm == "anm_zbc_insert",
+		"insert replaces pending dead HUD section and ignores later dead HUD section")
+	A.update(1400, true) -- finish
+
+	-- Queuing "insert" (Gen 5) mid-"dead" (Gen 2) plays Gen 5 insert right after Gen 2 dead finishes
+	A.request("dead", 2000, "zbc_bodycam_2_anim_hud")
+	A.update(2000, true)
+	A.update(2010, true)
+	check(played_huds[3] and played_huds[3].hud == "zbc_bodycam_2_anim_hud", "Gen 2 dead starts playing")
+	A.request("insert", 2200, "zbc_bodycam_5_anim_hud")
+	A.update(2600, true) -- finishes Gen 2 dead, preserves queued Gen 5 insert
+	A.update(2610, true) -- begins Gen 5 insert
+	A.update(2620, true) -- plays Gen 5 insert
+	check(played_huds[4] and played_huds[4].hud == "zbc_bodycam_5_anim_hud" and played_huds[4].anm == "anm_zbc_insert",
+		"queued insert HUD section survives finish() of preceding dead animation")
+end
+
+-- zbc_bodycam.script: set_device_source & effective_device_label()
+do
+	local mcm_vals = {}
+	local cbs = {}
+	local stub
+	stub = setmetatable({}, {
+		__index = function() return stub end,
+		__call = function() return stub end,
+		__add = function() return 0 end, __sub = function() return 0 end,
+		__mul = function() return 0 end, __div = function() return 0 end,
+		__unm = function() return 0 end, __concat = function() return "" end,
+		__lt = function() return false end, __le = function() return false end,
+	})
+	local benv = setmetatable({
+		shader_bus = false,
+		ui_mcm = { get = function(k) return mcm_vals[k] end },
+		device = function() return { width = 1920, height = 1080 } end,
+		RegisterScriptCallback = function(name, fn) cbs[name] = fn end,
+	}, { __index = function(_, k)
+		local v = _G[k]
+		if v ~= nil then return v end
+		return stub
+	end })
+	local bchunk = assert(loadfile("gamedata/scripts/zbc_bodycam.script"))
+	setfenv(bchunk, benv)
+	check(pcall(bchunk), "zbc_bodycam.script loads cleanly")
+	benv.on_game_start()
+
+	check(benv.effective_device_label() == "AXON BODY 4", "default device label without item source is AXON BODY 4")
+	local cur_dev = "AXON BODY 2"
+	benv.set_device_source(function() return cur_dev end)
+	check(benv.effective_device_label() == "AXON BODY 2", "device_source overrides default AXON BODY 4 watermark")
+	cur_dev = nil
+	check(benv.effective_device_label() == "AXON BODY 4", "nil from device_source falls back to AXON BODY 4")
+	cur_dev = "AXON BODY"
+	mcm_vals["zone_bodycam/device_label"] = "CUSTOM UNIT 7"
+	if cbs.on_option_change then cbs.on_option_change() end
+	check(benv.effective_device_label() == "CUSTOM UNIT 7", "custom user MCM device_label overrides device_source")
+end
+
+-- Configs & Assets verification (LTX, DLTX, 21 trader files, OGFs, and 512x128 DDS atlas)
+do
+	local function read_text(path)
+		local f = io.open(path, "rb")
+		if not f then return nil end
+		local s = f:read("*a")
+		f:close()
+		return s
+	end
+
+	local function parse_ltx(path)
+		local txt = read_text(path)
+		check(txt ~= nil, "LTX exists: " .. path)
+		local secs = {}
+		local cur = nil
+		for raw in (txt or ""):gmatch("[^\r\n]+") do
+			local line = raw:gsub(";.*$", ""):match("^%s*(.-)%s*$")
+			if line ~= "" then
+				local name, parent = line:match("^%[([^%]]+)%]%s*:%s*([%w_]+)$")
+				if not name then name = line:match("^%[([^%]]+)%]$") end
+				if name then
+					cur = {}
+					if parent and secs[parent] then
+						for k, v in pairs(secs[parent]) do cur[k] = v end
+					end
+					cur._parent = parent
+					secs[name] = cur
+				elseif cur then
+					local k, v = line:match("^([%w_%$]+)%s*=%s*(.-)%s*$")
+					if k then cur[k] = v end
+				end
+			end
+		end
+		return secs
+	end
+
+	local ltx = parse_ltx("optional/bodycam_item/gamedata/configs/items/items/items_zbc_bodycam.ltx")
+	local expected_ltx = {
+		{ sec = "zbc_bodycam_1",    hud = "zbc_bodycam_1_anim_hud", ogf = "zbc_bodycam_1.ogf", hud_ogf = "zbc_bodycam_1_hud.ogf", gx = "2", gy = "0", w = "0.20", cost = "2400", tier = "1" },
+		{ sec = "zbc_bodycam_2",    hud = "zbc_bodycam_2_anim_hud", ogf = "zbc_bodycam_2.ogf", hud_ogf = "zbc_bodycam_2_hud.ogf", gx = "4", gy = "0", w = "0.24", cost = "3300", tier = "1" },
+		{ sec = "zbc_bodycam_3",    hud = "zbc_bodycam_3_anim_hud", ogf = "zbc_bodycam_3.ogf", hud_ogf = "zbc_bodycam_3_hud.ogf", gx = "6", gy = "0", w = "0.30", cost = "4200", tier = "2" },
+		{ sec = "zbc_bodycam_item", hud = "zbc_bodycam_anim_hud",   ogf = "zbc_bodycam.ogf",   hud_ogf = "zbc_bodycam_hud.ogf",   gx = "0", gy = "0", w = "0.32", cost = "5000", tier = "2" },
+		{ sec = "zbc_bodycam_5",    hud = "zbc_bodycam_5_anim_hud", ogf = "zbc_bodycam_5.ogf", hud_ogf = "zbc_bodycam_5_hud.ogf", gx = "8", gy = "0", w = "0.33", cost = "6800", tier = "3" },
+	}
+	for _, e in ipairs(expected_ltx) do
+		local s = ltx[e.sec]
+		check(s ~= nil, "items_zbc_bodycam.ltx defines [" .. e.sec .. "]")
+		if s then
+			check(s.visual == "dynamics\\devices\\zbc_bodycam\\" .. e.ogf, e.sec .. " visual")
+			check(s.inv_grid_x == e.gx and s.inv_grid_y == e.gy, e.sec .. " inv_grid_x,y")
+			check(s.inv_grid_width == "2" and s.inv_grid_height == "2", e.sec .. " 2x2 grid size")
+			check(s.inv_weight == e.w, e.sec .. " inv_weight")
+			check(s.cost == e.cost, e.sec .. " cost")
+			check(s.tier == e.tier, e.sec .. " tier")
+			check(s.power_critical == "0.05", e.sec .. " power_critical")
+			check(s.use6_functor == "item_device.menu_battery", e.sec .. " use6_functor")
+		end
+		local h = ltx[e.hud]
+		check(h ~= nil, "items_zbc_bodycam.ltx defines [" .. e.hud .. "]")
+		if h then
+			check(h.item_visual == "dynamics\\devices\\zbc_bodycam\\" .. e.hud_ogf, e.hud .. " item_visual")
+			check(h.anm_zbc_dead == "zbc_bodycam_dead, zbc_bodycam_dead_item", e.hud .. " anm_zbc_dead")
+			check(h.anm_zbc_insert == "zbc_bodycam_insert, zbc_bodycam_insert_item", e.hud .. " anm_zbc_insert")
+		end
+	end
+
+	local dev_dltx = read_text("optional/bodycam_item/gamedata/configs/items/settings/mod_devices_zbc_bodycam.ltx") or ""
+	check(dev_dltx:find("!%[power_consumption%]") ~= nil, "mod_devices_zbc_bodycam.ltx patches ![power_consumption]")
+	for _, sec in ipairs(M.CAMERA_ORDER) do
+		check(dev_dltx:find(sec .. "%s*=%s*0,0,0") ~= nil, "mod_devices_zbc_bodycam.ltx registers " .. sec)
+	end
+
+	local traders = {
+		"renegade", "bandit_basic", "stalker_basic",
+		"bandit", "stalker_sidorovich", "stalker_loris",
+		"csky_spore", "stalker_owl", "military_esc", "freedom_ashot",
+		"duty", "freedom", "military", "monolith_basic", "monolith", "greh",
+		"mercenary_basic", "mercenary", "ecolog_sakharov", "ecolog_hermann", "isg",
+	}
+	for _, tr in ipairs(traders) do
+		local p = "optional/bodycam_item/gamedata/configs/items/trade/mod_trade_" .. tr .. "_zbc_bodycam.ltx"
+		local t = read_text(p)
+		check(t ~= nil and t:find("@%[supplies_1%]") ~= nil, "trade DLTX valid: " .. tr)
+		if t then
+			local has_cam = false
+			for sec in t:gmatch("^(zbc_bodycam[%w_]*)%s*=") do
+				check(M.CAMERAS[sec] ~= nil, tr .. " references known camera " .. sec)
+				has_cam = true
+			end
+			for sec in t:gmatch("\n(zbc_bodycam[%w_]*)%s*=") do
+				check(M.CAMERAS[sec] ~= nil, tr .. " references known camera " .. sec)
+				has_cam = true
+			end
+			check(has_cam, tr .. " stocks at least one camera")
+		end
+	end
+
+	check(read_text("tools/bodycam_item/icon_ab4.png") ~= nil, "Body 4 icon backup tools/bodycam_item/icon_ab4.png exists")
+
+	local skip_assets = (arg and arg[1] == "--logic-only") or os.getenv("ZBC_SKIP_ASSET_CHECK") == "1"
+	if not skip_assets then
+		local mesh_dir = "optional/bodycam_item/gamedata/meshes/dynamics/devices/zbc_bodycam/"
+		for _, e in ipairs(expected_ltx) do
+			local w_ogf = read_text(mesh_dir .. e.ogf)
+			local h_ogf = read_text(mesh_dir .. e.hud_ogf)
+			check(w_ogf ~= nil and #w_ogf > 256, "world OGF exists and non-empty: " .. e.ogf)
+			check(h_ogf ~= nil and #h_ogf > 256, "HUD OGF exists and non-empty: " .. e.hud_ogf)
+		end
+		local omf = read_text("optional/bodycam_item/gamedata/meshes/anomaly_weapons/hud_hands_animation/zbc_bodycam_hud_animation.omf")
+		check(omf ~= nil and #omf > 256, "hand animation OMF exists")
+
+		local dds = read_text("optional/bodycam_item/gamedata/textures/ui/ui_icon_zbc_bodycam.dds")
+		check(dds ~= nil and #dds >= 128 and dds:sub(1, 4) == "DDS ", "ui_icon_zbc_bodycam.dds exists with DDS magic")
+		if dds and #dds >= 20 then
+			local function u32le(s, i)
+				local b1, b2, b3, b4 = s:byte(i, i + 3)
+				return b1 + b2 * 256 + b3 * 65536 + b4 * 16777216
+			end
+			local h, w = u32le(dds, 13), u32le(dds, 17)
+			check(w == 512 and h == 128, ("ui_icon_zbc_bodycam.dds is 512x128 5-camera atlas, got %dx%d"):format(w, h))
+		end
+	end
+end
+
 if failures > 0 then
 	print(failures .. " check(s) failed")
 	os.exit(1)
