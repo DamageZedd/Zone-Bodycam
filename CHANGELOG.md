@@ -8,6 +8,7 @@
 - **Markers through a variable-zoom scope were wrong at its highest zoom** (`zbc_allies.script`, also the face blur): a zoom factor of 8 or less was read as a plain power, so the 24x top of a 3-24x scope was placed as 4x. Every zoom step now uses 100 / zoom factor, as the Bodycam exes render it.
 
 ### Changed
+- **Signal lost is the only death screen while it is on** (`zbc_fx.script`): another death screen mod's death handler is taken off `actor_on_before_death` on load, so Death Like Romeo's black screen, time stop, mute, logo and quote no longer cover the camera's own death. Romeo's files are not touched; its handler is only called by us when signal lost does not play (camera off or out of power, or a death another mod cancels, such as a Soulslike respawn), and it is given back when signal lost is switched off. Test: `tools/tests/zbc_death_screen_test.lua`.
 - **Every camera effect moves** instead of sitting still:
   - **Interference** swells and fades around its level from the source, gets short random spikes (more often and stronger the more interference there is), tracking bands roll through the picture, a hum wobble scrolls up it and the colour split jitters. An **emission or psy storm builds up** over its first 40 s instead of switching straight to one flat level.
   - **Hard hits** jolt the picture 2-4 times, each weaker, instead of one smooth fade.

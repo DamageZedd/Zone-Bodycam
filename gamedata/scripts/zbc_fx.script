@@ -442,9 +442,68 @@ end
 local function npc_on_hit_callback(npc, amount) on_hit_near(npc, amount) end
 local function monster_on_hit_callback(monster, amount) on_hit_near(monster, amount) end
 
+-- Other death screens. While signal lost is on, it is the only death screen: another mod's death
+-- handler is taken off actor_on_before_death and only called by us when signal lost does not play
+-- (camera off or out of power, or a death another mod cancels, such as a Soulslike respawn).
+-- Death Like Romeo (true_first_person_death.script) blacks out the screen, stops time, mutes the game
+-- and shows its logo and a quote; its handler is a local, reached through its on_game_start.
+OTHER_DEATH_SCREENS = {
+	{ script = "true_first_person_death", starter = "on_game_start", handler = "on_actor_before_death" },
+}
+local taken = {}                                -- script -> its death handler, while we hold it
+
+-- the value of upvalue `name` of function f, or nil
+function find_upvalue(f, name)
+	if type(f) ~= "function" or not (debug and debug.getupvalue) then return nil end
+	local i = 1
+	while true do
+		local n, v = debug.getupvalue(f, i)
+		if n == nil then return nil end
+		if n == name then return v end
+		i = i + 1
+	end
+end
+
+local function script_present(name)
+	local ok, yes = pcall(function() return getFS():exist("$game_scripts$", name .. ".script") end)
+	return ok and yes and true or false
+end
+
+-- take (on) or give back (off) the other death screens' handlers
+function take_death_screens(on, present)
+	present = present or script_present
+	for _, d in ipairs(OTHER_DEATH_SCREENS) do
+		if on and not taken[d.script] and present(d.script) then
+			local m = _G[d.script]
+			local h = m and find_upvalue(m[d.starter], d.handler)
+			if type(h) == "function" then
+				UnregisterScriptCallback("actor_on_before_death", h)
+				taken[d.script] = h
+				printf("[Zone Bodycam] signal lost replaces the %s death screen", d.script)
+			end
+		elseif not on and taken[d.script] then
+			RegisterScriptCallback("actor_on_before_death", taken[d.script])
+			taken[d.script] = nil
+		end
+	end
+end
+
+local function want_signal_lost()
+	return zbc_bodycam and zbc_bodycam.fx_option and zbc_bodycam.fx_option("signal_lost") or false
+end
+
+local function others_death(who, flags)
+	for _, h in pairs(taken) do
+		local ok, err = pcall(h, who, flags)
+		if not ok then printf("! [Zone Bodycam] death screen handler failed: %s", tostring(err)) end
+	end
+end
+
 function actor_on_before_death(who, flags)
-	if flags and flags.ret_value == false then return end
-	if not (enabled() and zbc_bodycam.fx_option("signal_lost")) then return end
+	if (flags and flags.ret_value == false) or not (enabled() and want_signal_lost()) then
+		others_death(who, flags)                -- signal lost does not play: theirs does
+		return
+	end
 	F.death_t = now_s()
 	if zbc_bodycam.signal_lost then zbc_bodycam.signal_lost(F.death_t) end
 end
@@ -571,6 +630,12 @@ end
 local function actor_on_first_update()
 	reset()
 	pcall(hook_visor_drops)
+	local ok, err = pcall(take_death_screens, want_signal_lost())
+	if not ok then printf("! [Zone Bodycam] could not take over the death screen: %s", tostring(err)) end
+end
+
+local function on_option_change()
+	if db.actor then pcall(take_death_screens, want_signal_lost()) end
 end
 
 function on_game_start()
@@ -583,4 +648,5 @@ function on_game_start()
 	RegisterScriptCallback("actor_on_before_death", actor_on_before_death)
 	RegisterScriptCallback("on_key_release", on_key_release)
 	RegisterScriptCallback("actor_on_update", actor_on_update)
+	RegisterScriptCallback("on_option_change", on_option_change)
 end

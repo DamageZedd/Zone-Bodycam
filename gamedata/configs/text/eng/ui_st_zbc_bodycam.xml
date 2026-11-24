@@ -370,7 +370,7 @@
     <text>Signal lost on death</text>
   </string>
   <string id="ui_mcm_zone_bodycam_signal_lost_desc">
-    <text>When you die the feed glitches, cuts to black and shows SIGNAL LOST with the last timestamp.</text>
+    <text>When you die the feed glitches, cuts to black and shows SIGNAL LOST with the last timestamp. While it is on it is the only death screen: it replaces other death screen mods (Death Like Romeo), which come back when it is off or the camera has no power.</text>
   </string>
   <string id="ui_mcm_zone_bodycam_night_mode">
     <text>Low-light mode</text>
