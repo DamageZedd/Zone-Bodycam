@@ -18,7 +18,7 @@ uniform float4 bus_zbc_sensor;   // x: highlight blowout & auto-exposure punch (
 uniform float4 bus_zbc_faces;    // x: number of faces in use (0..64), y/z: packed 12-bit union AABB (u, v), w: >0.5 if valid
 
 // Camera effects (scripts\zbc_fx.script), independent of the lens.
-uniform float4 bus_zbc_glitch;   // x: interference 0..1 (with its swells)  y: spikes and hit bursts 0..1  z: time of death (timers.x clock, 0 alive)
+uniform float4 bus_zbc_glitch;   // x: interference 0..1 (with its swells)  y: spikes and hit bursts 0..1  z: time of death (timers.x clock, 0 alive)  w: seconds since death on the real clock
 uniform float4 bus_zbc_ir;       // x: low-light (infrared) mix 0..1  y: auto-exposure gain (0 = off, 1 = neutral)  z: unused
 uniform float4 bus_zbc_dirt;     // x..w: hit times of up to 4 blood splatters on the lens (timers.x clock, 0 empty)
 uniform float4 bus_zbc_blood;    // x..w: how far each splatter's drips have run (1 at ~14 s, up to 3)
@@ -35,8 +35,11 @@ float2 zbc_aspect() { return float2(max(screen_res.x * screen_res.w, 0.1), 1.0);
 // fraction once it is large, so a hash of floor(timers.x * 24) stops changing after about 15 minutes
 // and the "per-frame" noise freezes. Everything animated runs on this clock, wrapped every 10 minutes
 // (one frame jumps there), and every hash takes small inputs.
+// After death the clock also runs on real time (glitch.w), since a death screen mod can stop game time
+// (time_factor 0) and timers.x with it; while game time runs the extra is ~0.
 #define ZBC_TWRAP 600.0
-float zbc_time() { return fmod(max(timers.x, 0.0), ZBC_TWRAP); }
+float zbc_death_lag() { return (bus_zbc_glitch.z > 0.0) ? max(bus_zbc_glitch.w - (timers.x - bus_zbc_glitch.z), 0.0) : 0.0; }
+float zbc_time() { return fmod(max(timers.x, 0.0) + zbc_death_lag(), ZBC_TWRAP); }
 float zbc_tstep(float rate) { return floor(zbc_time() * rate); }   // frame counter at rate Hz
 
 // 2D -> 1D hash in [0, 1), safe for inputs up to ~1e5
@@ -148,8 +151,8 @@ float3 zbc_plain_sample(Texture2D tex, float2 uv)
 // Interference (emissions, psy, radiation, anomalies, hits) and the death glitch
 //------------------------------------------------------------------------------------------------
 
-// seconds since death, or -1 while alive
-float zbc_death_age() { return (bus_zbc_glitch.z > 0.0) ? max(timers.x - bus_zbc_glitch.z, 0.0) : -1.0; }
+// seconds since death, or -1 while alive: the game clock, or the real clock if game time stopped
+float zbc_death_age() { return (bus_zbc_glitch.z > 0.0) ? max(max(timers.x - bus_zbc_glitch.z, 0.0), bus_zbc_glitch.w) : -1.0; }
 
 // death: breaks up within 0.25 s, with the signal stuttering back for moments until it collapses
 float zbc_death_glitch(float e)

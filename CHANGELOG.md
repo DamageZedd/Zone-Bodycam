@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Fixed
+- **Signal lost never played with a death screen mod that stops time** (`zbc_bodycam.script`, `zbc_lens.h`): Death Like Romeo (CLIKRΔD Romeo) sets `time_factor 0` the moment you die, which also stops the shader's game clock, so the break-up stayed at 0 s and only Romeo's death screen showed. The seconds since death now also run on the real clock (`time_continual`), sent in the `zbc_glitch` lane's w by a small HUD window that keeps updating while time is stopped; the shader uses whichever age is larger, and its animation clock keeps going after death. Test: `tools/tests/zbc_signal_lost_clock_test.lua`.
 - **Interference, grain and compression noise froze after ~15 minutes of play** (`zbc_lens.h`, `zbc_osd.h`, `zbc_ring.ps`): the noise was seeded from the game clock, which in 32-bit floats stops changing in the hash once the game has run a while, so tearing showed the same bands every frame and the grain slid one fixed pattern across the screen. All animated effects now run on a wrapped clock and a hash that keeps its precision, with fresh noise every frame.
 - **Markers through a variable-zoom scope were wrong at its highest zoom** (`zbc_allies.script`, also the face blur): a zoom factor of 8 or less was read as a plain power, so the 24x top of a 3-24x scope was placed as 4x. Every zoom step now uses 100 / zoom factor, as the Bodycam exes render it.
 

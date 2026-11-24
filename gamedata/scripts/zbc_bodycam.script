@@ -1500,6 +1500,58 @@ end
 local fx_last = nil
 local dead = false
 
+-- Signal lost runs on real time. A death screen mod can stop game time when you die (Death Like
+-- Romeo sets time_factor 0), and timers.x and time_global() stop with it, so the shader's own death
+-- clock would sit at 0 s and nothing would play. time_continual() keeps going; the seconds since death
+-- go to the shader in the glitch lane's w, ticked by a small HUD window, since UI windows keep
+-- updating while game time is stopped (actor_on_update may not).
+local death_real = nil                       -- real time of death in seconds, nil while alive
+local death_game_t = 0                       -- the death time sent in the glitch lane's z
+local death_clock = nil                      -- the window that ticks the clock
+
+local function real_now()
+	if time_continual then return time_continual() / 1000 end
+	return os.clock()
+end
+
+-- seconds since death on the real clock, 0 while alive
+function death_age(now)
+	if not death_real then return 0 end
+	return max((now or real_now()) - death_real, 0)
+end
+
+function death_clock_tick()
+	if death_real then send("glitch", 0, 0, death_game_t, death_age()) end
+end
+
+class "ZbcDeathClock" (CUIScriptWnd)
+
+function ZbcDeathClock:__init() super()
+	self:SetAutoDelete(true)
+end
+
+function ZbcDeathClock:Update()
+	CUIScriptWnd.Update(self)
+	death_clock_tick()
+end
+
+local function death_clock_stop()
+	death_real = nil
+	death_game_t = 0
+	if not death_clock then return end
+	local h = get_hud()
+	if h then h:RemoveDialogToRender(death_clock) end
+	death_clock = nil
+end
+
+local function death_clock_start(death_t)
+	death_clock_stop()
+	death_real = real_now()
+	death_game_t = death_t
+	death_clock = ZbcDeathClock()
+	get_hud():AddDialogToRender(death_clock)
+end
+
 local function settings_changed()
 	clear_send_cache()
 	load_settings()
@@ -1541,6 +1593,7 @@ end
 function actor_on_first_update()
 	in_menu = false                          -- loading from the title menu may not fire main_menu_on_quit
 	dead = false
+	death_clock_stop()
 	fx_last = nil
 	faces_was_on = false
 	if zbc_faces and zbc_faces.reset then zbc_faces.reset() end
@@ -1572,7 +1625,7 @@ local function fx_update()
 	fx_event = F.event and cfg.rec_timer or false
 	fx_event_on = fx_event and F.event_on or false
 	fx_shake = F.shake or 0
-	send("glitch", F.glitch, F.burst, F.death_t, 0)
+	send("glitch", F.glitch, F.burst, F.death_t, death_age())
 	send("ir",     F.ir, F.exposure or 1, 0, 0)
 	local b = F.blood or {}
 	local function bt(i) return b[i] and b[i].t or 0 end
@@ -1595,6 +1648,7 @@ function signal_lost(death_t)
 	if dead or not bus_ready() then return end
 	dead = true
 	send("glitch", 0, 0, death_t, 0)               -- the shader times the break-up from death_t
+	pcall(death_clock_start, death_t)              -- and from the real clock, if game time stops
 	-- the in-shader text: line 4 carries the translated "SIGNAL LOST", line 1 the last timestamp
 	local date = date_line()
 	upload_osd_chars(date, "", "", zbc_allies and zbc_allies.upper_cp1251
@@ -1607,6 +1661,7 @@ function actor_on_update()
 	if dead then
 		if db.actor and db.actor:alive() then
 			dead = false
+			death_clock_stop()
 			fx_last = nil
 			if tokens then send("glitch", 0, 0, 0, 0) end
 			hud_add()
@@ -1662,6 +1717,7 @@ end
 
 function actor_on_net_destroy()
 	dead = false
+	death_clock_stop()
 	fx_last = nil
 	faces_was_on = false
 	if zbc_faces and zbc_faces.reset then zbc_faces.reset() end
