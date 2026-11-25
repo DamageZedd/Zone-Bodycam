@@ -694,11 +694,11 @@ do
 
 	local ltx = parse_ltx("optional/bodycam_item/gamedata/configs/items/items/items_zbc_bodycam.ltx")
 	local expected_ltx = {
-		{ sec = "zbc_bodycam_1",    hud = "zbc_bodycam_1_anim_hud", ogf = "zbc_bodycam_1.ogf", hud_ogf = "zbc_bodycam_1_hud.ogf", hand = "zbc_bodycam_1", omf = "zbc_bodycam_1_hud_animation.omf", gx = "2", gy = "0", w = "0.20", cost = "5000", tier = "1" },
-		{ sec = "zbc_bodycam_2",    hud = "zbc_bodycam_2_anim_hud", ogf = "zbc_bodycam_2.ogf", hud_ogf = "zbc_bodycam_2_hud.ogf", hand = "zbc_bodycam_2", omf = "zbc_bodycam_2_hud_animation.omf", gx = "4", gy = "0", w = "0.24", cost = "8000", tier = "2" },
-		{ sec = "zbc_bodycam_3",    hud = "zbc_bodycam_3_anim_hud", ogf = "zbc_bodycam_3.ogf", hud_ogf = "zbc_bodycam_3_hud.ogf", hand = "zbc_bodycam_3", omf = "zbc_bodycam_3_hud_animation.omf", gx = "6", gy = "0", w = "0.30", cost = "12000", tier = "3" },
+		{ sec = "zbc_bodycam_1",    hud = "zbc_bodycam_1_anim_hud", ogf = "zbc_bodycam_1.ogf", hud_ogf = "zbc_bodycam_1_hud.ogf", hand = "zbc_bodycam_1", omf = "zbc_bodycam_1_hud_animation.omf", gx = "1", gy = "0", w = "0.20", cost = "5000", tier = "1" },
+		{ sec = "zbc_bodycam_2",    hud = "zbc_bodycam_2_anim_hud", ogf = "zbc_bodycam_2.ogf", hud_ogf = "zbc_bodycam_2_hud.ogf", hand = "zbc_bodycam_2", omf = "zbc_bodycam_2_hud_animation.omf", gx = "2", gy = "0", w = "0.24", cost = "8000", tier = "2" },
+		{ sec = "zbc_bodycam_3",    hud = "zbc_bodycam_3_anim_hud", ogf = "zbc_bodycam_3.ogf", hud_ogf = "zbc_bodycam_3_hud.ogf", hand = "zbc_bodycam_3", omf = "zbc_bodycam_3_hud_animation.omf", gx = "3", gy = "0", w = "0.30", cost = "12000", tier = "3" },
 		{ sec = "zbc_bodycam_item", hud = "zbc_bodycam_anim_hud",   ogf = "zbc_bodycam.ogf",   hud_ogf = "zbc_bodycam_hud.ogf",   hand = "zbc_bodycam", omf = "zbc_bodycam_hud_animation.omf",  gx = "0", gy = "0", w = "0.32", cost = "16000", tier = "4" },
-		{ sec = "zbc_bodycam_5",    hud = "zbc_bodycam_5_anim_hud", ogf = "zbc_bodycam_5.ogf", hud_ogf = "zbc_bodycam_5_hud.ogf", hand = "zbc_bodycam_5", omf = "zbc_bodycam_5_hud_animation.omf", gx = "8", gy = "0", w = "0.33", cost = "24000", tier = "5" },
+		{ sec = "zbc_bodycam_5",    hud = "zbc_bodycam_5_anim_hud", ogf = "zbc_bodycam_5.ogf", hud_ogf = "zbc_bodycam_5_hud.ogf", hand = "zbc_bodycam_5", omf = "zbc_bodycam_5_hud_animation.omf", gx = "4", gy = "0", w = "0.33", cost = "24000", tier = "5" },
 	}
 	for _, e in ipairs(expected_ltx) do
 		local s = ltx[e.sec]
@@ -706,7 +706,7 @@ do
 		if s then
 			check(s.visual == "dynamics\\devices\\zbc_bodycam\\" .. e.ogf, e.sec .. " visual")
 			check(s.inv_grid_x == e.gx and s.inv_grid_y == e.gy, e.sec .. " inv_grid_x,y")
-			check(s.inv_grid_width == "2" and s.inv_grid_height == "2", e.sec .. " 2x2 grid size")
+			check(s.inv_grid_width == "1" and s.inv_grid_height == "1", e.sec .. " 1x1 grid size")
 			check(s.inv_weight == e.w, e.sec .. " inv_weight")
 			check(s.cost == e.cost, e.sec .. " cost")
 			check(s.tier == e.tier, e.sec .. " tier")
@@ -754,7 +754,10 @@ do
 		end
 	end
 
-	check(read_text("tools/bodycam_item/icon_ab4.png") ~= nil, "Body 4 icon backup tools/bodycam_item/icon_ab4.png exists")
+	for _, cam in ipairs({ "ab1", "ab2", "ab3", "ab4", "ab5" }) do
+		local png = "tools/bodycam_item/icons/icon_" .. cam .. ".png"
+		check(read_text(png) ~= nil, "icon source render " .. png .. " exists")
+	end
 
 	local skip_assets = (arg and arg[1] == "--logic-only") or os.getenv("ZBC_SKIP_ASSET_CHECK") == "1"
 	if not skip_assets then
@@ -804,7 +807,7 @@ do
 				return b1 + b2 * 256 + b3 * 65536 + b4 * 16777216
 			end
 			local h, w = u32le(dds, 13), u32le(dds, 17)
-			check(w == 512 and h == 128, ("ui_icon_zbc_bodycam.dds is 512x128 5-camera atlas, got %dx%d"):format(w, h))
+			check(w == 256 and h == 64, ("ui_icon_zbc_bodycam.dds is the 256x64 1x1 5-camera atlas, got %dx%d"):format(w, h))
 		end
 	end
 end

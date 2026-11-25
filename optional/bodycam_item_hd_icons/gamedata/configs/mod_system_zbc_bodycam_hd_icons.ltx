@@ -1,0 +1,47 @@
+; Zone Bodycam - HD inventory icons for the five Axon Body cameras (optional FOMOD component, needs the bodycam
+; item component and HD Inventory Icons Framework, which GAMMA has). DLTX patch for the sections in
+; items\items\items_zbc_bodycam.ltx (needs modded exes). The icon is the 100x100 (2x2 cell) art in
+; textures\ui\ui_icon_zbc_bodycam_hd.dds (512x128, built by tools\bodycam_item\make_item_textures.py --atlas);
+; inv_grid_scale = 2 makes the framework draw it in a single 1x1 slot. Without the framework the engine ignores
+; inv_grid_scale and the cameras take 2x2 cells. Every key is set on every section: the children carry their
+; own inv_grid_x and must not depend on what they inherit from [zbc_bodycam_item].
+
+![zbc_bodycam_item]
+icons_texture   = ui\ui_icon_zbc_bodycam_hd
+inv_grid_width  = 2
+inv_grid_height = 2
+inv_grid_x      = 0
+inv_grid_y      = 0
+inv_grid_scale  = 2
+
+![zbc_bodycam_1]
+icons_texture   = ui\ui_icon_zbc_bodycam_hd
+inv_grid_width  = 2
+inv_grid_height = 2
+inv_grid_x      = 2
+inv_grid_y      = 0
+inv_grid_scale  = 2
+
+![zbc_bodycam_2]
+icons_texture   = ui\ui_icon_zbc_bodycam_hd
+inv_grid_width  = 2
+inv_grid_height = 2
+inv_grid_x      = 4
+inv_grid_y      = 0
+inv_grid_scale  = 2
+
+![zbc_bodycam_3]
+icons_texture   = ui\ui_icon_zbc_bodycam_hd
+inv_grid_width  = 2
+inv_grid_height = 2
+inv_grid_x      = 6
+inv_grid_y      = 0
+inv_grid_scale  = 2
+
+![zbc_bodycam_5]
+icons_texture   = ui\ui_icon_zbc_bodycam_hd
+inv_grid_width  = 2
+inv_grid_height = 2
+inv_grid_x      = 8
+inv_grid_y      = 0
+inv_grid_scale  = 2

@@ -10,7 +10,7 @@
 				<group name="Optional components" type="SelectAny">
 					<plugins order="Explicit">
 						<plugin name="Bodycam item (battery powered)">
-							<description>Adds battery-powered Axon Body cameras in five generations: Body 1 is the worst, Body 5 the best (picture quality and features such as GPS, night mode and identification). Body 1 is sold by traders for 5,000 and given on a new game; Body 2 to 5 are crafted, each from the one before, behind the electronics recipe books. The bodycam effect only runs while you carry a charged camera anywhere in your inventory; it drains in real time and takes standard batteries (drag a battery onto it). Battery life and camera generations are set in MCM (Zone Bodycam: Item). The REC timer keeps counting while the camera is off. Leave unchecked to keep the bodycam always on.</description>
+							<description>Adds battery-powered Axon Body cameras in five generations: Body 1 is the worst, Body 5 the best (picture quality and features such as GPS, night mode and identification). Body 1 is sold by traders for 5,000 and given on a new game; Body 2 to 5 are crafted, each from the one before, behind the electronics recipe books. The bodycam effect only runs while you carry a charged camera anywhere in your inventory; it drains in real time and takes standard batteries (drag a battery onto it). Battery life and camera generations are set in MCM (Zone Bodycam: Item). The REC timer keeps counting while the camera is off. On by default; untick to keep the bodycam always on.</description>
 							<files>
 								<folder source="optional\bodycam_item\gamedata" destination="gamedata" priority="1" />
 							</files>
@@ -18,7 +18,7 @@
 								<flag name="zbc_bodycam_item">On</flag>
 							</conditionFlags>
 							<typeDescriptor>
-								<type name="Optional" />
+								<type name="Recommended" />
 							</typeDescriptor>
 						</plugin>
 					</plugins>
@@ -30,18 +30,18 @@
 				<flagDependency flag="zbc_bodycam_item" value="On" />
 			</visible>
 			<optionalFileGroups order="Explicit">
-				<group name="Inventory icon size" type="SelectExactlyOne">
+				<group name="Inventory icons" type="SelectExactlyOne">
 					<plugins order="Explicit">
-						<plugin name="Standard 2x2 icons">
-							<description>The Axon Body cameras take 2x2 cells in the inventory (default).</description>
+						<plugin name="Standard icons (1x1)">
+							<description>The Axon Body cameras take a single 1x1 cell in the inventory, with standard-resolution icons. Works everywhere (default).</description>
 							<typeDescriptor>
 								<type name="Recommended" />
 							</typeDescriptor>
 						</plugin>
-						<plugin name="Small 1x1 icons">
-							<description>The Axon Body cameras take a single 1x1 cell in the inventory, with smaller icons of the same cameras. Needs modded exes (DLTX; GAMMA has them).</description>
+						<plugin name="HD icons (HD Inventory Icons Framework)">
+							<description>Sharper icons at twice the resolution, still in a single 1x1 cell. Needs HD Inventory Icons Framework (part of GAMMA) and modded exes (DLTX). Without the framework the cameras take 2x2 cells instead.</description>
 							<files>
-								<folder source="optional\bodycam_item_icons_1x1\gamedata" destination="gamedata" priority="2" />
+								<folder source="optional\bodycam_item_hd_icons\gamedata" destination="gamedata" priority="2" />
 							</files>
 							<typeDescriptor>
 								<type name="Optional" />

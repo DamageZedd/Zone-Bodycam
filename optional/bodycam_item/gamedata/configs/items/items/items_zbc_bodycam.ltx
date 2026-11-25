@@ -4,6 +4,8 @@
 ; (mod_devices_zbc_bodycam.ltx). Axon Body 4 keeps [zbc_bodycam_item] for save compatibility.
 ; Generations 1 (worst) .. 5 (best), scripts\zbc_tiers.script. Only Body 1 is sold (cost 5000, also given on
 ; a new game); Body 2-5 are crafted from the generation before (items\settings\mod_craft_zbc_bodycam.ltx).
+; Icons: 1x1, one 50x50 cell each in textures\ui\ui_icon_zbc_bodycam.dds (256x64, inv_grid_x 0..4). The FOMOD
+; "HD icons" option (optional\bodycam_item_hd_icons) swaps in 100x100 icons for HD Inventory Icons Framework.
 
 [zbc_bodycam_item]:identity_immunities
 GroupControlSection  = spawn_group
@@ -18,8 +20,8 @@ inv_name_short       = st_zbc_bodycam_item_name
 description          = st_zbc_bodycam_item_descr
 inv_weight           = 0.32
 icons_texture        = ui\ui_icon_zbc_bodycam
-inv_grid_width       = 2
-inv_grid_height      = 2
+inv_grid_width       = 1
+inv_grid_height      = 1
 inv_grid_x           = 0
 inv_grid_y           = 0
 cost                 = 16000
@@ -35,7 +37,7 @@ inv_name             = st_zbc_bodycam_1_name
 inv_name_short       = st_zbc_bodycam_1_name
 description          = st_zbc_bodycam_1_descr
 inv_weight           = 0.20
-inv_grid_x           = 2
+inv_grid_x           = 1
 inv_grid_y           = 0
 cost                 = 5000
 tier                 = 1
@@ -47,7 +49,7 @@ inv_name             = st_zbc_bodycam_2_name
 inv_name_short       = st_zbc_bodycam_2_name
 description          = st_zbc_bodycam_2_descr
 inv_weight           = 0.24
-inv_grid_x           = 4
+inv_grid_x           = 2
 inv_grid_y           = 0
 cost                 = 8000
 tier                 = 2
@@ -59,7 +61,7 @@ inv_name             = st_zbc_bodycam_3_name
 inv_name_short       = st_zbc_bodycam_3_name
 description          = st_zbc_bodycam_3_descr
 inv_weight           = 0.30
-inv_grid_x           = 6
+inv_grid_x           = 3
 inv_grid_y           = 0
 cost                 = 12000
 tier                 = 3
@@ -71,7 +73,7 @@ inv_name             = st_zbc_bodycam_5_name
 inv_name_short       = st_zbc_bodycam_5_name
 description          = st_zbc_bodycam_5_descr
 inv_weight           = 0.33
-inv_grid_x           = 8
+inv_grid_x           = 4
 inv_grid_y           = 0
 cost                 = 24000
 tier                 = 5

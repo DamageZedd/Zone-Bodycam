@@ -1,35 +1,41 @@
 r"""Zone Bodycam - build the bodycam item's game textures from the Blender output and icon render.
 
     py -I make_item_textures.py <bake dir> <component gamedata dir>
-    py -I make_item_textures.py --atlas [<staging dir>] [<component gamedata dir>]
-    py -I make_item_textures.py --atlas-1x1 [--src <2x2 atlas dds>] [--out <1x1 atlas dds>]
+    py -I make_item_textures.py --atlas [--ab1..--ab5 <icon png>] [--out <HD atlas dds>]
+    py -I make_item_textures.py --atlas-1x1 [--src <HD atlas dds>] [--out <1x1 atlas dds>]
 
 <bake dir> is OUT from bake_export.py (PHASE "bake"): swatches.json, one <mat>.png per baked material and
 icon.png. Writes, one texture per model material (no shared atlas):
   textures\item\item_zbc_bodycam_<mat>.dds  flat materials: an 8x8 swatch of the exact colour; baked
                                              materials: their own colour bake. Uncompressed BGRA with a
                                              full mip chain (DXT1 tints near-black grey green)
-  textures\ui\ui_icon_zbc_bodycam.dds       inventory icon: 2x2 cells (100x100 px at 50 px per cell) in
-                                             the top-left of a 128x128 uncompressed RGBA texture, or
-                                             512x128 RGBA 5-camera atlas in --atlas mode:
-                                               (0,0) Body 4 | (100,0) Gen 1 | (200,0) Body 2
-                                               (300,0) Body 3 | (400,0) Body 5 Pro
+Icons (source renders in icons\icon_ab<N>.png; refresh one by copying a new icon.png over it):
+  --atlas      textures\ui\ui_icon_zbc_bodycam_hd.dds (optional/bodycam_item_hd_icons, FOMOD "HD icons"):
+               512x128 RGBA, one 100x100 cell per camera = 2x2 cells at inv_grid_scale 2, i.e. one 1x1 slot
+               in HD Inventory Icons Framework:
+                 (0,0) Body 4 | (100,0) Gen 1 | (200,0) Body 2 | (300,0) Body 3 | (400,0) Body 5 Pro
+  --atlas-1x1  textures\ui\ui_icon_zbc_bodycam.dds (optional/bodycam_item, the default 1x1 icons): cut from
+               the HD atlas, 256x64, one 50x50 cell per camera
 """
 import argparse, glob, json, os, struct, sys
 from PIL import Image, ImageFilter
 
 SWATCH = 8               # flat-material texture size
 PREFIX = "item_zbc_bodycam_"
-ICON_CELLS = (2, 2)      # inv_grid_width / inv_grid_height in items_zbc_bodycam.ltx
+ICON_CELLS = (2, 2)      # HD icon: inv_grid_width / inv_grid_height in mod_system_zbc_bodycam_hd_icons.ltx
 CELL_PX = 50             # vanilla inventory grid cell in texture pixels
-ICON_TEX = 128
 ATLAS_TEX = (512, 128)   # 5 cameras x 100 px = 500x100 inside 512x128 power-of-two DDS
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
 DEFAULT_GAMEDATA = os.path.join(REPO_ROOT, "optional", "bodycam_item", "gamedata")
-DEFAULT_BACKUP_AB4 = os.path.join(SCRIPT_DIR, "icon_ab4.png")
-DEFAULT_STAGING = r"C:\Users\hocke\.gemini\antigravity\brain\3c7d2180-ae6e-44e7-95c7-b88e6410200d\scratch"
+DEFAULT_HD_GAMEDATA = os.path.join(REPO_ROOT, "optional", "bodycam_item_hd_icons", "gamedata")
+HD_ICON_DDS = "ui_icon_zbc_bodycam_hd.dds"
+ICON_1X1_DDS = "ui_icon_zbc_bodycam.dds"
+# Icon renders (800x800 studio renders cropped to the camera): Body 4 from bake_export.py, the others from
+# export_variant.py. Source art for both atlases.
+ICON_SRC_DIR = os.path.join(SCRIPT_DIR, "icons")
+HD_MARGIN = 4            # px left free on each side of a 100x100 HD cell
 
 ATLAS_SLOTS = (
     ("ab4", 0),
@@ -39,13 +45,12 @@ ATLAS_SLOTS = (
     ("ab5", 400),
 )
 
-# --atlas-1x1: optional 1x1 inventory icons (optional/bodycam_item_icons_1x1, FOMOD "Small 1x1 icons").
+# --atlas-1x1: the default 1x1 inventory icons (optional/bodycam_item, items_zbc_bodycam.ltx inv_grid_x 0..4).
 # Same camera order as ATLAS_SLOTS, one 50x50 cell each, in a 256x64 power-of-two texture:
 #   (0,0) Body 4 | (50,0) Gen 1 | (100,0) Body 2 | (150,0) Body 3 | (200,0) Body 5 Pro
 ATLAS_1X1_TEX = (256, 64)
 ATLAS_1X1_X = {"ab4": 0, "ab1": 50, "ab2": 100, "ab3": 150, "ab5": 200}
 ATLAS_1X1_MARGIN = 2
-DEFAULT_1X1_GAMEDATA = os.path.join(REPO_ROOT, "optional", "bodycam_item_icons_1x1", "gamedata")
 
 DDSD_CAPS, DDSD_HEIGHT, DDSD_WIDTH, DDSD_PITCH, DDSD_PIXELFORMAT, DDSD_MIPMAPCOUNT = 0x1, 0x2, 0x4, 0x8, 0x1000, 0x20000
 DDSCAPS_COMPLEX, DDSCAPS_TEXTURE, DDSCAPS_MIPMAP = 0x8, 0x1000, 0x400000
@@ -92,120 +97,80 @@ def model_textures(bake_dir, item_dir):
     return written
 
 
-def _fit_cell_icon(img):
+def _alpha_bbox(img, threshold=8):
+    return img.getchannel("A").point(lambda a: 255 if a > threshold else 0).getbbox()
+
+
+def fit_icon(img, cell, margin, sharpen=False):
+    """One camera in a cell x cell RGBA square: cropped to its visible pixels, fitted (aspect kept) into the
+    cell less `margin` on each side, optionally lightly sharpened (alpha untouched) and centred."""
     img = img.convert("RGBA")
-    w, h = ICON_CELLS[0] * CELL_PX, ICON_CELLS[1] * CELL_PX
-    if img.size != (w, h):
-        img = img.resize((w, h), Image.LANCZOS)
-    return img
+    bbox = _alpha_bbox(img)
+    if not bbox:
+        raise ValueError("icon has no visible pixels")
+    img = img.crop(bbox)
+    s = (cell - 2 * margin) / max(img.size)
+    img = img.resize((max(1, round(img.width * s)), max(1, round(img.height * s))), Image.LANCZOS)
+    if sharpen:
+        alpha = img.getchannel("A")
+        img = img.filter(ImageFilter.UnsharpMask(1, 50, 2))
+        img.putalpha(alpha)
+    out = Image.new("RGBA", (cell, cell), (0, 0, 0, 0))
+    out.paste(img, ((cell - img.width) // 2, (cell - img.height) // 2))
+    return out
 
 
-def icon_texture(icon_png, out_dds):
-    icon = _fit_cell_icon(Image.open(icon_png))
-    tex = Image.new("RGBA", (ICON_TEX, ICON_TEX), (0, 0, 0, 0))
-    tex.paste(icon, (0, 0))
-    tex.save(out_dds, format="DDS")
-
-
-def load_or_backup_ab4_icon(out_dds, backup_png=DEFAULT_BACKUP_AB4, explicit_png=None):
-    w, h = ICON_CELLS[0] * CELL_PX, ICON_CELLS[1] * CELL_PX
-    if os.path.exists(out_dds) and not os.path.exists(backup_png):
-        crop = Image.open(out_dds).convert("RGBA").crop((0, 0, w, h))
-        os.makedirs(os.path.dirname(backup_png), exist_ok=True)
-        crop.save(backup_png)
-    if explicit_png:
-        return _fit_cell_icon(Image.open(explicit_png))
-    if os.path.exists(backup_png):
-        return _fit_cell_icon(Image.open(backup_png))
-    if os.path.exists(out_dds):
-        return Image.open(out_dds).convert("RGBA").crop((0, 0, w, h))
-    raise FileNotFoundError("Body 4 icon source not found (checked %s and %s)" % (backup_png, out_dds))
-
-
-def atlas_texture(icon_paths, out_dds, backup_png=DEFAULT_BACKUP_AB4):
-    ab4 = load_or_backup_ab4_icon(out_dds, backup_png=backup_png, explicit_png=icon_paths.get("ab4"))
+def atlas_texture(icon_paths, out_dds, margin=HD_MARGIN):
+    """HD atlas: each camera's render fitted into its own 100x100 cell (ATLAS_SLOTS)."""
     tex = Image.new("RGBA", ATLAS_TEX, (0, 0, 0, 0))
+    cell = ICON_CELLS[0] * CELL_PX
     for key, x0 in ATLAS_SLOTS:
-        if key == "ab4":
-            cell = ab4
-        else:
-            src = icon_paths.get(key)
-            if not src or not os.path.exists(src):
-                raise FileNotFoundError("Missing %s icon render: %s" % (key, src))
-            cell = _fit_cell_icon(Image.open(src))
-        tex.paste(cell, (x0, 0))
+        src = icon_paths.get(key)
+        if not src or not os.path.exists(src):
+            raise FileNotFoundError("Missing %s icon render: %s" % (key, src))
+        tex.paste(fit_icon(Image.open(src), cell, margin), (x0, 0))
     os.makedirs(os.path.dirname(out_dds), exist_ok=True)
     tex.save(out_dds, format="DDS")
     return tex.size
 
 
-def _alpha_bbox(img, threshold=8):
-    return img.getchannel("A").point(lambda a: 255 if a > threshold else 0).getbbox()
-
-
 def atlas_1x1_texture(src_atlas_dds, out_dds, margin=ATLAS_1X1_MARGIN):
-    """1x1 icons for the optional small-icon component, cut from the shipped 2x2 atlas so they show exactly
-    the approved art: each 100x100 slot is cropped to its visible pixels, fitted (aspect kept) into a
-    50x50 cell less `margin` on each side, lightly sharpened (alpha untouched) and centred."""
+    """The default 1x1 icons, cut from the HD atlas so they show exactly the same art: each 100x100 slot
+    fitted into a 50x50 cell less `margin` on each side, lightly sharpened."""
     src = Image.open(src_atlas_dds).convert("RGBA")
-    box = CELL_PX - 2 * margin
     tex = Image.new("RGBA", ATLAS_1X1_TEX, (0, 0, 0, 0))
     for key, x0 in ATLAS_SLOTS:
         slot = src.crop((x0, 0, x0 + ICON_CELLS[0] * CELL_PX, ICON_CELLS[1] * CELL_PX))
-        bbox = _alpha_bbox(slot)
-        if not bbox:
+        if not _alpha_bbox(slot):
             raise ValueError("%s slot at x=%d of %s is empty" % (key, x0, src_atlas_dds))
-        img = slot.crop(bbox)
-        s = box / max(img.size)
-        img = img.resize((max(1, round(img.width * s)), max(1, round(img.height * s))), Image.LANCZOS)
-        alpha = img.getchannel("A")
-        img = img.filter(ImageFilter.UnsharpMask(1, 50, 2))
-        img.putalpha(alpha)
-        cx = ATLAS_1X1_X[key]
-        tex.paste(img, (cx + (CELL_PX - img.width) // 2, (CELL_PX - img.height) // 2))
+        tex.paste(fit_icon(slot, CELL_PX, margin, sharpen=True), (ATLAS_1X1_X[key], 0))
     os.makedirs(os.path.dirname(out_dds), exist_ok=True)
     tex.save(out_dds, format="DDS")
     return tex.size
 
 
 def run_atlas_1x1_cli(argv):
-    p = argparse.ArgumentParser(description="Build the 256x64 1x1 icon atlas from the shipped 2x2 atlas.")
+    p = argparse.ArgumentParser(description="Build the 256x64 1x1 icon atlas from the HD 2x2-cell atlas.")
     p.add_argument("--atlas-1x1", action="store_true")
-    p.add_argument("--src", default=os.path.join(DEFAULT_GAMEDATA, "textures", "ui", "ui_icon_zbc_bodycam.dds"))
-    p.add_argument("--out", default=os.path.join(DEFAULT_1X1_GAMEDATA, "textures", "ui", "ui_icon_zbc_bodycam_1x1.dds"))
+    p.add_argument("--src", default=os.path.join(DEFAULT_HD_GAMEDATA, "textures", "ui", HD_ICON_DDS))
+    p.add_argument("--out", default=os.path.join(DEFAULT_GAMEDATA, "textures", "ui", ICON_1X1_DDS))
     args = p.parse_args(argv)
     aw, ah = atlas_1x1_texture(args.src, args.out)
     print("1x1 atlas: %dx%d RGBA DDS -> %s" % (aw, ah, args.out))
 
 
 def run_atlas_cli(argv):
-    p = argparse.ArgumentParser(description="Build 512x128 5-camera UI icon DDS atlas.")
-    p.add_argument("--atlas", action="store_true", help="Assemble 512x128 5-camera icon atlas")
-    p.add_argument("positional", nargs="*", help="[staging_dir] [gamedata_dir]")
-    p.add_argument("--staging", default=None, help="Root staging dir containing out_ab{1,2,3,5}/icon.png")
-    p.add_argument("--gamedata", default=None, help="Component gamedata dir")
-    p.add_argument("--out", default=None, help="Explicit output DDS path")
-    p.add_argument("--backup-ab4", default=DEFAULT_BACKUP_AB4, help="Path to 100x100 Body 4 PNG backup")
-    p.add_argument("--ab1", default=None, help="Explicit Gen 1 icon PNG")
-    p.add_argument("--ab2", default=None, help="Explicit Body 2 icon PNG")
-    p.add_argument("--ab3", default=None, help="Explicit Body 3 icon PNG")
-    p.add_argument("--ab4", default=None, help="Explicit Body 4 icon PNG")
-    p.add_argument("--ab5", default=None, help="Explicit Body 5 Pro icon PNG")
+    p = argparse.ArgumentParser(description="Build the 512x128 5-camera HD icon atlas.")
+    p.add_argument("--atlas", action="store_true", help="Assemble the 512x128 5-camera HD icon atlas")
+    p.add_argument("--out", default=os.path.join(DEFAULT_HD_GAMEDATA, "textures", "ui", HD_ICON_DDS),
+                   help="Output DDS path")
+    for key, label in (("ab1", "Gen 1"), ("ab2", "Body 2"), ("ab3", "Body 3"), ("ab4", "Body 4"), ("ab5", "Body 5 Pro")):
+        p.add_argument("--" + key, default=os.path.join(ICON_SRC_DIR, "icon_%s.png" % key),
+                       help="%s icon render (default: icons\\icon_%s.png)" % (label, key))
     args = p.parse_args(argv)
-
-    staging = args.staging or (args.positional[0] if len(args.positional) >= 1 else DEFAULT_STAGING)
-    gamedata = args.gamedata or (args.positional[1] if len(args.positional) >= 2 else DEFAULT_GAMEDATA)
-    out_dds = args.out or os.path.join(gamedata, "textures", "ui", "ui_icon_zbc_bodycam.dds")
-
-    icon_paths = {
-        "ab1": args.ab1 or os.path.join(staging, "out_ab1", "icon.png"),
-        "ab2": args.ab2 or os.path.join(staging, "out_ab2", "icon.png"),
-        "ab3": args.ab3 or os.path.join(staging, "out_ab3", "icon.png"),
-        "ab4": args.ab4,
-        "ab5": args.ab5 or os.path.join(staging, "out_ab5", "icon.png"),
-    }
-    aw, ah = atlas_texture(icon_paths, out_dds, backup_png=args.backup_ab4)
-    print("atlas: %dx%d RGBA DDS -> %s" % (aw, ah, out_dds))
+    icon_paths = {key: getattr(args, key) for key, _ in ATLAS_SLOTS}
+    aw, ah = atlas_texture(icon_paths, args.out)
+    print("atlas: %dx%d RGBA DDS -> %s" % (aw, ah, args.out))
 
 
 if __name__ == "__main__":
@@ -224,5 +189,5 @@ if __name__ == "__main__":
             os.remove(old)
         mats = model_textures(bake_dir, item_dir)
         print("model textures: %d (%s)" % (len(mats), ", ".join(mats)))
-        icon_texture(os.path.join(bake_dir, "icon.png"), os.path.join(ui_dir, "ui_icon_zbc_bodycam.dds"))
-        print("icon: %dx%d px in a %dx%d texture" % (ICON_CELLS[0] * CELL_PX, ICON_CELLS[1] * CELL_PX, ICON_TEX, ICON_TEX))
+        print("icon: not written here; copy %s over icons\\icon_<cam>.png, then run --atlas and --atlas-1x1"
+              % os.path.join(bake_dir, "icon.png"))
