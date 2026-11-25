@@ -63,6 +63,17 @@ function drain_step(charge, dt_ms, hours, factor)
 	return c
 end
 
+-- The engine keeps an item's condition as a float32. One frame of drain is often smaller than half a float
+-- step near full charge (long battery life, a low difficulty factor, high fps), so subtracting it from the
+-- stored condition every frame rounds straight back and the camera never drains. The exact charge is kept
+-- here as a Lua double instead and only rounded when it is written. base_charge picks what to drain from:
+-- the exact charge while the item still holds what we last wrote, else the item's own (a battery put in,
+-- a trade, another script changed it).
+function base_charge(exact, written, current)
+	if exact and written and current == written then return exact end
+	return current
+end
+
 -- true while the charge is above the critical level (vanilla: devices stop below it)
 function is_charged(charge, critical)
 	charge = tonumber(charge)
@@ -127,6 +138,9 @@ local warned_dead = false
 local warned_low = 0         -- low-battery warnings given for this battery (low_warning)
 local last_charge = nil      -- charge of cam_id at the previous look, to spot a new battery
 local last_charge_id = nil
+local exact_id = nil         -- camera whose exact (double) charge is kept, see base_charge
+local exact_charge = nil
+local exact_written = nil    -- the condition the item held right after our last write
 
 local function crit_of(sec)
 	return (sec and crit_by_sec[sec]) or crit_charge
@@ -299,9 +313,13 @@ local function actor_on_update()
 	if obj and has_power() and last then
 		local def = CAMERAS[obj:section()]
 		local mult = def and def.drain_mult or 1
-		local c = drain_step(obj:condition(), now - last, hours, eco_mult * mult)
+		local id = obj:id()
+		local base = obj:condition()
+		if exact_id == id then base = base_charge(exact_charge, exact_written, base) end
+		local c = drain_step(base, now - last, hours, eco_mult * mult)
 		obj:set_condition(c)
-		last_charge = c                  -- our own drain is never mistaken for a new battery
+		exact_id, exact_charge, exact_written = id, c, obj:condition()
+		last_charge = exact_written      -- our own drain is never mistaken for a new battery
 	end
 	if zbc_item_anim then zbc_item_anim.update(now, obj ~= nil) end
 end
@@ -313,6 +331,7 @@ local function actor_on_first_update()
 	cam_charged = false
 	warned_low = 0
 	last_charge, last_charge_id = nil, nil
+	exact_id, exact_charge, exact_written = nil, nil, nil
 	if zbc_item_anim then zbc_item_anim.reset() end
 	refresh(time_global(), true)
 	warned_dead = not cam_charged    -- no "battery dead" message for a camera that was already dead

@@ -4,6 +4,10 @@
 
 ### Added
 - **HD inventory icons** (FOMOD step "Bodycam item icons", option "HD icons"): for HD Inventory Icons Framework (GAMMA), 100x100 icons of the five Axon Body cameras from their original 800 px renders, drawn in a single 1x1 slot (`inv_grid_scale = 2`, DLTX patch in `optional/bodycam_item_hd_icons`). Without the framework the cameras take 2x2 cells. Test: `tools/tests/zbc_item_icons_test.lua`.
+- **Charge bar on the bodycam items' icons**: the five Axon Body cameras show the small blue battery bar like the torch, detectors and PDA (`use_condition` + `condition_bar = power_progess_bar` in `items_zbc_bodycam.ltx`; works with the 1x1 and HD icons). Test: `tools/tests/zbc_item_battery_bar_test.lua`.
+
+### Fixed
+- **The bodycam items could stop draining** (`zbc_item.script`): the engine stores the charge as a float32, and with a long battery life, an easy difficulty and a high frame rate one frame of drain was smaller than half a float step near full charge, so it rounded back and the camera never used its battery. The exact charge is now kept in the script and only rounded when written; a battery put in is still picked up. Test: `tools/tests/zbc_item_battery_bar_test.lua`.
 
 ### Changed
 - **The bodycam items take one inventory cell** instead of 2x2, with 50x50 icons cut from the same art (`items_zbc_bodycam.ltx`, `make_item_textures.py --atlas-1x1`).
