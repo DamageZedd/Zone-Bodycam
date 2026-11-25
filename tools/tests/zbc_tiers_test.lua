@@ -61,20 +61,17 @@ check(T.valid_tier(1) == 1 and T.valid_tier(5) == 5 and T.valid_tier("3") == 3, 
 check(T.valid_tier(0) == nil and T.valid_tier(6) == nil and T.valid_tier(nil) == nil and T.valid_tier(0 / 0) == nil,
 	"out of range / nil / NaN: no tier")
 
--- no tier (the core mod alone) changes nothing; Axon Body 4 changes only the watermark (date, time, serial)
-local WATERMARK = { gps_line = true, show_name = true }
+-- no tier (the core mod alone) and Axon Body 4 (the reference) change nothing
 for _, tier in ipairs({ false, 4 }) do
 	local out = T.apply(defaults, tier or nil, CLAMPS)
 	local same = true
 	for k, v in pairs(defaults) do
-		local want = v
-		if tier and WATERMARK[k] then want = false end
-		if out[k] ~= want then same = false; print("  differs: " .. k) end
+		if out[k] ~= v then same = false; print("  differs: " .. k) end
 	end
 	for k in pairs(out) do
 		if defaults[k] == nil and not DERIVED[k] then same = false; print("  extra key: " .. k) end
 	end
-	check(same, "tier " .. tostring(tier) .. ": the settings are the MCM's" .. (tier and " but the watermark" or ""))
+	check(same, "tier " .. tostring(tier) .. ": the settings are the MCM's, unchanged")
 	check(out.allies_decode_mult == 1 and out.allies_pip == true and out.dark_grain == 0 and out.zoom_mult == 1,
 		"tier " .. tostring(tier) .. ": neutral decode speed, scope tags on, no dark grain, Body 4 field of view")
 end
@@ -85,7 +82,7 @@ do
 	user.night_mode = 0   -- IR set to auto in the MCM
 	for t = 1, 5 do
 		local c = T.apply(user, t, CLAMPS)
-		check(c.gps_line == false and c.show_name == false, ("Body %d: real watermark, no GPS line or name"):format(t))
+		check(c.show_name == (t >= 2) and c.gps_line == (t >= 3), ("Body %d: name from Body 2, GPS line from Body 3 (onboard GPS)"):format(t))
 		check(c.night_mode == 0, ("Body %d: IR is the MCM's choice (no Axon Body has IR)"):format(t))
 		check(c.auto_exposure == true and c.review_key == user.review_key and c.face_blur == user.face_blur,
 			("Body %d: auto-exposure, footage review and face blur on every camera"):format(t))
@@ -184,7 +181,7 @@ end
 
 -- has_feature
 check(T.has_feature(2, "allies") == false and T.has_feature(3, "allies") == true, "live-map markers from Body 3")
-check(T.has_feature(5, "gps_line") == false and T.has_feature(nil, "gps_line") == true, "GPS line: no real camera, core mod keeps it")
+check(T.has_feature(2, "gps_line") == false and T.has_feature(3, "gps_line") == true, "GPS line from Body 3")
 check(T.has_feature(1, "night_mode") == true and T.has_feature(1, "face_blur") == true, "IR and face blur: MCM options on every camera")
 
 -- low-light grain

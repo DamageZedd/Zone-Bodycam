@@ -32,7 +32,7 @@ Full history in [CHANGELOG.md](CHANGELOG.md).
 - **Bodycam lens.** Fisheye view with the camera housing around the edges, a small-sensor look, grain and a slight wobble when you turn fast or get hit. The lens zooms in by itself, so stronger fisheye never leaves black edges. Visible NPC faces are automatically pixelated into a coarse mosaic before the lens warp.
 - **Chest-mounted feel.** The lens housing and vignette lag behind your turns, bob with your steps, and jolt when you land, shoot or get hit. The image itself only sways slightly. Your view and aim stay where the game puts them; this mod doesn't detach the camera from your weapon.
 - **Bodycam overlay.**
-  - **Top right:** in-game date and time, device name and serial, your character's name, optional GPS coordinates (both off with a bodycam item: a real Axon watermark shows date, time and serial only), and the logo (in English and Russian).
+  - **Top right:** in-game date and time, device name and serial, your character's name, optional GPS coordinates, and the logo (in English and Russian).
   - **Top left:** a flashing red dot and `REC 00:54:17` (plus `EVENT` when firing or taking a heavy hit), showing how long you've been recording this playthrough. It counts real time and is kept in your save.
 - **Camera effects.** Interference in emissions, psy storms, psy fields, radiation, near anomalies and on heavy hits; `SIGNAL LOST` feed cutoff on death; an optional low-light infrared mode at night and underground (off by default: no real Axon Body has IR); the game's visor rain drops on the lens (mask or not, wiped with the mask-wipe key) and blood splatter.
 - **Entity markers.** Stalkers (friendly, neutral, companion and enemies) and mutants you can see get a box with their name/species and faction, decoding from scrambled text by distance and scope zoom (dots past a distance).
@@ -100,7 +100,7 @@ The camera you carry decides what the feed can do, matched one to one to the rea
 | Battery (real) | 12 h | 12 h | 12 h | 14 h | +20% |
 | Markers / alerts log | no | no | yes (enemies) | + mutants, scope tags | + fastest identification |
 
-Like the real watermark, the overlay shows date, time and serial only (no GPS line or name). The IR night look is an MCM option on every camera, off by default.
+Overlay: Body 1 shows date and device only, Body 2 adds your name, Body 3 and up add the GPS line (onboard GPS). The IR night look is an MCM option on every camera, off by default.
 
 - **Axon Body 1:** sold by every trader for 5,000 RU, and every new game starts with one. It can also be crafted with a basic toolkit.
 - **Axon Body 2 to 5:** craft only, each from the generation before, behind the same electronics recipe books as GAMMA's night vision goggles.

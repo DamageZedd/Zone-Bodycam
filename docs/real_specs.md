@@ -52,7 +52,8 @@ Multipliers on the MCM values; Body 4's picture is the identity. Zoom is the exc
 | grain, aberration, highlight_blowout x | unpublished, sensor-generation estimate | (i) | (i) | (i) | 1 | (i) |
 | walk_bob, impacts, fx_glitch_strength | no generation publishes stabilization or shielding | 1 | 1 | 1 | 1 | 1 |
 | battery drain_mult (zbc_item) | 14 h / real hours: 12, 12, 12, 14, 16.8 (i) | 1.167 | 1.167 | 1.167 | 1 | 0.833 |
-| GPS line, wearer's name | real watermark: date, time, serial [S1][S13] | off | off | off | off | off |
+| wearer's name line | game feature (the real watermark is date, time, serial [S1][S13]) | off | on | on | on | on |
+| GPS line | onboard GPS from B3 [S4]; B1-B2 tagged GPS through a phone | off | off | on | on | on |
 | IR night look | no Axon Body has IR | MCM | MCM | MCM | MCM | MCM |
 | auto-exposure, footage review, face blur | every generation (face blur = MCM choice; real redaction is in Evidence.com) | on | on | on | on | on |
 | markers, companion dots, alerts log | LTE live map and alerts from B3 [S4][S6] | off | off | on | on | on |
