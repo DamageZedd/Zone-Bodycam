@@ -167,7 +167,9 @@ function edge_lane(radius, housing_on)
 	return housing_on and radius or -radius
 end
 
-local cfg = {}
+local cfg = {}               -- the settings the camera uses: the MCM (user_cfg) with the camera tier applied
+local user_cfg = {}          -- the MCM values, clamped
+local cur_tier = nil         -- tier of the carried camera (zbc_tiers.script), nil: none / no item component
 local fx_event = false       -- EVENT shown after REC (zbc_fx.script), for the HUD-drawn timer
 local fx_event_on = false    -- ... and in the lit part of its blink
 local fx_shake = 0           -- how fast the camera swings 0..1 (zbc_fx.script)
@@ -178,6 +180,13 @@ local function mcm_get(id)
 		if ok and v ~= nil then return v end
 	end
 	return defaults[id]
+end
+
+-- zbc_tiers.script, when it is there and real
+local function tiers()
+	local m = zbc_tiers
+	if type(m) == "table" and type(rawget(m, "apply")) == "function" then return m end
+	return nil
 end
 
 local function load_settings()
@@ -194,7 +203,13 @@ local function load_settings()
 		else
 			v = (type(v) == "string" and v ~= "") and v or def
 		end
-		cfg[k] = v
+		user_cfg[k] = v
+	end
+	local T = tiers()
+	if T then
+		T.apply(user_cfg, cur_tier, CLAMPS, cfg)
+	else
+		for k, v in pairs(user_cfg) do cfg[k] = v end
 	end
 end
 
@@ -454,6 +469,24 @@ local device_source = nil
 function set_device_source(fn)
 	device_source = (type(fn) == "function") and fn or nil
 end
+
+-- Camera tier: the item component registers a function giving the carried camera's generation (1..5),
+-- or nil (no camera, or its generation limits turned off). Without it there is no tier: the MCM as is.
+local tier_source = nil
+
+function set_tier_source(fn)
+	tier_source = (type(fn) == "function") and fn or nil
+end
+
+local function read_tier()
+	if not tier_source then return nil end
+	local ok, v = pcall(tier_source)
+	if not ok then return nil end
+	local T = tiers()
+	return T and T.valid_tier(v) or nil
+end
+
+function active_tier() return cur_tier end
 
 function effective_device_label()
 	local cur = cfg.device_label or defaults.device_label
@@ -1631,6 +1664,7 @@ function actor_on_first_update()
 	if tokens then send("glitch", 0, 0, 0, 0) end
 	rec_on_first_update()
 	clear_send_cache()
+	cur_tier = read_tier()
 	load_settings()
 	motion_reset()
 	was_powered = powered()
@@ -1657,6 +1691,12 @@ local function fx_update()
 	fx_shake = F.shake or 0
 	send("glitch", F.glitch, F.burst, F.death_t, death_age())
 	send("ir",     F.ir, F.exposure or 1, 0, 0)
+	-- the camera tier's low-light noise: more grain in the dark on the old cameras, less on Body 5
+	local T = tiers()
+	if cfg.lens_enabled and cfg.dark_grain and cfg.dark_grain ~= 0 and T then
+		send("extra", min(max(cfg.edge_follow, 0), 3), clamp01(cfg.sharpen),
+			T.grain_in_dark(cfg.grain, cfg.dark_grain, F.dark), cfg.edge_in_image and 1.0 or 0.0)
+	end
 	local b = F.blood or {}
 	local function bt(i) return b[i] and b[i].t or 0 end
 	local function bd(i) return b[i] and b[i].drip or 0 end
@@ -1687,8 +1727,21 @@ function signal_lost(death_t)
 	hud_remove()                                   -- markers, labels and HUD text go with the feed
 end
 
+-- a different camera generation carried: the settings, lens lanes and overlay lines follow it
+local function retier()
+	local t = read_tier()
+	if t == cur_tier then return false end
+	cur_tier = t
+	clear_send_cache()
+	load_settings()
+	sync_lens_settings()
+	if HUD then HUD.osd_dirty = true end
+	return true
+end
+
 function actor_on_update()
 	if not cfg.enabled or in_menu then return end
+	retier()
 	if dead then
 		if db.actor and db.actor:alive() then
 			dead = false
@@ -1801,7 +1854,14 @@ function review_key_now() return cfg.review_key end
 function on_key_press(key)
 	if not (cfg.enabled and not in_menu and db.actor and zbc_review and zbc_review.toggle) then return end
 	local rk = tonumber(cfg.review_key)
-	if not rk or rk <= 0 or key ~= rk then return end
+	if not rk or rk <= 0 or key ~= rk then
+		-- the review key of a camera without playback (Axon Body 1 and 2): say so
+		local urk = tonumber(user_cfg.review_key)
+		if urk and urk > 0 and key == urk and actor_menu and actor_menu.set_msg then
+			actor_menu.set_msg(1, game.translate_string("st_zbc_no_review"), 3)
+		end
+		return
+	end
 	if not (zbc_review.is_open and zbc_review.is_open()) then
 		if Check_UI and Check_UI() then return end
 		if actor_menu and actor_menu.last_mode and actor_menu.last_mode ~= 0 then return end

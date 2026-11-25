@@ -4,31 +4,31 @@
     <text>Axon Body Camera (Gen 1)</text>
   </string>
   <string id="st_zbc_bodycam_1_descr">
-    <text>A first-generation TASER Axon Body chest camera (#73002) with a wide-angle lens, a top-right mechanical power slider and a pre-RapidLock holster mount. Carry it anywhere in your inventory and it records on its own.\n\nRuns on a standard battery (about 75% of an Axon Body 4 runtime, ~3.0 h at default settings): drag a battery onto the camera to swap it. When the charge runs out the camera shuts off, but the recording clock keeps counting.</text>
+    <text>A first-generation TASER Axon Body chest camera (#73002) with a wide-angle lens, a top-right mechanical power slider and a pre-RapidLock holster mount. Carry it anywhere in your inventory and it records on its own.\n\nGeneration 1 of 5, the most basic. Picture: low resolution, heavy grain and compression, colour fringing, strong rolling shutter, blown highlights and a noisy picture in the dark. Overlay: date and device only. No auto-exposure, IR night mode, identification, GPS, event log, face blur or footage review. Sold by traders; also craftable (basic toolkit).\n\nRuns on a standard battery (about 75% of an Axon Body 4 runtime, ~3.0 h at default settings): drag a battery onto the camera to swap it. When the charge runs out the camera shuts off, but the recording clock keeps counting.</text>
   </string>
   <string id="st_zbc_bodycam_2_name">
     <text>Axon Body 2 Camera</text>
   </string>
   <string id="st_zbc_bodycam_2_descr">
-    <text>A rugged second-generation Axon Body 2 chest camera (#74001) with a rubberized bumper shell, a side power switch, a RapidLock rear mount and a yellow Delta event button. Carry it anywhere in your inventory and it records on its own.\n\nRuns on a standard battery (about 88% of an Axon Body 4 runtime, ~3.5 h at default settings): drag a battery onto the camera to swap it. When the charge runs out the camera shuts off, but the recording clock keeps counting.</text>
+    <text>A rugged second-generation Axon Body 2 chest camera (#74001) with a rubberized bumper shell, a side power switch, a RapidLock rear mount and a yellow Delta event button. Carry it anywhere in your inventory and it records on its own.\n\nGeneration 2 of 5. Picture: grainy, soft and compressed, noisy in the dark. Overlay: date, device and name. Auto-exposure; identifies friendly stalkers within 15 m, slowly. No GPS, event log, IR night mode, face blur or footage review. Crafted from an Axon Body 1 (basic toolkit, basic electronics recipes).\n\nRuns on a standard battery (about 88% of an Axon Body 4 runtime, ~3.5 h at default settings): drag a battery onto the camera to swap it. When the charge runs out the camera shuts off, but the recording clock keeps counting.</text>
   </string>
   <string id="st_zbc_bodycam_3_name">
     <text>Axon Body 3 Camera</text>
   </string>
   <string id="st_zbc_bodycam_3_descr">
-    <text>A third-generation Axon Body 3 chest camera with an octagonal armored housing, a top monochrome status LCD, four microphones and a RapidLock mount. Carry it anywhere in your inventory and it records on its own.\n\nRuns on a standard battery (about 95% of an Axon Body 4 runtime, ~3.8 h at default settings): drag a battery onto the camera to swap it. When the charge runs out the camera shuts off, but the recording clock keeps counting.</text>
+    <text>A third-generation Axon Body 3 chest camera with an octagonal armored housing, a top monochrome status LCD, four microphones and a RapidLock mount. Carry it anywhere in your inventory and it records on its own.\n\nGeneration 3 of 5. Picture: cleaner, still some grain and compression. Overlay adds GPS and the event log; IR night mode, auto-exposure and footage review. Identifies friends and enemies within 25 m, companion markers at the screen edge. No face blur, mutant identification or tags through scopes. Crafted from an Axon Body 2 (advanced toolkit, advanced electronics recipes).\n\nRuns on a standard battery (about 95% of an Axon Body 4 runtime, ~3.8 h at default settings): drag a battery onto the camera to swap it. When the charge runs out the camera shuts off, but the recording clock keeps counting.</text>
   </string>
   <string id="st_zbc_bodycam_item_name">
     <text>Axon Body 4 Camera</text>
   </string>
   <string id="st_zbc_bodycam_item_descr">
-    <text>A fourth-generation Axon Body 4 chest camera with a wide-angle lens, top status display, time-stamped overlay and friend-or-foe tag display. Carry it anywhere in your inventory and it records on its own.\n\nRuns on a standard battery (100% baseline runtime, 4.0 h at default settings): drag a battery onto the camera to swap it. When the charge runs out the camera shuts off, but the recording clock keeps counting.</text>
+    <text>A fourth-generation Axon Body 4 chest camera with a wide-angle lens, top status display, time-stamped overlay and friend-or-foe tag display. Carry it anywhere in your inventory and it records on its own.\n\nGeneration 4 of 5, the reference camera. Picture: as set in the MCM. Every feature: GPS and event log, IR night mode, auto-exposure, face blur, identification of stalkers and mutants, tags through scopes and footage review. Crafted from an Axon Body 3 (advanced toolkit, advanced electronics recipes).\n\nRuns on a standard battery (100% baseline runtime, 4.0 h at default settings): drag a battery onto the camera to swap it. When the charge runs out the camera shuts off, but the recording clock keeps counting.</text>
   </string>
   <string id="st_zbc_bodycam_5_name">
     <text>Axon Body 5 Pro Camera</text>
   </string>
   <string id="st_zbc_bodycam_5_descr">
-    <text>A fifth-generation Axon Body 5 Pro chest camera with a recessed sapphire-shielded wide-angle lens, high-visibility top OLED display, dual programmable side buttons and high-efficiency electronics. Carry it anywhere in your inventory and it records on its own.\n\nRuns on a standard battery (+20% extended endurance over Axon Body 4, ~4.8 h at default settings): drag a battery onto the camera to swap it. When the charge runs out the camera shuts off, but the recording clock keeps counting.</text>
+    <text>A fifth-generation Axon Body 5 Pro chest camera with a recessed sapphire-shielded wide-angle lens, high-visibility top OLED display, dual programmable side buttons and high-efficiency electronics. Carry it anywhere in your inventory and it records on its own.\n\nGeneration 5 of 5, the best. Picture: the cleanest and sharpest sensor, little rolling shutter or blowout, the steadiest image and the most resistant to interference. Every feature, with the fastest identification. Crafted from an Axon Body 4 (expert toolkit, expert electronics recipes).\n\nRuns on a standard battery (+20% extended endurance over Axon Body 4, ~4.8 h at default settings): drag a battery onto the camera to swap it. When the charge runs out the camera shuts off, but the recording clock keeps counting.</text>
   </string>
   <string id="st_zbc_bodycam_item_dead">
     <text>Body camera: battery dead</text>
@@ -53,5 +53,14 @@
   </string>
   <string id="st_zbc_bodycam_item_low">
     <text>Body camera: battery low</text>
+  </string>
+  <string id="st_zbc_no_review">
+    <text>Body camera: this model has no footage playback</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_item_tier_limits">
+    <text>Camera generations</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_item_tier_limits_desc">
+    <text>Each Axon Body generation has its own features and picture: Body 1 is the worst (grainy, low resolution, no GPS or identification), Body 5 the best. Your MCM effect settings stay your preference: the camera scales them up or down and turns off what it does not have. Off: every camera works like Axon Body 4 (only battery life differs).</text>
   </string>
 </string_table>

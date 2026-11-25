@@ -694,11 +694,11 @@ do
 
 	local ltx = parse_ltx("optional/bodycam_item/gamedata/configs/items/items/items_zbc_bodycam.ltx")
 	local expected_ltx = {
-		{ sec = "zbc_bodycam_1",    hud = "zbc_bodycam_1_anim_hud", ogf = "zbc_bodycam_1.ogf", hud_ogf = "zbc_bodycam_1_hud.ogf", gx = "2", gy = "0", w = "0.20", cost = "2400", tier = "1" },
-		{ sec = "zbc_bodycam_2",    hud = "zbc_bodycam_2_anim_hud", ogf = "zbc_bodycam_2.ogf", hud_ogf = "zbc_bodycam_2_hud.ogf", gx = "4", gy = "0", w = "0.24", cost = "3300", tier = "1" },
-		{ sec = "zbc_bodycam_3",    hud = "zbc_bodycam_3_anim_hud", ogf = "zbc_bodycam_3.ogf", hud_ogf = "zbc_bodycam_3_hud.ogf", gx = "6", gy = "0", w = "0.30", cost = "4200", tier = "2" },
-		{ sec = "zbc_bodycam_item", hud = "zbc_bodycam_anim_hud",   ogf = "zbc_bodycam.ogf",   hud_ogf = "zbc_bodycam_hud.ogf",   gx = "0", gy = "0", w = "0.32", cost = "5000", tier = "2" },
-		{ sec = "zbc_bodycam_5",    hud = "zbc_bodycam_5_anim_hud", ogf = "zbc_bodycam_5.ogf", hud_ogf = "zbc_bodycam_5_hud.ogf", gx = "8", gy = "0", w = "0.33", cost = "6800", tier = "3" },
+		{ sec = "zbc_bodycam_1",    hud = "zbc_bodycam_1_anim_hud", ogf = "zbc_bodycam_1.ogf", hud_ogf = "zbc_bodycam_1_hud.ogf", gx = "2", gy = "0", w = "0.20", cost = "5000", tier = "1" },
+		{ sec = "zbc_bodycam_2",    hud = "zbc_bodycam_2_anim_hud", ogf = "zbc_bodycam_2.ogf", hud_ogf = "zbc_bodycam_2_hud.ogf", gx = "4", gy = "0", w = "0.24", cost = "8000", tier = "2" },
+		{ sec = "zbc_bodycam_3",    hud = "zbc_bodycam_3_anim_hud", ogf = "zbc_bodycam_3.ogf", hud_ogf = "zbc_bodycam_3_hud.ogf", gx = "6", gy = "0", w = "0.30", cost = "12000", tier = "3" },
+		{ sec = "zbc_bodycam_item", hud = "zbc_bodycam_anim_hud",   ogf = "zbc_bodycam.ogf",   hud_ogf = "zbc_bodycam_hud.ogf",   gx = "0", gy = "0", w = "0.32", cost = "16000", tier = "4" },
+		{ sec = "zbc_bodycam_5",    hud = "zbc_bodycam_5_anim_hud", ogf = "zbc_bodycam_5.ogf", hud_ogf = "zbc_bodycam_5_hud.ogf", gx = "8", gy = "0", w = "0.33", cost = "24000", tier = "5" },
 	}
 	for _, e in ipairs(expected_ltx) do
 		local s = ltx[e.sec]

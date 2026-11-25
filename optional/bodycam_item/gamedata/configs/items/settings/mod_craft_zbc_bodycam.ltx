@@ -1,0 +1,11 @@
+; Zone Bodycam - bodycam items: DLTX patch for items\settings\craft.ltx (workshop, Devices tab).
+; The Axon Body upgrade path mirrors GAMMA's night vision chain (device_torch_nv_1/2/3): each generation is
+; built from the one before it, needs a better toolkit (1 basic, 2 advanced, 3 expert) and, from Body 2 on,
+; the same electronics recipe books as the NVGs. Body 1 needs no book (it is also sold, 5,000).
+; Format: x_<item> = toolkit, recipe, item,count, item,count, ...
+![1]
+x_zbc_bodycam_1                  = 1, recipe_basic_0, prt_i_resistors,4, prt_i_capacitors,4, prt_i_plastic,3, batteries_dead,1
+x_zbc_bodycam_2                  = 1, recipe_basic_2, zbc_bodycam_1,1, prt_i_resistors,10, prt_i_capacitors,10, prt_i_copper,8
+x_zbc_bodycam_3                  = 2, recipe_advanced_2, zbc_bodycam_2,1, prt_i_resistors,16, prt_i_capacitors,16, prt_i_transistors,16
+x_zbc_bodycam_item               = 2, recipe_advanced_2, zbc_bodycam_3,1, prt_i_transistors,16, prt_i_textolite,8, batteries_dead,2
+x_zbc_bodycam_5                  = 3, recipe_expert_2, zbc_bodycam_item,1, prt_i_transistors,20, prt_i_textolite,12, prt_i_capacitors,20

@@ -9,6 +9,7 @@ function on_mcm_load()
 			{ id = "title",         type = "title", text = "ui_mcm_zone_bodycam_item_title", align = "c" },
 			{ id = "battery_hours", type = "track", val = 2, min = 0.25, max = 48, step = 0.25, def = 4 },
 			{ id = "animations",    type = "check", val = 1, def = true },
+			{ id = "tier_limits",   type = "check", val = 1, def = true },
 		},
 	}
 end

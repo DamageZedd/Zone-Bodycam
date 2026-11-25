@@ -66,7 +66,13 @@ for i = 0, 20 do
 end
 check(fx.interference(1, 1, 1, 1, 0) == 0, "strength 0: no interference at all")
 check(near(fx.interference(1, 0, 0, 0, 0.5), 0.275), "strength halves it")
-check(fx.interference(1, 0, 0, 0, 3) == fx.interference(1, 0, 0, 0), "strength above 1 is capped")
+check(fx.interference(1, 0, 0, 0, 3) == fx.interference(1, 0, 0, 0, fx.MAX_STRENGTH), "strength is capped at MAX_STRENGTH")
+check(fx.MAX_STRENGTH == 1.5 and fx.interference(1, 0, 0, 0, 1.5) > fx.interference(1, 0, 0, 0, 1), "Axon Body 1 (x1.5) gets more interference")
+check(fx.interference(0, 1, 1, 1, 1.5) <= 1, "still never above 1")
+check(#fx.hit_spikes(1, 1.5, function() return 0 end) > 0 and fx.hit_spikes(1, 1.5, function() return 0 end)[1][2] <= 1, "hit jolts stay at most 1")
+check(fx.dark_level(0.8) == 0 and fx.dark_level(fx.DARK_LIT) == 0, "lit: not dark")
+check(fx.dark_level(0.05) == 1 and fx.dark_level(fx.DARK_FULL) == 1, "very dark: fully dark")
+check(fx.dark_level(0.2) > 0 and fx.dark_level(0.2) < 1 and fx.dark_level(nil) == 0, "dusk in between; unknown light: not dark")
 
 check(fx.night_hours(22) and fx.night_hours(2) and not fx.night_hours(12) and not fx.night_hours(5), "night is 21:00-05:00")
 check(fx.ir_target(0, 23, false) == 1 and fx.ir_target(0, 12, false) == 0, "auto follows the time of day")

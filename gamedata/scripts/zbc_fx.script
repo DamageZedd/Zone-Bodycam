@@ -19,6 +19,9 @@
 local floor, min, max, abs, sqrt, cos, rad = math.floor, math.min, math.max, math.abs, math.sqrt, math.cos, math.rad
 
 local function clamp01(v) return min(max(v, 0), 1) end
+-- interference strength: the MCM's 0..1, times the camera tier (Axon Body 1 up to 1.5)
+MAX_STRENGTH = 1.5
+function clamp_strength(s) return min(max(tonumber(s) or 1, 0), MAX_STRENGTH) end
 
 ---------------------------------------------------------------------------------------------------
 -- Pure helpers (tested in tools\tests\zbc_fx_test.lua)
@@ -55,7 +58,7 @@ end
 -- overall interference 0..1 from its sources (each 0..1), times the MCM strength (default 1)
 function interference(storm, psy, rad, anomaly, strength)
 	local v = max(storm * 0.55, psy_interference(psy), (rad - 0.25) * 0.6, anomaly)
-	return clamp01(v * clamp01(strength or 1))
+	return clamp01(v * clamp_strength(strength))
 end
 
 -- An emission or psy storm builds up: faint when it starts, full STORM_BUILD seconds in.
@@ -100,7 +103,7 @@ end
 -- rand(): random 0..1. Returns { {delay, amp}, ... }.
 function hit_spikes(power, strength, rand)
 	rand = rand or math.random
-	local amp = clamp01((tonumber(power) or 0) * 1.6) * clamp01(strength or 1)
+	local amp = clamp01(clamp01((tonumber(power) or 0) * 1.6) * clamp_strength(strength))
 	local out = {}
 	if amp <= 0 then return out end
 	local n, delay = 2 + floor(rand() * 2.999), 0
@@ -207,6 +210,14 @@ function light_level(actor)
 	return nil
 end
 
+-- darkness 0..1 from the light level where you stand: lit above DARK_LIT, fully dark at DARK_FULL
+DARK_LIT, DARK_FULL = 0.35, 0.10
+function dark_level(lum)
+	lum = tonumber(lum)
+	if not lum then return 0 end
+	return clamp01((DARK_LIT - lum) / (DARK_LIT - DARK_FULL))
+end
+
 -- low-light mode wanted? mode: 0 auto, 1 always, 2 off
 function night_hours(h)
 	h = tonumber(h) or 12
@@ -245,6 +256,7 @@ local F = {
 	glitch = 0,          -- interference sent to the shader: level with its swells
 	burst = 0,           -- random spikes and hit jolts 0..1
 	ir = 0,              -- low-light mix 0..1
+	dark = 0,            -- how dark it is where you stand 0 (lit) .. 1 (dark), smoothed (tier grain)
 	blood = {},          -- splatters on the lens, oldest first: {t = hit time (shader clock), drip}
 	blood_t = 0,         -- time of the newest splatter, 0 none
 	shake = 0,           -- how fast the camera swings 0..1 (smoothed)
@@ -260,7 +272,7 @@ local spikes, next_spike, storm_t0 = {}, 0, 0
 local MAX_SPIKES = 12
 
 function reset()
-	F.level, F.glitch, F.burst, F.ir = 0, 0, 0, 0
+	F.level, F.glitch, F.burst, F.ir, F.dark = 0, 0, 0, 0, 0
 	F.blood, F.blood_t, F.death_t = {}, 0, 0
 	F.shake, F.cdx, F.cdy, F.cdz = 0, nil, nil, nil
 	F.event, F.event_on = false, false
@@ -326,7 +338,7 @@ function frame(cfg, dt, is_powered)
 	-- interference: the level from its sources (a storm builds up), smoothed, then swelling, with
 	-- random spikes on top
 	local target = 0
-	glitch_strength = clamp01(tonumber(cfg.fx_glitch_strength) or 1)
+	glitch_strength = clamp_strength(cfg.fx_glitch_strength)
 	if on and cfg.fx_glitch then
 		local storm = storm_active()
 		if not storm then storm_t0 = 0 elseif storm_t0 == 0 then storm_t0 = now end
@@ -374,9 +386,12 @@ function frame(cfg, dt, is_powered)
 	end
 	F.ir = approach(F.ir, ir_goal, 0.7, dt)
 
+	-- how dark it is (the camera tier's low-light grain)
+	local lum = light_level(actor)
+	if lum then F.dark = approach(F.dark or 0, dark_level(lum), 1.5, dt) end
+
 	-- auto-exposure: follows the light where you stand, lagging and overshooting a little
 	if cfg.auto_exposure then
-		local lum = light_level(actor)
 		if lum then
 			F.exposure, F.exp_vel = exposure_step(F.exposure or 1, F.exp_vel or 0, exposure_target(lum), dt)
 		end

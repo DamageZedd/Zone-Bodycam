@@ -119,6 +119,7 @@ local next_scan = 0
 local last_t = nil
 local hours = DEFAULT_HOURS
 local enabled = true
+local tier_limits = true     -- MCM: each camera generation has its own features and picture quality
 local crit_charge = DEFAULT_CRIT
 local crit_by_sec = {}
 local eco_mult = 1
@@ -142,6 +143,7 @@ end
 local function load_settings()
 	hours = clamp_hours(mcm("zone_bodycam_item/battery_hours", DEFAULT_HOURS))
 	enabled = mcm("zone_bodycam/enabled", true) == true
+	tier_limits = mcm("zone_bodycam_item/tier_limits", true) ~= false
 	crit_by_sec = {}
 	for i = 1, #CAMERA_ORDER do
 		local sec = CAMERA_ORDER[i]
@@ -275,6 +277,19 @@ function active_device_label()
 	return def and def.label or nil
 end
 
+-- the camera tier for zbc_bodycam.script (zbc_tiers.script): generation of the carried camera, nil
+-- without one or with the generation limits turned off in the MCM (every camera then works like Body 4)
+function tier_of(sec, limits_on)
+	if limits_on == false then return nil end
+	local def = sec and CAMERAS[sec]
+	return def and def.gen or nil
+end
+
+function active_tier()
+	local obj = carried_cam()
+	return tier_of(obj and obj:section(), tier_limits)
+end
+
 local function actor_on_update()
 	if not enabled then return end
 	local now = time_global()
@@ -321,6 +336,7 @@ function on_game_start()
 		zbc_bodycam.set_power_gate(has_power)
 		if zbc_bodycam.set_battery_source then zbc_bodycam.set_battery_source(battery_level) end
 		if zbc_bodycam.set_device_source then zbc_bodycam.set_device_source(active_device_label) end
+		if zbc_bodycam.set_tier_source then zbc_bodycam.set_tier_source(active_tier) end
 	else
 		printf("! [Zone Bodycam] bodycam item: zbc_bodycam.script not found, the item component needs the base mod")
 	end

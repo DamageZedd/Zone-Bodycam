@@ -1614,7 +1614,7 @@ local function step_reveal(ent)
 		ent.reveal_t = is_known and (max(t_full, REVEAL_MIN) + COLOR_FADE + 1)
 			or (id and id_progress[id] or 0) * t_full
 	end
-	local s = reveal_speed(t_full, is_known, ent.dist or 0, ent.aimed, LG.fov)
+	local s = reveal_speed(t_full, is_known, ent.dist or 0, ent.aimed, LG.fov) * (LG.decode_mult or 1)
 	ent.reveal_t = ent.reveal_t + (LG.dt or 0) * s
 	ent.id_pct = is_known and 1 or clamp01(ent.reveal_t / t_full)
 	if id and not is_known then
@@ -1942,6 +1942,11 @@ function update(pool, cfg, L, visible)
 	-- big as one at the normal range still gets a box and a name
 	local vz = view_zoom()
 	local pm = pip_refresh().m
+	-- cameras without scope support (zbc_tiers.script) mark nothing while a picture-in-picture scope is up
+	if cfg.allies_pip == false and pm > 1.01 then
+		hide_all(pool)
+		return
+	end
 	local range = max(cfg.allies_range or 50, 2) * max(vz, pm)
 	frame_scoped = pip_active() or vz > 1.05
 	local now = time_global() / 1000
@@ -1950,6 +1955,7 @@ function update(pool, cfg, L, visible)
 	lens_override = tonumber(cfg.allies_lens) or 0
 	LG.random = cfg.allies_decode_random and true or false
 	LG.known_only = cfg.allies_known_only and true or false
+	LG.decode_mult = tonumber(cfg.allies_decode_mult) or 1   -- the camera tier's identification speed
 	if last_now and now < last_now then
 		next_scan = 0
 		last_now = nil
