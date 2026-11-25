@@ -54,7 +54,7 @@ Everything can be tuned or turned off in MCM.
 
 Tick **Bodycam item (battery powered)** in the installer to make the bodycam a real piece of gear instead of always on.
 
-- **Buy it from general traders.** The effect only runs while you carry a charged Body Camera anywhere in your inventory. No equipment slot is used.
+- **Five generations, Axon Body 1 to 5** (see below). The effect only runs while you carry a charged camera anywhere in your inventory. No equipment slot is used.
 - **It runs on batteries.** The battery drains while recording (4 real hours by default, set in MCM). A small VHS-style battery gauge sits above the REC dot.
 - **When it dies,** the lens, overlay and markers switch off. Your character taps the camera, unclips it, checks it and puts it away.
 - **Swap the battery** like any vanilla device: drag a battery onto the camera. Your character slides it in and clips the camera back on your chest.
@@ -67,6 +67,26 @@ Tick **Bodycam item (battery powered)** in the installer to make the bodycam a r
 [![Battery dies, swap it, back on](docs/images/bodycam_item_clip.webp)](docs/images/bodycam_item.mp4)
 
 <sub>Click the clip for the full-quality video.</sub>
+
+</div>
+
+### Camera generations
+
+The camera you carry decides what the feed can do: **Axon Body 1 is the worst, Axon Body 5 the best.** Older cameras are grainier, softer and more compressed, and they lack features such as GPS, IR night mode or identification. Body 4 is the reference and looks exactly like your MCM settings.
+
+- **Axon Body 1:** sold by every trader for 5,000 RU, and every new game starts with one. It can also be crafted with a basic toolkit.
+- **Axon Body 2 to 5:** craft only, each from the generation before, behind the same electronics recipe books as GAMMA's night vision goggles.
+- Turn **Camera generations** off in the MCM to make every camera work like Body 4.
+
+<div align="center">
+
+![Camera generations compared](docs/images/generations_compare.webp)
+
+| | |
+|:---:|:---:|
+| ![Axon Body 1](docs/images/generation_1.webp) | ![Axon Body 2](docs/images/generation_2.webp) |
+| ![Axon Body 3](docs/images/generation_3.webp) | ![Axon Body 4](docs/images/generation_4.webp) |
+| ![Axon Body 5](docs/images/generation_5.webp) | |
 
 </div>
 
