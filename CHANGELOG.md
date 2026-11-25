@@ -7,6 +7,7 @@
 - **Charge bar on the bodycam items' icons**: the five Axon Body cameras show the small blue battery bar like the torch, detectors and PDA (`use_condition` + `condition_bar = power_progess_bar` in `items_zbc_bodycam.ltx`; works with the 1x1 and HD icons). Test: `tools/tests/zbc_item_battery_bar_test.lua`.
 
 ### Fixed
+- **The battery-insert animation only played on Axon Body 5** (`zbc_item.script`, bodycam item component): a new battery was spotted only as a charge jump on the active camera. With several dead cameras carried the active one is the highest generation, so a battery put into any other camera made that camera the active one and the jump was never seen. Every carried camera's charge is now remembered, so a battery in any of them plays the insert with that camera's own animation. Test: `tools/tests/zbc_item_test.lua` (each camera alone, and all five carried with a battery into each in turn).
 - **The bodycam items could stop draining** (`zbc_item.script`): the engine stores the charge as a float32, and with a long battery life, an easy difficulty and a high frame rate one frame of drain was smaller than half a float step near full charge, so it rounded back and the camera never used its battery. The exact charge is now kept in the script and only rounded when written; a battery put in is still picked up. Test: `tools/tests/zbc_item_battery_bar_test.lua`.
 
 ### Changed

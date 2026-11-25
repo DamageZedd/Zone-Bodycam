@@ -559,6 +559,127 @@ do
 		"insert animation receives Body 5 HUD section")
 end
 
+-- Regression (in-game report: the battery-insert animation only played for Body 5): a battery put into
+-- ANY carried camera plays the insert with that camera's HUD section. With several dead cameras carried
+-- the active one is the highest generation (tie-break), so a battery in another camera makes that one
+-- active; the jump must still count as an insert.
+do
+	local CAMS = {
+		{ id = 301, sec = "zbc_bodycam_1",    hud = "zbc_bodycam_1_anim_hud" },
+		{ id = 302, sec = "zbc_bodycam_2",    hud = "zbc_bodycam_2_anim_hud" },
+		{ id = 303, sec = "zbc_bodycam_3",    hud = "zbc_bodycam_3_anim_hud" },
+		{ id = 304, sec = "zbc_bodycam_item", hud = "zbc_bodycam_anim_hud" },
+		{ id = 305, sec = "zbc_bodycam_5",    hud = "zbc_bodycam_5_anim_hud" },
+	}
+
+	-- a fresh copy of zbc_item.script carrying the given cameras (all at `cond`); returns the harness
+	local function harness(list, cond)
+		local H = { cbs = {}, now = 0, calls = {}, objs = {} }
+		local items, by_id = {}, {}
+		for _, c in ipairs(list) do
+			local o = { _cond = cond, _parent = 0 }
+			function o:id() return c.id end
+			function o:section() return c.sec end
+			function o:condition() return self._cond end
+			function o:set_condition(v) self._cond = v end
+			function o:parent() return self._parent and { id = function() return self._parent end } or nil end
+			items[#items + 1] = o
+			by_id[c.id] = o
+			H.objs[c.id] = o
+		end
+		H.G = load_script({
+			AC_ID = 0,
+			db = { actor = { iterate_inventory = function(_, fn, ctx)
+				for i = 1, #items do
+					if items[i]._parent == 0 then fn(ctx, items[i]) end
+				end
+			end } },
+			time_global = function() return H.now end,
+			level = { object_by_id = function(id) return by_id[id] end },
+			ui_mcm = { get = function(k)
+				if k == "zone_bodycam/enabled" then return true end
+				if k == "zone_bodycam_item/battery_hours" then return 4 end
+				return nil
+			end },
+			item_device = { get_power_critical = function() return 0.05 end },
+			game_difficulties = { get_eco_factor = function() return 1 end },
+			actor_menu = { set_msg = function() end },
+			game = { translate_string = function(s) return s end },
+			zbc_bodycam = { set_power_gate = function() end, set_battery_source = function() end,
+				set_device_source = function() end },
+			zbc_item_anim = {
+				holding_power = function() return false end,
+				is_insert = function(prev, cur) return prev and cur and (cur - prev > 0.02) end,
+				request = function(what, t, hud) H.calls[#H.calls + 1] = { what = what, hud = hud } end,
+				reset = function() end,
+				update = function() end,
+			},
+			RegisterScriptCallback = function(name, fn) H.cbs[name] = fn end,
+			printf = function() end,
+		})
+		H.G.on_game_start()
+		H.cbs.actor_on_first_update()
+		H.tick = function(ms)               -- run updates for `ms` of game time, 100 ms apart
+			local stop = H.now + ms
+			while H.now < stop do
+				H.now = H.now + 100
+				H.cbs.actor_on_update()
+			end
+		end
+		return H
+	end
+
+	local function inserts(H)
+		local out = {}
+		for _, c in ipairs(H.calls) do
+			if c.what == "insert" then out[#out + 1] = c.hud end
+		end
+		return out
+	end
+
+	-- one camera carried, dead, battery put in: every generation plays its own insert
+	for _, c in ipairs(CAMS) do
+		local H = harness({ c }, 0.0)
+		H.tick(1500)
+		check(#inserts(H) == 0, c.sec .. " alone: no insert before a battery goes in")
+		H.objs[c.id]._cond = 1.0
+		H.tick(1500)
+		local got = inserts(H)
+		check(#got == 1 and got[1] == c.hud, c.sec .. " alone: battery in plays the insert with " .. c.hud
+			.. " (got " .. tostring(got[1]) .. ", " .. #got .. " call(s))")
+	end
+
+	-- all five carried, all dead (Body 5 is the active one): a battery in each camera in turn
+	for _, c in ipairs(CAMS) do
+		local H = harness(CAMS, 0.0)
+		H.tick(1500)
+		H.objs[c.id]._cond = 1.0
+		H.tick(1500)
+		local got = inserts(H)
+		check(#got == 1 and got[1] == c.hud, "all five carried: battery into " .. c.sec .. " plays the insert with "
+			.. c.hud .. " (got " .. tostring(got[1]) .. ", " .. #got .. " call(s))")
+		check(H.G.active_device_label() ~= nil and H.G.has_power(), "all five carried: " .. c.sec
+			.. " powers the feed after its new battery")
+	end
+
+	-- the camera's own drain and a camera picked up already charged are never taken for a new battery
+	do
+		local H = harness({ CAMS[2] }, 1.0)
+		H.tick(5000)
+		check(#inserts(H) == 0, "draining a charged camera never plays the insert")
+		local H2 = harness({ CAMS[1] }, 0.0)
+		H2.tick(1500)
+		H2.objs[CAMS[1].id]._parent = nil                     -- dropped, then a charged camera picked up
+		H2.cbs.actor_on_item_drop()
+		H2.tick(1500)
+		H2.objs[CAMS[1].id]._parent = 0
+		H2.objs[CAMS[1].id]._cond = 1.0
+		H2.cbs.actor_on_item_take()
+		H2.tick(1500)
+		check(#inserts(H2) == 0, "picking up a charged camera is not a battery insert")
+	end
+end
+
 -- zbc_item_anim.script: HUD section propagation & queue priority
 do
 	local chunk = assert(loadfile("optional/bodycam_item/gamedata/scripts/zbc_item_anim.script"))

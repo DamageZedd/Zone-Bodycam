@@ -136,8 +136,9 @@ local crit_by_sec = {}
 local eco_mult = 1
 local warned_dead = false
 local warned_low = 0         -- low-battery warnings given for this battery (low_warning)
-local last_charge = nil      -- charge of cam_id at the previous look, to spot a new battery
-local last_charge_id = nil
+local seen_charge = {}       -- camera id -> its charge at the previous look, for EVERY carried camera: a
+                             -- battery put into any of them (not only the active one) is a jump here
+local last_charge_id = nil   -- the active camera at the previous look
 local exact_id = nil         -- camera whose exact (double) charge is kept, see base_charge
 local exact_charge = nil
 local exact_written = nil    -- the condition the item held right after our last write
@@ -172,7 +173,7 @@ local function load_settings()
 	end
 	if not enabled then
 		last_t = nil
-		last_charge, last_charge_id = nil, nil
+		seen_charge, last_charge_id = {}, nil
 		next_scan = 0
 		if zbc_item_anim then zbc_item_anim.reset() end
 	end
@@ -187,7 +188,10 @@ local function carried_cam()
 end
 
 -- picks the carried bodycam with the most charge (breaking ties by generation, with STICKY_EPS
--- hysteresis for the already-active charged camera so two full cameras do not ping-pong every second)
+-- hysteresis for the already-active charged camera so two full cameras do not ping-pong every second).
+-- Also looks at every carried camera's charge: returns the HUD section of a camera that just got a new
+-- battery (its charge jumped since the previous look), else nil. A battery put into a dead camera other
+-- than the active one makes that camera the active one, so the active camera alone cannot spot it.
 local function scan()
 	local actor = db.actor
 	local prev_obj = carried_cam()
@@ -198,12 +202,16 @@ local function scan()
 	cam_id = nil
 	if not actor then return end
 	local ids, scores, gens = {}, {}, {}
+	local seen, inserted = {}, nil
+	local anim = zbc_item_anim
 	actor:iterate_inventory(function(_, obj)
 		local sec = obj and obj:section()
 		local def = sec and CAMERAS[sec]
 		if def then
 			local id = obj:id()
 			local c = tonumber(obj:condition()) or 0
+			if anim and anim.is_insert(seen_charge[id], c) then inserted = def.hud end
+			seen[id] = c
 			if sticky_id and id == sticky_id then
 				c = c + STICKY_EPS
 			end
@@ -212,8 +220,10 @@ local function scan()
 			gens[#gens + 1] = def.gen
 		end
 	end, actor)
+	seen_charge = seen               -- cameras no longer carried are forgotten (picked up charged: no insert)
 	local i = best_index(scores, gens)
 	if i then cam_id = ids[i] end
+	return inserted
 end
 
 -- message and a short vanilla beep (the RF detector's)
@@ -232,9 +242,10 @@ end
 local function refresh(now, silent)
 	local prev_obj = carried_cam()
 	local prev_sec = prev_obj and prev_obj:section()
+	local inserted = nil
 	if now >= next_scan then
 		next_scan = now + SCAN_MS
-		scan()
+		inserted = scan()
 	end
 	local obj = carried_cam()
 	if not obj then cam_id = nil end
@@ -264,10 +275,12 @@ local function refresh(now, silent)
 		warned_low, warn = low_warning(charge, warned_low)
 		if warn then low_battery_alert() end
 	end
-	if anim and charge and last_charge_id == cam_id and anim.is_insert(last_charge, charge) then
-		anim.request("insert", now, cam_def and cam_def.hud)
+	if anim and charge and cam_id and anim.is_insert(seen_charge[cam_id], charge) then
+		inserted = cam_def and cam_def.hud
 	end
-	last_charge, last_charge_id = charge, cam_id
+	if cam_id and charge then seen_charge[cam_id] = charge end
+	if anim and inserted and not silent then anim.request("insert", now, inserted) end
+	last_charge_id = cam_id
 	return obj
 end
 
@@ -319,7 +332,7 @@ local function actor_on_update()
 		local c = drain_step(base, now - last, hours, eco_mult * mult)
 		obj:set_condition(c)
 		exact_id, exact_charge, exact_written = id, c, obj:condition()
-		last_charge = exact_written      -- our own drain is never mistaken for a new battery
+		seen_charge[id] = exact_written  -- our own drain is never mistaken for a new battery
 	end
 	if zbc_item_anim then zbc_item_anim.update(now, obj ~= nil) end
 end
@@ -330,7 +343,7 @@ local function actor_on_first_update()
 	next_scan = 0
 	cam_charged = false
 	warned_low = 0
-	last_charge, last_charge_id = nil, nil
+	seen_charge, last_charge_id = {}, nil
 	exact_id, exact_charge, exact_written = nil, nil, nil
 	if zbc_item_anim then zbc_item_anim.reset() end
 	refresh(time_global(), true)
