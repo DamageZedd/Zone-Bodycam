@@ -171,9 +171,23 @@ function blood_step(list, now, dt, shake)
 	return list
 end
 
--- Compression blocks up while the camera swings, like a real bodycam's encoder.
-function compression_level(base, shake)
-	return clamp01((base or 0) * (1 + 0.8 * clamp01(shake or 0)))
+-- Compression blocks up while the camera swings, like a real bodycam's encoder. base: the steady
+-- amount (the MCM value with the camera tier applied: Body 1 the most, Body 5 the least, Body 4 or no
+-- item the MCM value); env: the swing envelope 0..1 (compression_env).
+function compression_level(base, env)
+	return clamp01((base or 0) * (1 + COMP_BOOST * clamp01(env or 0)))
+end
+
+-- The swing envelope: follows how fast the camera turns, building up over ~COMP_ATTACK s and falling
+-- back over ~COMP_RELEASE s (exponential, so it eases off and never snaps back to the baseline).
+COMP_BOOST, COMP_ATTACK, COMP_RELEASE = 0.8, 0.25, 0.9
+function compression_env(env, shake, dt)
+	env = clamp01(env or 0)
+	dt = max(dt or 0, 0)
+	if dt <= 0 then return env end
+	local target = clamp01(shake or 0)
+	local tau = (target > env) and COMP_ATTACK or COMP_RELEASE
+	return env + (target - env) * (1 - math.exp(-dt / tau))
 end
 
 -- EVENT blinks: three quick flashes, then a steady 1.25 Hz blink. age: seconds since it was flagged.
@@ -260,6 +274,7 @@ local F = {
 	blood = {},          -- splatters on the lens, oldest first: {t = hit time (shader clock), drip}
 	blood_t = 0,         -- time of the newest splatter, 0 none
 	shake = 0,           -- how fast the camera swings 0..1 (smoothed)
+	comp = 0,            -- compression swing envelope 0..1 (compression_env)
 	death_t = 0,         -- time of death (seconds, shader clock), 0 alive
 	event = false,       -- show EVENT after REC
 	event_on = false,    -- ... and it is in the lit part of its blink
@@ -274,7 +289,7 @@ local MAX_SPIKES = 12
 function reset()
 	F.level, F.glitch, F.burst, F.ir, F.dark = 0, 0, 0, 0, 0
 	F.blood, F.blood_t, F.death_t = {}, 0, 0
-	F.shake, F.cdx, F.cdy, F.cdz = 0, nil, nil, nil
+	F.shake, F.comp, F.cdx, F.cdy, F.cdz = 0, 0, nil, nil, nil
 	F.event, F.event_on = false, false
 	event_until, event_t0, next_anom_scan, anom_near = 0, 0, 0, 0
 	spikes, next_spike, storm_t0 = {}, 0, 0
@@ -374,6 +389,7 @@ function frame(cfg, dt, is_powered)
 		F.cdx, F.cdy, F.cdz = dir.x, dir.y, dir.z
 	end
 	F.shake = approach(F.shake, shake_now, 3, dt)
+	F.comp = compression_env(F.comp, shake_now, dt)
 	blood_step(F.blood, now, dt, F.shake)
 	if #F.blood == 0 then F.blood_t = 0 end
 

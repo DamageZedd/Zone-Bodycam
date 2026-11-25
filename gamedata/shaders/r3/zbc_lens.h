@@ -782,9 +782,9 @@ float3 zbc_sensor_pass(float3 c, float2 uv, float3 ddx_c, float3 ddy_c)
 		float  steps = lerp(255.0, 72.0, dc);
 		float  yq    = floor(y0 * steps + 0.5) / steps;
 		float  y_out = lerp(y0, yq, 0.22 * dc) + bn;
-		// keyframe pumping: crisp on each keyframe (every 1.6 s), the shadows blocking up until the next
-		float  gop   = frac(zbc_time() / 1.6);
-		y_out        = zbc_shadow_blocks(y_out, uv, dc * (0.35 + 0.65 * gop));
+		// shadow blocking: a steady amount for the compression level (the camera tier's baseline, built up
+		// and released smoothly by zbc_fx.compression_env while the camera turns); never reset per keyframe
+		y_out        = zbc_shadow_blocks(y_out, uv, dc * 0.7);
 		c = max(y_out.xxx + ch, 0.0);
 	}
 

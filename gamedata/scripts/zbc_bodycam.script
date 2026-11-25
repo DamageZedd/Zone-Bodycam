@@ -172,7 +172,7 @@ local user_cfg = {}          -- the MCM values, clamped
 local cur_tier = nil         -- tier of the carried camera (zbc_tiers.script), nil: none / no item component
 local fx_event = false       -- EVENT shown after REC (zbc_fx.script), for the HUD-drawn timer
 local fx_event_on = false    -- ... and in the lit part of its blink
-local fx_shake = 0           -- how fast the camera swings 0..1 (zbc_fx.script)
+local fx_comp = 0            -- compression swing envelope 0..1 (zbc_fx.script)
 
 local function mcm_get(id)
 	if ui_mcm and ui_mcm.get then
@@ -1693,7 +1693,7 @@ local function fx_update()
 	local F = zbc_fx.frame(cfg, dt)
 	fx_event = F.event and cfg.rec_timer or false
 	fx_event_on = fx_event and F.event_on or false
-	fx_shake = F.shake or 0
+	fx_comp = F.comp or 0
 	send("glitch", F.glitch, F.burst, F.death_t, death_age())
 	send("ir",     F.ir, F.exposure or 1, 0, 0)
 	-- the camera tier's low-light noise: more grain in the dark on the old cameras, less on Body 5
@@ -1710,9 +1710,9 @@ local function fx_update()
 	send("event",  fx_event and 1 or 0, fx_event_on and 1 or 0, 0, 0)
 end
 
--- compression blocks up while the camera swings (zbc_fx.compression_level)
+-- compression: the tier's steady amount, built up while the camera swings and eased back after (zbc_fx)
 function compression_now()
-	if zbc_fx and zbc_fx.compression_level then return zbc_fx.compression_level(cfg.compression, fx_shake) end
+	if zbc_fx and zbc_fx.compression_level then return zbc_fx.compression_level(cfg.compression, fx_comp) end
 	return cfg.compression
 end
 
