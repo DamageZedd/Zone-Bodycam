@@ -694,11 +694,11 @@ do
 
 	local ltx = parse_ltx("optional/bodycam_item/gamedata/configs/items/items/items_zbc_bodycam.ltx")
 	local expected_ltx = {
-		{ sec = "zbc_bodycam_1",    hud = "zbc_bodycam_1_anim_hud", ogf = "zbc_bodycam_1.ogf", hud_ogf = "zbc_bodycam_1_hud.ogf", gx = "2", gy = "0", w = "0.20", cost = "5000", tier = "1" },
-		{ sec = "zbc_bodycam_2",    hud = "zbc_bodycam_2_anim_hud", ogf = "zbc_bodycam_2.ogf", hud_ogf = "zbc_bodycam_2_hud.ogf", gx = "4", gy = "0", w = "0.24", cost = "8000", tier = "2" },
-		{ sec = "zbc_bodycam_3",    hud = "zbc_bodycam_3_anim_hud", ogf = "zbc_bodycam_3.ogf", hud_ogf = "zbc_bodycam_3_hud.ogf", gx = "6", gy = "0", w = "0.30", cost = "12000", tier = "3" },
-		{ sec = "zbc_bodycam_item", hud = "zbc_bodycam_anim_hud",   ogf = "zbc_bodycam.ogf",   hud_ogf = "zbc_bodycam_hud.ogf",   gx = "0", gy = "0", w = "0.32", cost = "16000", tier = "4" },
-		{ sec = "zbc_bodycam_5",    hud = "zbc_bodycam_5_anim_hud", ogf = "zbc_bodycam_5.ogf", hud_ogf = "zbc_bodycam_5_hud.ogf", gx = "8", gy = "0", w = "0.33", cost = "24000", tier = "5" },
+		{ sec = "zbc_bodycam_1",    hud = "zbc_bodycam_1_anim_hud", ogf = "zbc_bodycam_1.ogf", hud_ogf = "zbc_bodycam_1_hud.ogf", hand = "zbc_bodycam_1", omf = "zbc_bodycam_1_hud_animation.omf", gx = "2", gy = "0", w = "0.20", cost = "5000", tier = "1" },
+		{ sec = "zbc_bodycam_2",    hud = "zbc_bodycam_2_anim_hud", ogf = "zbc_bodycam_2.ogf", hud_ogf = "zbc_bodycam_2_hud.ogf", hand = "zbc_bodycam_2", omf = "zbc_bodycam_2_hud_animation.omf", gx = "4", gy = "0", w = "0.24", cost = "8000", tier = "2" },
+		{ sec = "zbc_bodycam_3",    hud = "zbc_bodycam_3_anim_hud", ogf = "zbc_bodycam_3.ogf", hud_ogf = "zbc_bodycam_3_hud.ogf", hand = "zbc_bodycam_3", omf = "zbc_bodycam_3_hud_animation.omf", gx = "6", gy = "0", w = "0.30", cost = "12000", tier = "3" },
+		{ sec = "zbc_bodycam_item", hud = "zbc_bodycam_anim_hud",   ogf = "zbc_bodycam.ogf",   hud_ogf = "zbc_bodycam_hud.ogf",   hand = "zbc_bodycam", omf = "zbc_bodycam_hud_animation.omf",  gx = "0", gy = "0", w = "0.32", cost = "16000", tier = "4" },
+		{ sec = "zbc_bodycam_5",    hud = "zbc_bodycam_5_anim_hud", ogf = "zbc_bodycam_5.ogf", hud_ogf = "zbc_bodycam_5_hud.ogf", hand = "zbc_bodycam_5", omf = "zbc_bodycam_5_hud_animation.omf", gx = "8", gy = "0", w = "0.33", cost = "24000", tier = "5" },
 	}
 	for _, e in ipairs(expected_ltx) do
 		local s = ltx[e.sec]
@@ -717,8 +717,9 @@ do
 		check(h ~= nil, "items_zbc_bodycam.ltx defines [" .. e.hud .. "]")
 		if h then
 			check(h.item_visual == "dynamics\\devices\\zbc_bodycam\\" .. e.hud_ogf, e.hud .. " item_visual")
-			check(h.anm_zbc_dead == "zbc_bodycam_dead, zbc_bodycam_dead_item", e.hud .. " anm_zbc_dead")
-			check(h.anm_zbc_insert == "zbc_bodycam_insert, zbc_bodycam_insert_item", e.hud .. " anm_zbc_insert")
+			-- each camera plays its own hand motions (grips fitted to its shell); the item motions share names
+			check(h.anm_zbc_dead == e.hand .. "_dead, zbc_bodycam_dead_item", e.hud .. " anm_zbc_dead")
+			check(h.anm_zbc_insert == e.hand .. "_insert, zbc_bodycam_insert_item", e.hud .. " anm_zbc_insert")
 		end
 	end
 
@@ -764,8 +765,36 @@ do
 			check(w_ogf ~= nil and #w_ogf > 256, "world OGF exists and non-empty: " .. e.ogf)
 			check(h_ogf ~= nil and #h_ogf > 256, "HUD OGF exists and non-empty: " .. e.hud_ogf)
 		end
-		local omf = read_text("optional/bodycam_item/gamedata/meshes/anomaly_weapons/hud_hands_animation/zbc_bodycam_hud_animation.omf")
-		check(omf ~= nil and #omf > 256, "hand animation OMF exists")
+		-- every camera's hand motions are in its OMF with the stop-at-end flag (else they loop and
+		-- get_motion_length returns 0), and its HUD model carries idle + both item motions
+		local function motion_flags(data, name)
+			local i = 1
+			while true do
+				local s = data:find(name .. " ", i, true)
+				if not s then return nil end
+				i = s + 1
+				local prev = s > 1 and data:byte(s - 1) or 0
+				if not (prev > 32 and prev < 127) then
+					local p = s + #name + 1
+					local b1, b2, b3, b4 = data:byte(p, p + 3)
+					local sp = { data:byte(p + 8, p + 11) }
+					if b4 and sp[4] == 0x3F and sp[3] == 0x80 and sp[2] == 0 and sp[1] == 0 then   -- speed 1.0
+						return b1 + b2 * 256 + b3 * 65536 + b4 * 16777216
+					end
+				end
+			end
+		end
+		for _, e in ipairs(expected_ltx) do
+			local omf = read_text("optional/bodycam_item/gamedata/meshes/anomaly_weapons/hud_hands_animation/" .. e.omf)
+			check(omf ~= nil and #omf > 256, "hand animation OMF exists: " .. e.omf)
+			local h_ogf = read_text(mesh_dir .. e.hud_ogf) or ""
+			for _, t in ipairs({ "dead", "insert" }) do
+				local fl = omf and motion_flags(omf, e.hand .. "_" .. t)
+				check(fl ~= nil and fl % 4 >= 2, e.omf .. " has " .. e.hand .. "_" .. t .. " with stop-at-end")
+				check(h_ogf:find("zbc_bodycam_" .. t .. "_item ", 1, true) ~= nil, e.hud_ogf .. " has zbc_bodycam_" .. t .. "_item")
+			end
+			check(h_ogf:find("idle ", 1, true) ~= nil, e.hud_ogf .. " has idle")
+		end
 
 		local dds = read_text("optional/bodycam_item/gamedata/textures/ui/ui_icon_zbc_bodycam.dds")
 		check(dds ~= nil and #dds >= 128 and dds:sub(1, 4) == "DDS ", "ui_icon_zbc_bodycam.dds exists with DDS magic")

@@ -77,7 +77,8 @@ cost                 = 24000
 tier                 = 5
 
 ; First-person hand animations (scripts\zbc_item_anim.script): battery dead / new battery.
-; Hand motions: meshes\anomaly_weapons\hud_hands_animation\zbc_bodycam_hud_animation.omf.
+; Hand motions: meshes\anomaly_weapons\hud_hands_animation\zbc_bodycam_hud_animation.omf (Axon Body 4) and
+; zbc_bodycam_<N>_hud_animation.omf (each other camera, its grip fitted to its own shell).
 ; anm_* = hand motion, item motion (the in-hand model's own motion: its battery bone).
 [zbc_bodycam_anim_hud]
 hands_position         = 0, 0, 0
@@ -90,20 +91,20 @@ anm_zbc_insert         = zbc_bodycam_insert, zbc_bodycam_insert_item
 
 [zbc_bodycam_1_anim_hud]:zbc_bodycam_anim_hud
 item_visual            = dynamics\devices\zbc_bodycam\zbc_bodycam_1_hud.ogf
-anm_zbc_dead           = zbc_bodycam_dead, zbc_bodycam_dead_item
-anm_zbc_insert         = zbc_bodycam_insert, zbc_bodycam_insert_item
+anm_zbc_dead           = zbc_bodycam_1_dead, zbc_bodycam_dead_item
+anm_zbc_insert         = zbc_bodycam_1_insert, zbc_bodycam_insert_item
 
 [zbc_bodycam_2_anim_hud]:zbc_bodycam_anim_hud
 item_visual            = dynamics\devices\zbc_bodycam\zbc_bodycam_2_hud.ogf
-anm_zbc_dead           = zbc_bodycam_dead, zbc_bodycam_dead_item
-anm_zbc_insert         = zbc_bodycam_insert, zbc_bodycam_insert_item
+anm_zbc_dead           = zbc_bodycam_2_dead, zbc_bodycam_dead_item
+anm_zbc_insert         = zbc_bodycam_2_insert, zbc_bodycam_insert_item
 
 [zbc_bodycam_3_anim_hud]:zbc_bodycam_anim_hud
 item_visual            = dynamics\devices\zbc_bodycam\zbc_bodycam_3_hud.ogf
-anm_zbc_dead           = zbc_bodycam_dead, zbc_bodycam_dead_item
-anm_zbc_insert         = zbc_bodycam_insert, zbc_bodycam_insert_item
+anm_zbc_dead           = zbc_bodycam_3_dead, zbc_bodycam_dead_item
+anm_zbc_insert         = zbc_bodycam_3_insert, zbc_bodycam_insert_item
 
 [zbc_bodycam_5_anim_hud]:zbc_bodycam_anim_hud
 item_visual            = dynamics\devices\zbc_bodycam\zbc_bodycam_5_hud.ogf
-anm_zbc_dead           = zbc_bodycam_dead, zbc_bodycam_dead_item
-anm_zbc_insert         = zbc_bodycam_insert, zbc_bodycam_insert_item
+anm_zbc_dead           = zbc_bodycam_5_dead, zbc_bodycam_dead_item
+anm_zbc_insert         = zbc_bodycam_5_insert, zbc_bodycam_insert_item

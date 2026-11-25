@@ -23,6 +23,7 @@ GAP = 0.0006
 CHEST = Vector((0.0, 0.105, -0.33))
 CHEST_ROT = Quaternion((0, 0, 1), math.pi)          # lens forward when worn
 SLOT_IN = Matrix.Translation(Vector((0.0, -0.0015, -0.0345)))   # battery fully inside the bottom slot
+INS_HOLD = 0.010            # how far out the battery still is when the pinch lets go and the fingertips push it home
 LOW_R = Vector((0.34, 0.12, -0.62))                 # camera space, out of view
 LOW_L = Vector((-0.34, 0.12, -0.62))
 POLE_R = Vector((0.75, -0.05, -0.55))
@@ -212,7 +213,8 @@ def seq_insert():
         (92, mat(CHEST, CHEST_ROT)),
     ])
     S["cam"] = lambda f: cam(f) if f < 92 else mat(CHEST, CHEST_ROT)
-    ins = Track([(0, 0.075), (30, 0.045), (40, 0.036), (44, 0.031), (56, 0.010), (60, 0.010), (66, 0.0)])
+    h = INS_HOLD
+    ins = Track([(0, 0.075), (30, 0.045), (40, 0.036), (44, max(0.031, h + 0.021)), (56, h), (60, h), (66, 0.0)])
     bat_in = Track([(0, lambda: mat(Vector((-0.30, 0.16, -0.60)), S["cam"](30).to_quaternion())),
                     (30, lambda: S["cam"](30) @ SLOT_IN @ Matrix.Translation((0, 0, -0.045)))])
 
@@ -247,6 +249,7 @@ def seq_insert():
         (104, "low"),
     ]
     S["l_fing"] = Track([(0, 1.0), (58, 1.0), (62, 0.0)])
+    S["l_neutral"] = Track([(0, 0.0), (64, 0.0), (74, 1.0)])   # after the push the wrist straightens with the forearm
     S["contact"] = {(107, "r", "cam"), (65, "l", "bat"), (66, "l", "bat")}
     S["neutral"] = Track([(0, 0.0)])
     return S
@@ -382,6 +385,13 @@ def build(seqf, frames=None, key=True, extra=None):
             qr = qr.slerp(qn, nw)
             pose("r", wr, qr, rfing)
         pose("l", wl, ql, lfing)
+        nwl = cl(S.get("l_neutral", lambda f: 0.0)(f)) if not lh else 0.0
+        if nwl > 0:
+            R.bone("l_hand").matrix_basis = Matrix()
+            R.solve_arm("l", Pinv @ wl, Pinv @ POLE_L)
+            qn = P.to_quaternion() @ R.world("l_hand").to_quaternion()
+            ql = ql.slerp(qn, smooth(nwl))
+            pose("l", wl, ql, lfing)
         props = []
         if D is not None:
             props.append(("cam", D))
