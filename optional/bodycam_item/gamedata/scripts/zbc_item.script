@@ -30,9 +30,10 @@ CAMERAS = {
 
 STICKY_EPS            = 0.002    -- anti-ping-pong charge bonus for the currently active charged camera
 local TIE_EPS         = 1e-6
-local DEFAULT_HOURS   = 4        -- real hours of recording per full charge (Axon Body 4 baseline)
+local DEFAULT_HOURS   = 14       -- game hours of recording per full charge: the real Axon Body 4's 14 h
 local MIN_HOURS       = 0.25
-local MAX_HOURS       = 48
+local MAX_HOURS       = 72
+local MAX_TIME_FACTOR = 1000     -- sanity limit on the game's time factor
 local DEFAULT_CRIT    = 0.05     -- vanilla condition_critical, used if item_device has no value
 local SCAN_MS         = 1000     -- inventory re-scan period
 local MAX_STEP_MS     = 1000     -- longer gaps (loading, pause hitches) are not drained
@@ -41,7 +42,7 @@ local MAX_STEP_MS     = 1000     -- longer gaps (loading, pause hitches) are not
 -- Pure logic (tested by tools\tests\zbc_item_test.lua)
 ---------------------------------------------------------------------------------------------------
 
--- battery life in real hours, from the MCM value (any type), clamped
+-- battery life in game hours, from the MCM value (any type), clamped
 function clamp_hours(v)
 	v = tonumber(v)
 	if not v or v ~= v then return DEFAULT_HOURS end
@@ -50,14 +51,24 @@ function clamp_hours(v)
 	return v
 end
 
--- charge after dt_ms milliseconds of recording; factor scales the drain (difficulty economy * generation)
-function drain_step(charge, dt_ms, hours, factor)
+-- the game's time factor (game seconds per real second), 1 when unknown or invalid
+function clamp_time_factor(f)
+	f = tonumber(f)
+	if not f or f ~= f or f <= 0 then return 1 end
+	if f > MAX_TIME_FACTOR then return MAX_TIME_FACTOR end
+	return f
+end
+
+-- charge after dt_ms real milliseconds of recording. hours: battery life in game hours; time_factor: game
+-- seconds per real second (so a 14 h battery lasts 14 in-game hours); factor scales the drain (difficulty
+-- economy * generation). Long real gaps (loading, pauses, sleeping) are not drained.
+function drain_step(charge, dt_ms, hours, factor, time_factor)
 	charge = tonumber(charge) or 0
 	dt_ms = tonumber(dt_ms) or 0
 	if dt_ms <= 0 or dt_ms > MAX_STEP_MS then return charge end
 	factor = tonumber(factor) or 1
 	if factor < 0 then factor = 0 end
-	local loss = (dt_ms / 1000) / (clamp_hours(hours) * 3600) * factor
+	local loss = (dt_ms / 1000) * clamp_time_factor(time_factor) / (clamp_hours(hours) * 3600) * factor
 	local c = charge - loss
 	if c < 0 then c = 0 end
 	return c
@@ -156,7 +167,7 @@ local function mcm(id, def)
 end
 
 local function load_settings()
-	hours = clamp_hours(mcm("zone_bodycam_item/battery_hours", DEFAULT_HOURS))
+	hours = clamp_hours(mcm("zone_bodycam_item/battery_game_hours", DEFAULT_HOURS))
 	enabled = mcm("zone_bodycam/enabled", true) == true
 	tier_limits = mcm("zone_bodycam_item/tier_limits", true) ~= false
 	crit_by_sec = {}
@@ -329,7 +340,8 @@ local function actor_on_update()
 		local id = obj:id()
 		local base = obj:condition()
 		if exact_id == id then base = base_charge(exact_charge, exact_written, base) end
-		local c = drain_step(base, now - last, hours, eco_mult * mult)
+		local tf = level and level.get_time_factor and level.get_time_factor()
+		local c = drain_step(base, now - last, hours, eco_mult * mult, tf)
 		obj:set_condition(c)
 		exact_id, exact_charge, exact_written = id, c, obj:condition()
 		seen_charge[id] = exact_written  -- our own drain is never mistaken for a new battery

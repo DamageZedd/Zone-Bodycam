@@ -51,7 +51,7 @@ Multipliers on the MCM values; Body 4's picture is the identity. Zoom is the exc
 | rolling_shutter x | B3 "reduced motion blur" [S4] | 1.6 (i) | 1.35 (i) | 1.1 | 1 | 0.85 (i) |
 | grain, aberration, highlight_blowout x | unpublished, sensor-generation estimate | (i) | (i) | (i) | 1 | (i) |
 | walk_bob, impacts, fx_glitch_strength | no generation publishes stabilization or shielding | 1 | 1 | 1 | 1 | 1 |
-| battery drain_mult (zbc_item) | 14 h / real hours: 12, 12, 12, 14, 16.8 (i) | 1.167 | 1.167 | 1.167 | 1 | 0.833 |
+| battery drain_mult (zbc_item) | 14 h / real hours: 12, 12, 12, 14, 16.8 (i); Body 4 lasts 14 in-game hours (MCM), drained by game time | 1.167 | 1.167 | 1.167 | 1 | 0.833 |
 | wearer's name line | game feature (the real watermark is date, time, serial [S1][S13]) | off | on | on | on | on |
 | GPS line | onboard GPS from B3 [S4]; B1-B2 tagged GPS through a phone | off | off | on | on | on |
 | IR night look | no Axon Body has IR | MCM | MCM | MCM | MCM | MCM |

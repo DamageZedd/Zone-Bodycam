@@ -4,31 +4,31 @@
     <text>Axon Body Camera (Gen 1)</text>
   </string>
   <string id="st_zbc_bodycam_1_descr">
-    <text>A first-generation TASER Axon Body chest camera (#73002) with a wide-angle lens, a top-right mechanical power slider and a pre-RapidLock holster mount. Carry it anywhere in your inventory and it records on its own.\n\nGeneration 1 of 5, the most basic, like the real 2013 camera: 480p through a 130-degree lens (the narrowest view), heavy grain and compression, colour fringing, strong rolling shutter, blown highlights and a noisy picture in the dark. Overlay: date and device only. Auto-exposure and footage review; no LTE, so no markers or event log. Sold by traders; also craftable (basic toolkit).\n\nRuns on a standard battery (the real camera's 12 h against Axon Body 4's 14 h: about 86%, ~3.4 h at default settings): drag a battery onto the camera to swap it. When the charge runs out the camera shuts off, but the recording clock keeps counting.</text>
+    <text>A first-generation TASER Axon Body chest camera (#73002) with a wide-angle lens, a top-right mechanical power slider and a pre-RapidLock holster mount. Carry it anywhere in your inventory and it records on its own.\n\nGeneration 1 of 5, the most basic, like the real 2013 camera: 480p through a 130-degree lens (the narrowest view), heavy grain and compression, colour fringing, strong rolling shutter, blown highlights and a noisy picture in the dark. Overlay: date and device only. Auto-exposure and footage review; no LTE, so no markers or event log. Sold by traders; also craftable (basic toolkit).\n\nRuns on a standard battery for 12 in-game hours, like the real camera (default settings): drag a battery onto the camera to swap it. When the charge runs out the camera shuts off, but the recording clock keeps counting.</text>
   </string>
   <string id="st_zbc_bodycam_2_name">
     <text>Axon Body 2 Camera</text>
   </string>
   <string id="st_zbc_bodycam_2_descr">
-    <text>A rugged second-generation Axon Body 2 chest camera (#74001) with a rubberized bumper shell, a side power switch, a RapidLock rear mount and a yellow Delta event button. Carry it anywhere in your inventory and it records on its own.\n\nGeneration 2 of 5, like the real 2015 camera: 1080p through a 143-degree lens, grainy and compressed, noisy in the dark. Overlay: date, device and name. Auto-exposure and footage review; no LTE, so no markers or event log. Crafted from an Axon Body 1 (basic toolkit, basic electronics recipes).\n\nRuns on a standard battery (the real camera's 12 h against Axon Body 4's 14 h: about 86%, ~3.4 h at default settings): drag a battery onto the camera to swap it. When the charge runs out the camera shuts off, but the recording clock keeps counting.</text>
+    <text>A rugged second-generation Axon Body 2 chest camera (#74001) with a rubberized bumper shell, a side power switch, a RapidLock rear mount and a yellow Delta event button. Carry it anywhere in your inventory and it records on its own.\n\nGeneration 2 of 5, like the real 2015 camera: 1080p through a 143-degree lens, grainy and compressed, noisy in the dark. Overlay: date, device and name. Auto-exposure and footage review; no LTE, so no markers or event log. Crafted from an Axon Body 1 (basic toolkit, basic electronics recipes).\n\nRuns on a standard battery for 12 in-game hours, like the real camera (default settings): drag a battery onto the camera to swap it. When the charge runs out the camera shuts off, but the recording clock keeps counting.</text>
   </string>
   <string id="st_zbc_bodycam_3_name">
     <text>Axon Body 3 Camera</text>
   </string>
   <string id="st_zbc_bodycam_3_descr">
-    <text>A third-generation Axon Body 3 chest camera with an octagonal armored housing, a top monochrome status LCD, four microphones and a RapidLock mount. Carry it anywhere in your inventory and it records on its own.\n\nGeneration 3 of 5, like the real 2019 camera: 1080p at about 143 degrees, less motion blur, still some grain and compression. Onboard GPS adds the GPS line; LTE brings the event log and markers for friends and enemies, with companion dots at the screen edge. No mutant identification or tags through scopes. Crafted from an Axon Body 2 (advanced toolkit, advanced electronics recipes).\n\nRuns on a standard battery (the real camera's 12 h against Axon Body 4's 14 h: about 86%, ~3.4 h at default settings): drag a battery onto the camera to swap it. When the charge runs out the camera shuts off, but the recording clock keeps counting.</text>
+    <text>A third-generation Axon Body 3 chest camera with an octagonal armored housing, a top monochrome status LCD, four microphones and a RapidLock mount. Carry it anywhere in your inventory and it records on its own.\n\nGeneration 3 of 5, like the real 2019 camera: 1080p at about 143 degrees, less motion blur, still some grain and compression. Onboard GPS adds the GPS line; LTE brings the event log and markers for friends and enemies, with companion dots at the screen edge. No mutant identification or tags through scopes. Crafted from an Axon Body 2 (advanced toolkit, advanced electronics recipes).\n\nRuns on a standard battery for 12 in-game hours, like the real camera (default settings): drag a battery onto the camera to swap it. When the charge runs out the camera shuts off, but the recording clock keeps counting.</text>
   </string>
   <string id="st_zbc_bodycam_item_name">
     <text>Axon Body 4 Camera</text>
   </string>
   <string id="st_zbc_bodycam_item_descr">
-    <text>A fourth-generation Axon Body 4 chest camera with a wide-angle lens, top status display, time-stamped overlay and friend-or-foe tag display. Carry it anywhere in your inventory and it records on its own.\n\nGeneration 4 of 5, the reference camera, like the real 2023 camera: 1440p through a 160-degree lens, picture as set in the MCM. Event log, identification of stalkers and mutants, tags through scopes, auto-exposure and footage review. Crafted from an Axon Body 3 (advanced toolkit, advanced electronics recipes).\n\nRuns on a standard battery (100% baseline runtime, 4.0 h at default settings): drag a battery onto the camera to swap it. When the charge runs out the camera shuts off, but the recording clock keeps counting.</text>
+    <text>A fourth-generation Axon Body 4 chest camera with a wide-angle lens, top status display, time-stamped overlay and friend-or-foe tag display. Carry it anywhere in your inventory and it records on its own.\n\nGeneration 4 of 5, the reference camera, like the real 2023 camera: 1440p through a 160-degree lens, picture as set in the MCM. Event log, identification of stalkers and mutants, tags through scopes, auto-exposure and footage review. Crafted from an Axon Body 3 (advanced toolkit, advanced electronics recipes).\n\nRuns on a standard battery for 14 in-game hours, like the real camera (default settings): drag a battery onto the camera to swap it. When the charge runs out the camera shuts off, but the recording clock keeps counting.</text>
   </string>
   <string id="st_zbc_bodycam_5_name">
     <text>Axon Body 5 Pro Camera</text>
   </string>
   <string id="st_zbc_bodycam_5_descr">
-    <text>A fifth-generation Axon Body 5 Pro chest camera with a recessed sapphire-shielded wide-angle lens, high-visibility top OLED display, dual programmable side buttons and high-efficiency electronics. Carry it anywhere in your inventory and it records on its own.\n\nGeneration 5 of 5, the best, like the real 2026 camera: up to 4K, the cleanest and sharpest picture, the least compression and night noise. Every feature, with the fastest identification. Crafted from an Axon Body 4 (expert toolkit, expert electronics recipes).\n\nRuns on a standard battery (+20% over Axon Body 4, like the real camera, ~4.8 h at default settings): drag a battery onto the camera to swap it. When the charge runs out the camera shuts off, but the recording clock keeps counting.</text>
+    <text>A fifth-generation Axon Body 5 Pro chest camera with a recessed sapphire-shielded wide-angle lens, high-visibility top OLED display, dual programmable side buttons and high-efficiency electronics. Carry it anywhere in your inventory and it records on its own.\n\nGeneration 5 of 5, the best, like the real 2026 camera: up to 4K, the cleanest and sharpest picture, the least compression and night noise. Every feature, with the fastest identification. Crafted from an Axon Body 4 (expert toolkit, expert electronics recipes).\n\nRuns on a standard battery for about 16.8 in-game hours, +20% over Axon Body 4 like the real camera (default settings): drag a battery onto the camera to swap it. When the charge runs out the camera shuts off, but the recording clock keeps counting.</text>
   </string>
   <string id="st_zbc_bodycam_item_dead">
     <text>Body camera: battery dead</text>
@@ -39,11 +39,11 @@
   <string id="ui_mcm_zone_bodycam_item_title">
     <text>Bodycam item</text>
   </string>
-  <string id="ui_mcm_zone_bodycam_item_battery_hours">
-    <text>Battery life (real hours)</text>
+  <string id="ui_mcm_zone_bodycam_item_battery_game_hours">
+    <text>Battery life (game hours)</text>
   </string>
-  <string id="ui_mcm_zone_bodycam_item_battery_hours_desc">
-    <text>Baseline full-battery recording time for Axon Body 4, in real-time hours. The other cameras follow the real ones' battery life (Body 1-3: 12 h against 14 h, about 86%; Body 5: +20%). Also scaled by the difficulty battery consumption setting, and the highest-charge / newest-generation camera is selected automatically.</text>
+  <string id="ui_mcm_zone_bodycam_item_battery_game_hours_desc">
+    <text>Full-battery recording time of Axon Body 4 in in-game hours: 14 like the real camera. The other cameras follow their real battery life (Body 1-3: 12 h, Body 5: about 16.8 h). Runs on game time, so a faster time factor drains faster in real minutes; sleeping and loading do not drain. Also scaled by the difficulty battery consumption setting, and the highest-charge / newest-generation camera is selected automatically.</text>
   </string>
   <string id="ui_mcm_zone_bodycam_item_animations">
     <text>Hand animations</text>

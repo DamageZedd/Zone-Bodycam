@@ -110,7 +110,7 @@ local function simulate(sec, hours, eco, fps, seconds, start, mid_hook)
 		level = { object_by_id = function(id) return id == 7 and obj or nil end },
 		ui_mcm = { get = function(k)
 			if k == "zone_bodycam/enabled" then return true end
-			if k == "zone_bodycam_item/battery_hours" then return hours end
+			if k == "zone_bodycam_item/battery_game_hours" then return hours end
 			return nil
 		end },
 		item_device = { get_power_critical = function() return 0.05 end },

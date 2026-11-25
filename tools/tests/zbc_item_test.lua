@@ -28,10 +28,10 @@ local M = load_script()
 -- clamp_hours
 check(M.clamp_hours(4) == 4, "clamp_hours keeps 4")
 check(M.clamp_hours("2.5") == 2.5, "clamp_hours reads strings")
-check(M.clamp_hours(nil) == 4, "clamp_hours defaults nil to 4")
+check(M.clamp_hours(nil) == 14, "clamp_hours defaults nil to 14 game hours (the real Axon Body 4)")
 check(M.clamp_hours(0) == 0.25, "clamp_hours lower bound")
-check(M.clamp_hours(1000) == 48, "clamp_hours upper bound")
-check(M.clamp_hours(0 / 0) == 4, "clamp_hours rejects NaN")
+check(M.clamp_hours(1000) == 72, "clamp_hours upper bound")
+check(M.clamp_hours(0 / 0) == 14, "clamp_hours rejects NaN")
 
 -- drain_step: a full charge lasts exactly `hours` of 1 s steps
 do
@@ -51,6 +51,30 @@ check(M.drain_step(0.5, -20, 4, 1) == 0.5, "negative time, no drain")
 check(M.drain_step(0.5, 5000, 4, 1) == 0.5, "loading hitches (over 1 s) are not drained")
 check(M.drain_step(0.00001, 1000, 0.25, 1) == 0, "charge never goes below 0")
 check(M.drain_step(nil, 1000, 4, 1) == 0, "nil charge reads as 0")
+
+-- game time: the battery life is in game hours, so the drain follows the game's time factor
+check(near(M.drain_step(1, 1000, 14, 1, 6), 1 - 6 / (14 * 3600)), "time factor 6: one real second drains six game seconds")
+do
+	local c, steps = 1, 0
+	while c > 0 and steps < 100 * 3600 do
+		c = M.drain_step(c, 1000, 14, 1, 6)
+		steps = steps + 1
+	end
+	check(math.abs(steps - 14 * 3600 / 6) <= 1, "a 14 game-hour battery at time factor 6 lasts 14/6 real hours, got " .. steps)
+end
+check(M.clamp_time_factor(nil) == 1 and M.clamp_time_factor(0) == 1 and M.clamp_time_factor(-2) == 1
+	and M.clamp_time_factor(0 / 0) == 1, "unknown or invalid time factor reads as 1")
+check(M.clamp_time_factor(10) == 10 and M.clamp_time_factor(1e9) == 1000, "time factor kept, capped")
+check(near(M.drain_step(1, 1000, 14, 1, nil), 1 - 1 / (14 * 3600)), "no time factor: real seconds")
+do
+	local src = read and read("optional/bodycam_item/gamedata/scripts/zbc_item.script")
+		or io.open("optional/bodycam_item/gamedata/scripts/zbc_item.script", "rb"):read("*a")
+	check(src:find("level.get_time_factor()", 1, true) ~= nil and src:find("eco_mult * mult, tf)", 1, true) ~= nil,
+		"the update drains with the game's time factor")
+	local mcm = io.open("optional/bodycam_item/gamedata/scripts/zbc_item_mcm.script", "rb"):read("*a")
+	check(mcm:find('id = "battery_game_hours"', 1, true) and mcm:find("def = 14", 1, true),
+		"MCM: battery life in game hours, 14 by default (old real-hour values are not reused)")
+end
 
 -- is_charged
 check(M.is_charged(0.5, 0.05) == true, "half charge works")
@@ -486,7 +510,7 @@ do
 		level = { object_by_id = function(id) return by_id[id] end },
 		ui_mcm = { get = function(k)
 			if k == "zone_bodycam/enabled" then return true end
-			if k == "zone_bodycam_item/battery_hours" then return 4 end
+			if k == "zone_bodycam_item/battery_game_hours" then return 4 end
 			return nil
 		end },
 		item_device = { get_power_critical = function() return 0.05 end },
@@ -598,7 +622,7 @@ do
 			level = { object_by_id = function(id) return by_id[id] end },
 			ui_mcm = { get = function(k)
 				if k == "zone_bodycam/enabled" then return true end
-				if k == "zone_bodycam_item/battery_hours" then return 4 end
+				if k == "zone_bodycam_item/battery_game_hours" then return 4 end
 				return nil
 			end },
 			item_device = { get_power_critical = function() return 0.05 end },

@@ -72,7 +72,7 @@ Everything can be tuned or turned off in MCM.
 Tick **Bodycam item (battery powered)** in the installer to make the bodycam a real piece of gear instead of always on.
 
 - **Five generations, Axon Body 1 to 5** (see below). The effect only runs while you carry a charged camera anywhere in your inventory. No equipment slot is used.
-- **It runs on batteries.** The battery drains while recording (4 real hours by default, set in MCM). A small VHS-style battery gauge sits above the REC dot.
+- **It runs on batteries.** The battery drains while recording, in game time, as long as the real camera lasts: 12 in-game hours for Body 1-3, 14 for Body 4 and about 16.8 for Body 5 (Body 4's value is set in MCM). A small VHS-style battery gauge sits above the REC dot.
 - **When it dies,** the lens, overlay and markers switch off. Your character taps the camera, unclips it, checks it and puts it away.
 - **Swap the battery** like any vanilla device: drag a battery onto the camera. Your character slides it in and clips the camera back on your chest.
 - The REC timer keeps counting in the background while the camera is off.
