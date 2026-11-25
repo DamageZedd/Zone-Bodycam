@@ -41,6 +41,20 @@ Full history in [CHANGELOG.md](CHANGELOG.md).
 
 Everything can be tuned or turned off in MCM.
 
+## Camera effects in motion
+
+| Interference and signal lost | Blood on the lens |
+|:---:|:---:|
+| [![Interference building up, hard hits, then SIGNAL LOST](docs/images/fx_interference.webp)](docs/images/fx_interference.mp4) | [![Blood splatters, drips and stacks on the lens](docs/images/fx_blood.webp)](docs/images/fx_blood.mp4) |
+| Interference in a psy field, near an anomaly and in a full emission, two hard hits, then the feed dies block by block to SIGNAL LOST. | A hit right in front of the camera: an irregular splash that drips like blood on glass (slowed, then sped up), and splatters stacking. |
+
+| Night mode (IR) and compression |
+|:---:|
+| [![IR night mode and compression keyframes](docs/images/fx_ir_compression.webp)](docs/images/fx_ir_compression.mp4) |
+| IR night mode: the lamp lights the middle, the gain hunts and dark areas boil in blocks. Compression: crisp on each keyframe, then the shadows block up. |
+
+<sub>Shader previews rendered over game screenshots, not game recordings. Click a clip for the full-quality video.</sub>
+
 ## Screenshots
 
 | Front-only face blur, skeleton markers & AXON BODY 4 overlay | Automatic low-light infrared (IR) mode & aim-only labels |
