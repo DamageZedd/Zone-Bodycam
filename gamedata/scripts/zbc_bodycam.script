@@ -1665,7 +1665,7 @@ function actor_on_first_update()
 	fx_last = nil
 	faces_was_on = false
 	if zbc_faces and zbc_faces.reset then zbc_faces.reset() end
-	if zbc_allies and zbc_allies.clear_known then zbc_allies.clear_known() end
+	-- identifications: zbc_allies restores them from the save and clears them itself for a new game
 	if tokens then send("glitch", 0, 0, 0, 0) end
 	rec_on_first_update()
 	clear_send_cache()
@@ -1810,7 +1810,6 @@ function actor_on_net_destroy()
 	fx_last = nil
 	faces_was_on = false
 	if zbc_faces and zbc_faces.reset then zbc_faces.reset() end
-	if zbc_allies and zbc_allies.clear_known then zbc_allies.clear_known() end
 	hud_remove()
 	clear_send_cache()
 	lens_off()
