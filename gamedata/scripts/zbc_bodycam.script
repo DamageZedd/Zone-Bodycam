@@ -60,7 +60,7 @@ defaults = {
 	fx_glitch         = true,   -- interference in emissions, psy fields, radiation, near anomalies, on big hits
 	fx_glitch_strength = 1.0,   -- how strong that interference gets (0..1)
 	signal_lost       = true,   -- on death: glitch, cut to black, "SIGNAL LOST"
-	night_mode        = 0,      -- low-light infrared look: 0 auto (night, underground), 1 always, 2 off
+	night_mode        = 2,      -- low-light infrared look: 0 auto (night, underground), 1 always, 2 off (default: no Axon Body has IR)
 	lens_dirt         = true,   -- blood on the lens
 	lens_rain         = true,   -- the game's visor rain drops on the camera, mask or not (zbc_fx.script)
 	event_marker      = true,   -- "EVENT" after REC when you fire or take a big hit
@@ -343,11 +343,12 @@ local function fill_zoom(k1)
 	return (1 + k1 * r2 + 0.5 * k1 * k1 * r2 * r2) * (px / (asp * 0.5)) * FILL_MARGIN
 end
 
--- the zoom the lens actually uses: the MCM zoom, or more when the distortion needs it
+-- the zoom the lens actually uses: the MCM zoom, or more when the distortion needs it, times the
+-- camera's field of view against Body 4 (zbc_tiers zoom_mult: a narrower real lens zooms in)
 function lens_zoom()
 	local z = cfg.zoom or defaults.zoom
 	local d = cfg.distortion or defaults.distortion
-	return max(z, fill_zoom(max(d, 0)))
+	return max(z, fill_zoom(max(d, 0))) * (tonumber(cfg.zoom_mult) or 1)
 end
 
 local cur_zoom = nil   -- lens_zoom() for the current settings and resolution, set by sync_lens_settings

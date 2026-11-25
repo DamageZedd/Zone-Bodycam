@@ -376,7 +376,7 @@
     <text>Low-light mode</text>
   </string>
   <string id="ui_mcm_zone_bodycam_night_mode_desc">
-    <text>A grainy, nearly black-and-white infrared look, like a real bodycam in the dark. Auto: at night and underground.</text>
+    <text>An optional grainy, nearly black-and-white infrared look in the dark. No real Axon Body has infrared, so it is off by default and works the same on every camera. Auto: at night and underground.</text>
   </string>
   <string id="ui_mcm_zone_bodycam_lens_rain">
     <text>Rain on the lens</text>

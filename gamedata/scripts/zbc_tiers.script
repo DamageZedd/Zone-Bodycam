@@ -1,10 +1,14 @@
 --[[
 	Zone Bodycam - camera generations (tiers)
 
-	With the optional bodycam item, the carried Axon Body camera decides what the feed can do: Axon Body 1
-	is the worst (low resolution, noisy, no GPS, no identification), Axon Body 5 the best. Axon Body 4 is
-	the reference: its profile changes nothing, so it looks exactly like the MCM settings (and like the
-	core mod without the item, which has no tier at all).
+	With the optional bodycam item, the carried Axon Body camera decides what the feed can do. The profiles
+	follow the real cameras' published specs one to one (sources: docs/real_specs.md): Axon Body (2013,
+	480p, 130 deg), Body 2 (2015, 1080p, 143 deg), Body 3 (2019, 1080p, LTE and live map), Body 4 (2023,
+	1440p, 160 deg) and Body 5 (2026, up to 4K). Axon Body 4 is the reference for the image: its effect
+	strengths are the MCM values unchanged.
+
+	Real watermarks show date, time and serial only, so no generation draws the GPS line or the wearer's
+	name. No Axon Body has infrared: the IR night look is an MCM option for every camera, not a tier feature.
 
 	How a tier meets the MCM (the MCM stays the player's preference):
 	- features: on only when the MCM has them on AND the camera has them;
@@ -17,45 +21,63 @@
 MIN_TIER, MAX_TIER = 1, 5
 REFERENCE_TIER = 4
 
--- off: MCM keys a camera does not have (booleans forced false; night_mode forced to 2 = off; review_key
--- forced to 0 = no key). scale: multipliers on MCM values. cap: upper limits on MCM values.
--- decode: identification speed. dark_grain: extra grain share in the dark (0.6 = 60% more).
+-- what no real generation has in its watermark (date, time and serial only)
+local WATERMARK_OFF = { gps_line = true, show_name = true }
+
+local function with_watermark(off)
+	for k in pairs(WATERMARK_OFF) do off[k] = true end
+	return off
+end
+
+-- off: MCM keys a camera does not have (booleans forced false; review_key forced to 0 = no key).
+-- scale: multipliers on MCM values. cap: upper limits on MCM values.
+-- decode: identification speed. dark_grain: extra grain share in the dark (0.35 = 35% more).
+-- zoom: lens zoom against Body 4 (its 160 deg over the camera's field of view), applied on top of the
+-- zoom the lens ends up with (zbc_bodycam.lens_zoom), so the ratio holds whatever the MCM lens settings.
+-- Real basis per key:
+--   sharpen / edge_soft_blur: vertical resolution against Body 4's 1440 lines (480, 1080, 1080, 1440, 2160)
+--   compression: bits per pixel, Body 1 ~0.12 vs Body 2 ~0.22 (spec sheets); Body 3 and 5 estimated
+--   zoom: field of view, 160 deg / 130, 143, 143 (Body 3 estimated), 160, 160 (Body 5 estimated)
+--   dark_grain: Body 1 and 2 sold on the same low-light claim; Body 3 "improved"; Body 5 "better"
+--   rolling_shutter: Body 3 "reduced motion blur"
+--   grain, aberration, highlight_blowout: unpublished, a sensor-generation estimate
+--   walk_bob, impacts, fx_glitch_strength: no generation publishes a difference, so none here
+--   allies: the live map needs LTE (Body 3 on); scope tags need Watch Me video (Body 4 on)
+--   event_log: real-time alerts and gunshot detection from Body 3
 PROFILES = {
 	[1] = {
-		off = { show_name = true, gps_line = true, event_log = true, auto_exposure = true, night_mode = true,
-			face_blur = true, allies = true, allies_companion_edge = true, allies_pip = true, review_key = true },
-		scale = { grain = 1.8, compression = 2.0, sharpen = 0.3, edge_soft_blur = 1.6, aberration = 1.6,
-			rolling_shutter = 1.6, highlight_blowout = 1.6, walk_bob = 1.3, impacts = 1.3, fx_glitch_strength = 1.5 },
+		off = with_watermark({ event_log = true, allies = true, allies_companion_edge = true, allies_pip = true }),
+		scale = { grain = 1.8, compression = 2.4, sharpen = 0.33, edge_soft_blur = 2.2, aberration = 1.6,
+			rolling_shutter = 1.6, highlight_blowout = 1.6 },
 		cap = {},
-		decode = 0, dark_grain = 0.60,
+		decode = 0, dark_grain = 0.35, zoom = 160 / 130,
 	},
 	[2] = {
-		off = { gps_line = true, event_log = true, night_mode = true, face_blur = true, allies_enemies = true,
-			allies_mutants = true, allies_companion_edge = true, allies_pip = true, review_key = true },
-		scale = { grain = 1.4, compression = 1.5, sharpen = 0.6, edge_soft_blur = 1.3, aberration = 1.3,
-			rolling_shutter = 1.35, highlight_blowout = 1.35, walk_bob = 1.2, impacts = 1.2, fx_glitch_strength = 1.3 },
-		cap = { allies_range = 15 },
-		decode = 0.5, dark_grain = 0.35,
+		off = with_watermark({ event_log = true, allies = true, allies_companion_edge = true, allies_pip = true }),
+		scale = { grain = 1.4, compression = 1.4, sharpen = 0.75, edge_soft_blur = 1.3, aberration = 1.3,
+			rolling_shutter = 1.35, highlight_blowout = 1.35 },
+		cap = {},
+		decode = 0, dark_grain = 0.35, zoom = 160 / 143,
 	},
 	[3] = {
-		off = { face_blur = true, allies_mutants = true, allies_pip = true },
-		scale = { grain = 1.15, compression = 1.2, sharpen = 0.85, edge_soft_blur = 1.1, aberration = 1.1,
-			rolling_shutter = 1.15, highlight_blowout = 1.15, walk_bob = 1.1, impacts = 1.1, fx_glitch_strength = 1.15 },
-		cap = { allies_range = 25 },
-		decode = 0.75, dark_grain = 0.15,
+		off = with_watermark({ allies_mutants = true, allies_pip = true }),
+		scale = { grain = 1.15, compression = 1.3, sharpen = 0.75, edge_soft_blur = 1.3, aberration = 1.1,
+			rolling_shutter = 1.1, highlight_blowout = 1.15 },
+		cap = {},
+		decode = 0.75, dark_grain = 0.15, zoom = 160 / 143,
 	},
-	[4] = { off = {}, scale = {}, cap = {}, decode = 1, dark_grain = 0 },
+	[4] = { off = with_watermark({}), scale = {}, cap = {}, decode = 1, dark_grain = 0 },
 	[5] = {
-		off = {},
-		scale = { grain = 0.7, compression = 0.6, sharpen = 1.25, edge_soft_blur = 0.8, aberration = 0.7,
-			rolling_shutter = 0.6, highlight_blowout = 0.7, walk_bob = 0.85, impacts = 0.85, fx_glitch_strength = 0.7 },
+		off = with_watermark({}),
+		scale = { grain = 0.7, compression = 0.7, sharpen = 1.5, edge_soft_blur = 0.7, aberration = 0.7,
+			rolling_shutter = 0.85, highlight_blowout = 0.7 },
 		cap = {},
 		decode = 1.5, dark_grain = -0.20,
 	},
 }
 
 -- clamps for values a tier may push past the MCM range (the MCM range itself comes from the caller)
-local EXTRA_CLAMPS = { fx_glitch_strength = { 0, 1.5 } }
+local EXTRA_CLAMPS = {}
 
 -- a valid tier number, or nil (no tier: the core mod alone, or the item's limits turned off)
 function valid_tier(t)
@@ -75,7 +97,7 @@ end
 
 -- Fills `out` (or a new table) with the settings the camera actually uses: `user` (the MCM values,
 -- already clamped) with the tier applied. clamps: { key = { lo, hi } } (zbc_bodycam's MCM ranges).
--- Always sets the derived keys allies_decode_mult, allies_pip and dark_grain.
+-- Always sets the derived keys allies_decode_mult, allies_pip, dark_grain and zoom_mult.
 function apply(user, tier, clamps, out)
 	out = out or {}
 	for k in pairs(out) do
@@ -85,13 +107,12 @@ function apply(user, tier, clamps, out)
 	out.allies_pip = (user.allies_pip ~= false)
 	out.allies_decode_mult = 1
 	out.dark_grain = 0
+	out.zoom_mult = 1
 	local p = PROFILES[valid_tier(tier) or 0]
 	if not p then return out end
 
 	for k in pairs(p.off) do
-		if k == "night_mode" then
-			out[k] = 2
-		elseif k == "review_key" then
+		if k == "review_key" then
 			out[k] = 0
 		else
 			out[k] = false
@@ -112,6 +133,7 @@ function apply(user, tier, clamps, out)
 	end
 	out.allies_decode_mult = p.decode
 	out.dark_grain = p.dark_grain
+	out.zoom_mult = p.zoom or 1
 	return out
 end
 

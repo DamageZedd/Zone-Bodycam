@@ -61,6 +61,6 @@
     <text>Camera generations</text>
   </string>
   <string id="ui_mcm_zone_bodycam_item_tier_limits_desc">
-    <text>Each Axon Body generation has its own features and picture: Body 1 is the worst (grainy, low resolution, no GPS or identification), Body 5 the best. Your MCM effect settings stay your preference: the camera scales them up or down and turns off what it does not have. Off: every camera works like Axon Body 4 (only battery life differs).</text>
+    <text>Each Axon Body generation matches the real camera's published specs: resolution, field of view, low-light noise, compression and battery life, plus live map and identification from Body 3 (LTE). Like the real watermark, the overlay shows date, time and serial only. Your MCM effect settings stay your preference: the camera scales them up or down and turns off what it does not have. Off: every camera works like Axon Body 4 (only battery life differs).</text>
   </string>
 </string_table>

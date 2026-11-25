@@ -16,7 +16,7 @@
 
 ## What's new in v1.4.0
 
-- **Five camera generations, Axon Body 1 to 5** (optional item). The camera you carry decides what the feed can do: Body 1 is grainy, soft and has no GPS, night mode or identification; Body 5 is the cleanest, with the fastest identification. Body 4 looks exactly like your MCM settings. Each camera has its own 3D model, icon and battery life.
+- **Five camera generations, Axon Body 1 to 5** (optional item). Each camera matches the real Axon Body's published specs: Body 1 records 480p through a 130° lens, Body 2 and 3 1080p at 143°, Body 4 1440p at 160°, Body 5 up to 4K; markers and the alerts log need LTE, from Body 3. Body 4's picture looks exactly like your MCM settings. Each camera has its own 3D model, icon and battery life.
 - **Body 1 is the starter camera**: 5,000 RU at every trader, and every new game starts with one. **Body 2 to 5 are craft only**, each from the one before, behind the same recipe books as GAMMA's night vision. On an existing save, the camera you already carry becomes Body 4.
 - **Battery animations fitted to every camera**: own grips and battery seat on each Axon Body.
 - **Every effect moves.** Interference swells, spikes and tears like a failing digital feed, storms build up, hits jolt the picture, blood splatters stack and drip, and compression blocks up while you turn. No more effects freezing after long play.
@@ -32,9 +32,9 @@ Full history in [CHANGELOG.md](CHANGELOG.md).
 - **Bodycam lens.** Fisheye view with the camera housing around the edges, a small-sensor look, grain and a slight wobble when you turn fast or get hit. The lens zooms in by itself, so stronger fisheye never leaves black edges. Visible NPC faces are automatically pixelated into a coarse mosaic before the lens warp.
 - **Chest-mounted feel.** The lens housing and vignette lag behind your turns, bob with your steps, and jolt when you land, shoot or get hit. The image itself only sways slightly. Your view and aim stay where the game puts them; this mod doesn't detach the camera from your weapon.
 - **Bodycam overlay.**
-  - **Top right:** in-game date and time, device name and serial, your character's name, optional GPS coordinates, and the logo (in English and Russian).
+  - **Top right:** in-game date and time, device name and serial, your character's name, optional GPS coordinates (both off with a bodycam item: a real Axon watermark shows date, time and serial only), and the logo (in English and Russian).
   - **Top left:** a flashing red dot and `REC 00:54:17` (plus `EVENT` when firing or taking a heavy hit), showing how long you've been recording this playthrough. It counts real time and is kept in your save.
-- **Camera effects.** Interference in emissions, psy storms, psy fields, radiation, near anomalies and on heavy hits; `SIGNAL LOST` feed cutoff on death; automatic low-light infrared mode at night and underground; the game's visor rain drops on the lens (mask or not, wiped with the mask-wipe key) and blood splatter.
+- **Camera effects.** Interference in emissions, psy storms, psy fields, radiation, near anomalies and on heavy hits; `SIGNAL LOST` feed cutoff on death; an optional low-light infrared mode at night and underground (off by default: no real Axon Body has IR); the game's visor rain drops on the lens (mask or not, wiped with the mask-wipe key) and blood splatter.
 - **Entity markers.** Stalkers (friendly, neutral, companion and enemies) and mutants you can see get a box with their name/species and faction, decoding from scrambled text by distance and scope zoom (dots past a distance).
 - **Every screen shape.** 4:3, 16:9, ultrawide 21:9 and 32:9 all work out of the box.
 - **English & Russian.** Full localization for all MCM menus, overlay text, marker labels, mutant species, and the optional Body Camera item.
@@ -89,7 +89,18 @@ Tick **Bodycam item (battery powered)** in the installer to make the bodycam a r
 
 ### Camera generations
 
-The camera you carry decides what the feed can do: **Axon Body 1 is the worst, Axon Body 5 the best.** Older cameras are grainier, softer and more compressed, and they lack features such as GPS, IR night mode or identification. Body 4 is the reference and looks exactly like your MCM settings.
+The camera you carry decides what the feed can do, matched one to one to the real Axon Body cameras' published specs (sources: [docs/real_specs.md](docs/real_specs.md)). **Axon Body 1 is the worst, Axon Body 5 the best.** Body 4's picture is the reference and looks exactly like your MCM settings.
+
+| | Body 1 | Body 2 | Body 3 | Body 4 | Body 5 |
+|---|---|---|---|---|---|
+| Real camera | 2013, 480p, 130° | 2015, 1080p, 143° | 2019, 1080p, LTE | 2023, 1440p, 160° | 2026, up to 4K |
+| Sharpness / lens | softest, narrowest | sharper, wider | as Body 2, less motion blur | reference | sharpest |
+| Compression | heaviest | heavy | medium | reference | lightest |
+| Night noise | most | most | less | reference | least |
+| Battery (real) | 12 h | 12 h | 12 h | 14 h | +20% |
+| Markers / alerts log | no | no | yes (enemies) | + mutants, scope tags | + fastest identification |
+
+Like the real watermark, the overlay shows date, time and serial only (no GPS line or name). The IR night look is an MCM option on every camera, off by default.
 
 - **Axon Body 1:** sold by every trader for 5,000 RU, and every new game starts with one. It can also be crafted with a basic toolkit.
 - **Axon Body 2 to 5:** craft only, each from the generation before, behind the same electronics recipe books as GAMMA's night vision goggles.
@@ -126,7 +137,7 @@ The camera you carry decides what the feed can do: **Axon Body 1 is the worst, A
 | Section | What you can change |
 |---|---|
 | **Lens** | Strength, fisheye, zoom, chromatic aberration, sharpening, housing edge on/off, edge size and shape, vignette, grain, colour grade, rolling shutter, blur faces |
-| **Camera effects** | Interference on/off and strength, signal lost on death, low-light mode (auto/always/off), rain on the lens, blood on the lens, EVENT marker, GPS coordinates |
+| **Camera effects** | Interference on/off and strength, signal lost on death, low-light IR mode (auto/always/off, off by default), rain on the lens, blood on the lens, EVENT marker, GPS coordinates |
 | **Body motion** | Overall amount, turn lag, walking bob, camera roll, impacts, breathing |
 | **Overlay** | Overlay on/off, recording timer on/off, battery gauge on/off, device name, show your name, logo style, time zone, text size and opacity |
 | **Ally markers** | On/off, only NPCs you can see, show names, mark enemies, mark mutants, style, friendly/enemy/companion colours, range, size, opacity |

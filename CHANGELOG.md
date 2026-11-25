@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+- **Camera generations follow the real Axon Body specs one to one** (`zbc_tiers.script`, `zbc_item.script`; sources in `docs/real_specs.md`): sharpness from the real resolution (480p / 1080p / 1080p / 1440p / 4K), lens zoom from the real field of view (130 / 143 / 143 / 160 / 160 deg), compression from the real bitrates (Body 1 at about half Body 2's bits per pixel), night noise (Body 1 and 2 the same), less motion blur from Body 3, battery life 12 / 12 / 12 / 14 h and +20% for Body 5. Live-map markers, off-screen companion dots and the alerts log need LTE (Body 3 on), with no range cap; scope tags need Watch Me (Body 4 on). Auto-exposure, footage review and face blur are on every camera. Walking shake and interference no longer differ by camera (no generation publishes a difference). Like the real watermark (date, time and serial), no camera draws the GPS line or the wearer's name. Test: `tools/tests/zbc_tiers_test.lua`.
+- **IR night look is an MCM option on every camera, off by default** (no Axon Body has infrared; was auto, and missing on Body 1 and 2).
+
 ### Added
 - **HD inventory icons** (FOMOD step "Bodycam item icons", option "HD icons"): for HD Inventory Icons Framework (GAMMA), 100x100 icons of the five Axon Body cameras from their original 800 px renders, drawn in a single 1x1 slot (`inv_grid_scale = 2`, DLTX patch in `optional/bodycam_item_hd_icons`). Without the framework the cameras take 2x2 cells. Test: `tools/tests/zbc_item_icons_test.lua`.
 - **Charge bar on the bodycam items' icons**: the five Axon Body cameras show the small blue battery bar like the torch, detectors and PDA (`use_condition` + `condition_bar = power_progess_bar` in `items_zbc_bodycam.ltx`; works with the 1x1 and HD icons). Test: `tools/tests/zbc_item_battery_bar_test.lua`.

@@ -51,9 +51,9 @@ check(type(defaults) == "table", "zbc_bodycam defaults exist")
 local CLAMPS = {   -- the MCM ranges of the scaled keys (zbc_bodycam CLAMPS)
 	grain = { 0, 1 }, compression = { 0, 1 }, sharpen = { 0, 1 }, edge_soft_blur = { 0, 1 },
 	aberration = { 0, 1 }, rolling_shutter = { 0, 1.5 }, highlight_blowout = { 0, 1 },
-	walk_bob = { 0, 5 }, impacts = { 0, 5 }, fx_glitch_strength = { 0, 1 },
+	walk_bob = { 0, 5 }, impacts = { 0, 5 }, fx_glitch_strength = { 0, 1 }, zoom = { 0.25, 1.5 },
 }
-local DERIVED = { allies_decode_mult = true, allies_pip = true, dark_grain = true }
+local DERIVED = { allies_decode_mult = true, allies_pip = true, dark_grain = true, zoom_mult = true }
 local function copy(t) local o = {} for k, v in pairs(t) do o[k] = v end return o end
 
 -- valid_tier
@@ -61,61 +61,85 @@ check(T.valid_tier(1) == 1 and T.valid_tier(5) == 5 and T.valid_tier("3") == 3, 
 check(T.valid_tier(0) == nil and T.valid_tier(6) == nil and T.valid_tier(nil) == nil and T.valid_tier(0 / 0) == nil,
 	"out of range / nil / NaN: no tier")
 
--- no tier (the core mod alone) and Axon Body 4 (the reference) change nothing
+-- no tier (the core mod alone) changes nothing; Axon Body 4 changes only the watermark (date, time, serial)
+local WATERMARK = { gps_line = true, show_name = true }
 for _, tier in ipairs({ false, 4 }) do
 	local out = T.apply(defaults, tier or nil, CLAMPS)
 	local same = true
 	for k, v in pairs(defaults) do
-		if out[k] ~= v then same = false; print("  differs: " .. k) end
+		local want = v
+		if tier and WATERMARK[k] then want = false end
+		if out[k] ~= want then same = false; print("  differs: " .. k) end
 	end
 	for k in pairs(out) do
 		if defaults[k] == nil and not DERIVED[k] then same = false; print("  extra key: " .. k) end
 	end
-	check(same, "tier " .. tostring(tier) .. ": the settings are the MCM's, unchanged")
-	check(out.allies_decode_mult == 1 and out.allies_pip == true and out.dark_grain == 0,
-		"tier " .. tostring(tier) .. ": neutral decode speed, scope tags on, no dark grain")
+	check(same, "tier " .. tostring(tier) .. ": the settings are the MCM's" .. (tier and " but the watermark" or ""))
+	check(out.allies_decode_mult == 1 and out.allies_pip == true and out.dark_grain == 0 and out.zoom_mult == 1,
+		"tier " .. tostring(tier) .. ": neutral decode speed, scope tags on, no dark grain, Body 4 field of view")
 end
 
--- features: MCM AND camera
+-- features: MCM AND camera, from the real cameras' specs
 do
 	local user = copy(defaults)
-	local b1 = T.apply(user, 1, CLAMPS)
-	check(b1.gps_line == false and b1.show_name == false and b1.event_log == false, "Body 1: date and device only")
-	check(b1.allies == false and b1.face_blur == false and b1.auto_exposure == false, "Body 1: no ID, face blur or auto-exposure")
-	check(b1.night_mode == 2 and b1.review_key == 0, "Body 1: IR night mode off, no footage review key")
-	check(b1.rec_timer == true and b1.battery_gauge == true and b1.event_marker == true and b1.signal_lost == true,
-		"Body 1 keeps REC, battery gauge, EVENT and signal lost")
-	local b2 = T.apply(user, 2, CLAMPS)
-	check(b2.show_name == true and b2.gps_line == false and b2.allies == true, "Body 2: name line, no GPS, friendlies")
-	check(b2.allies_enemies == false and b2.allies_mutants == false and b2.allies_range == 15, "Body 2: friendlies within 15 m")
-	check(b2.allies_decode_mult == 0.5, "Body 2: half-speed identification")
+	user.night_mode = 0   -- IR set to auto in the MCM
+	for t = 1, 5 do
+		local c = T.apply(user, t, CLAMPS)
+		check(c.gps_line == false and c.show_name == false, ("Body %d: real watermark, no GPS line or name"):format(t))
+		check(c.night_mode == 0, ("Body %d: IR is the MCM's choice (no Axon Body has IR)"):format(t))
+		check(c.auto_exposure == true and c.review_key == user.review_key and c.face_blur == user.face_blur,
+			("Body %d: auto-exposure, footage review and face blur on every camera"):format(t))
+		check(c.rec_timer and c.battery_gauge and c.event_marker and c.signal_lost,
+			("Body %d keeps REC, battery gauge, EVENT and signal lost"):format(t))
+	end
+	local b1, b2 = T.apply(user, 1, CLAMPS), T.apply(user, 2, CLAMPS)
+	for t, c in pairs({ b1, b2 }) do
+		check(c.allies == false and c.allies_companion_edge == false and c.event_log == false,
+			("Body %d: no LTE, so no live-map markers and no alerts log"):format(t))
+	end
 	local b3 = T.apply(user, 3, CLAMPS)
-	check(b3.gps_line and b3.event_log and b3.night_mode == user.night_mode and b3.review_key == user.review_key,
-		"Body 3: GPS, event log, IR and review")
-	check(b3.allies_enemies == true and b3.allies_mutants == false and b3.allies_range == 25 and b3.allies_pip == false,
-		"Body 3: enemies within 25 m, no mutants, no scope tags")
-	check(b3.face_blur == false, "Body 3: no face blur")
+	check(b3.allies and b3.allies_companion_edge and b3.event_log, "Body 3: LTE live map and alerts")
+	check(b3.allies_enemies == true and b3.allies_mutants == false and b3.allies_pip == false,
+		"Body 3: enemies, no mutants, no scope tags (Watch Me is Body 4)")
+	check(b3.allies_range == user.allies_range, "Body 3: LTE has no range cap")
 	local b5 = T.apply(user, 5, CLAMPS)
-	check(b5.face_blur and b5.allies_mutants and b5.allies_pip and b5.allies_decode_mult == 1.5, "Body 5: everything, fastest ID")
+	check(b5.allies_mutants and b5.allies_pip and b5.allies_decode_mult == 1.5, "Body 5: everything, fastest ID")
 	-- the MCM switch still wins on the best camera
 	local off = copy(defaults)
-	off.gps_line, off.face_blur = false, false
+	off.face_blur, off.event_log = false, false
 	local b5off = T.apply(off, 5, CLAMPS)
-	check(b5off.gps_line == false and b5off.face_blur == false, "an MCM feature turned off stays off on Body 5")
-	-- a short MCM range stays short
-	local short = copy(defaults)
-	short.allies_range = 10
-	check(T.apply(short, 2, CLAMPS).allies_range == 10, "tier range is a cap, not a floor")
+	check(b5off.face_blur == false and b5off.event_log == false, "an MCM feature turned off stays off on Body 5")
+	check(defaults.night_mode == 2, "IR night look is off by default")
 end
 
--- effects: MCM x multiplier, clamped; 0 stays 0
+-- effects: MCM x multiplier from the real specs, clamped; 0 stays 0
 do
 	local user = copy(defaults)
-	local b1 = T.apply(user, 1, CLAMPS)
-	check(near(b1.grain, defaults.grain * 1.8), "Body 1 grain = MCM x 1.8")
-	check(near(b1.compression, defaults.compression * 2.0), "Body 1 compression = MCM x 2")
-	check(near(b1.sharpen, defaults.sharpen * 0.3), "Body 1 sharpening = MCM x 0.3")
-	check(near(T.apply(user, 5, CLAMPS).grain, defaults.grain * 0.7), "Body 5 grain = MCM x 0.7")
+	local function x(t, k) return T.apply(user, t, CLAMPS)[k] / defaults[k] end
+	-- resolution: 480 / 1080 / 1080 / 1440 / 2160 lines against Body 4's 1440
+	local lines = { 480, 1080, 1080, 1440, 2160 }
+	for t = 1, 5 do
+		check(math.abs(x(t, "sharpen") - lines[t] / 1440) < 0.01, ("Body %d sharpening follows %dp"):format(t, lines[t]))
+	end
+	-- field of view: 130 / 143 / 143 / 160 / 160 deg; a narrower lens zooms in
+	local fov = { 130, 143, 143, 160, 160 }
+	for t = 1, 5 do
+		local c = T.apply(user, t, CLAMPS)
+		check(near(c.zoom_mult, 160 / fov[t], 1e-6) and c.zoom == defaults.zoom, ("Body %d zoom follows %d deg"):format(t, fov[t]))
+	end
+	-- the ratio is applied to the lens zoom the camera ends up with (after the distortion fill)
+	check(read("gamedata/scripts/zbc_bodycam.script"):find("return max(z, fill_zoom(max(d, 0))) * (tonumber(cfg.zoom_mult) or 1)", 1, true) ~= nil,
+		"lens_zoom multiplies the final zoom by the camera's field of view")
+	-- compression: Body 1 at ~0.12 bits per pixel against Body 2's ~0.22
+	check(near(x(1, "compression") / x(2, "compression"), 2.4 / 1.4), "Body 1 compresses ~1.7x Body 2")
+	check(near(T.apply(user, 1, CLAMPS).dark_grain, T.apply(user, 2, CLAMPS).dark_grain), "Body 1 and 2: same low light")
+	-- no generation publishes stabilization or interference differences
+	for t = 1, 5 do
+		local c = T.apply(user, t, CLAMPS)
+		check(c.walk_bob == defaults.walk_bob and c.impacts == defaults.impacts and c.fx_glitch_strength == defaults.fx_glitch_strength,
+			("Body %d: same shake and interference"):format(t))
+		check(c.distortion == defaults.distortion and c.vignette == defaults.vignette, ("Body %d: lens shape is the MCM's"):format(t))
+	end
 	local hi = copy(defaults)
 	hi.grain, hi.rolling_shutter = 0.9, 1.4
 	local c = T.apply(hi, 1, CLAMPS)
@@ -124,15 +148,13 @@ do
 	zero.grain, zero.compression = 0, 0
 	local z = T.apply(zero, 1, CLAMPS)
 	check(z.grain == 0 and z.compression == 0, "an effect at 0 in the MCM stays off")
-	check(near(c.fx_glitch_strength, 1.5) and T.apply(hi, 5, CLAMPS).fx_glitch_strength < 1, "interference: Body 1 x1.5, Body 5 less")
-	check(c.distortion == hi.distortion and c.zoom == hi.zoom and c.vignette == hi.vignette, "lens geometry is the MCM's")
 end
 
 -- every generation is at least as good as the one before
 do
 	local user = copy(defaults)
 	local worse_up = { "grain", "compression", "edge_soft_blur", "aberration", "rolling_shutter", "highlight_blowout",
-		"walk_bob", "impacts", "fx_glitch_strength", "dark_grain" }
+		"walk_bob", "impacts", "fx_glitch_strength", "dark_grain", "zoom_mult" }
 	-- the identification options count only when identification is on at all
 	local function eff(c)
 		local o = copy(c)
@@ -161,12 +183,13 @@ do
 end
 
 -- has_feature
-check(T.has_feature(1, "gps_line") == false and T.has_feature(3, "gps_line") == true, "GPS from Body 3")
-check(T.has_feature(nil, "face_blur") == true and T.has_feature(4, "face_blur") == true, "no tier / Body 4: everything")
+check(T.has_feature(2, "allies") == false and T.has_feature(3, "allies") == true, "live-map markers from Body 3")
+check(T.has_feature(5, "gps_line") == false and T.has_feature(nil, "gps_line") == true, "GPS line: no real camera, core mod keeps it")
+check(T.has_feature(1, "night_mode") == true and T.has_feature(1, "face_blur") == true, "IR and face blur: MCM options on every camera")
 
 -- low-light grain
 check(T.grain_in_dark(0.35, 0.6, 0) == 0.35, "lit: grain as set")
-check(near(T.grain_in_dark(0.35, 0.6, 1), 0.56), "dark on Body 1: 60% more")
+check(near(T.grain_in_dark(0.35, 0.6, 1), 0.56), "dark with a 0.6 boost: 60% more")
 check(near(T.grain_in_dark(0.35, -0.2, 1), 0.28), "dark on Body 5: 20% less")
 check(T.grain_in_dark(0.9, 0.6, 1) == 1 and T.grain_in_dark(0, 0.6, 1) == 0, "clamped, 0 stays 0")
 check(T.grain_in_dark(0.35, 0, 1) == 0.35, "no boost: unchanged")

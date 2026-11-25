@@ -21,9 +21,9 @@ CAMERA_ORDER = {
 }
 
 CAMERAS = {
-	zbc_bodycam_1    = { gen = 1, hud = "zbc_bodycam_1_anim_hud", label = "AXON BODY",   drain_mult = 1.333 },
-	zbc_bodycam_2    = { gen = 2, hud = "zbc_bodycam_2_anim_hud", label = "AXON BODY 2", drain_mult = 1.143 },
-	zbc_bodycam_3    = { gen = 3, hud = "zbc_bodycam_3_anim_hud", label = "AXON BODY 3", drain_mult = 1.053 },
+	zbc_bodycam_1    = { gen = 1, hud = "zbc_bodycam_1_anim_hud", label = "AXON BODY",   drain_mult = 1.167 },
+	zbc_bodycam_2    = { gen = 2, hud = "zbc_bodycam_2_anim_hud", label = "AXON BODY 2", drain_mult = 1.167 },
+	zbc_bodycam_3    = { gen = 3, hud = "zbc_bodycam_3_anim_hud", label = "AXON BODY 3", drain_mult = 1.167 },
 	zbc_bodycam_item = { gen = 4, hud = "zbc_bodycam_anim_hud",   label = "AXON BODY 4", drain_mult = 1.000 },
 	zbc_bodycam_5    = { gen = 5, hud = "zbc_bodycam_5_anim_hud", label = "AXON BODY 5", drain_mult = 0.833 },
 }

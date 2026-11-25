@@ -420,9 +420,9 @@ do
 	check(M.ITEM_SECTION == "zbc_bodycam_item", "ITEM_SECTION stays zbc_bodycam_item for save compatibility")
 	check(type(M.CAMERA_ORDER) == "table" and #M.CAMERA_ORDER == 5, "CAMERA_ORDER lists all 5 cameras")
 	local expected = {
-		zbc_bodycam_1    = { gen = 1, hud = "zbc_bodycam_1_anim_hud", label = "AXON BODY",   drain_mult = 1.333 },
-		zbc_bodycam_2    = { gen = 2, hud = "zbc_bodycam_2_anim_hud", label = "AXON BODY 2", drain_mult = 1.143 },
-		zbc_bodycam_3    = { gen = 3, hud = "zbc_bodycam_3_anim_hud", label = "AXON BODY 3", drain_mult = 1.053 },
+		zbc_bodycam_1    = { gen = 1, hud = "zbc_bodycam_1_anim_hud", label = "AXON BODY",   drain_mult = 1.167 },
+		zbc_bodycam_2    = { gen = 2, hud = "zbc_bodycam_2_anim_hud", label = "AXON BODY 2", drain_mult = 1.167 },
+		zbc_bodycam_3    = { gen = 3, hud = "zbc_bodycam_3_anim_hud", label = "AXON BODY 3", drain_mult = 1.167 },
 		zbc_bodycam_item = { gen = 4, hud = "zbc_bodycam_anim_hud",   label = "AXON BODY 4", drain_mult = 1.000 },
 		zbc_bodycam_5    = { gen = 5, hud = "zbc_bodycam_5_anim_hud", label = "AXON BODY 5", drain_mult = 0.833 },
 	}
@@ -536,7 +536,7 @@ do
 	local before_c1 = c1._cond
 	now_ms = 5000
 	cbs.actor_on_update()
-	check(near(before_c1 - c1._cond, (1 / (4 * 3600)) * 1.333, 1e-9), "Gen 1 drains with drain_mult = 1.333")
+	check(near(before_c1 - c1._cond, (1 / (4 * 3600)) * 1.167, 1e-9), "Gen 1 drains with drain_mult = 1.167 (12 h vs Body 4 14 h)")
 
 	-- Remove Gen 1; drain Body 5 across critical threshold -> requests dead with zbc_bodycam_5_anim_hud
 	c1._parent = nil
