@@ -16,7 +16,7 @@
 
 ## What's new in v1.4.0
 
-- **Five camera generations, Axon Body 1 to 5** (optional item). Each camera matches the real Axon Body's published specs: Body 1 records 480p through a 130° lens, Body 2 and 3 1080p at 143°, Body 4 1440p at 160°, Body 5 up to 4K; markers and the alerts log need LTE, from Body 3. Body 4's picture looks exactly like your MCM settings. Each camera has its own 3D model, icon and battery life.
+- **Five camera generations, Axon Body 1 to 5** (optional item). Each camera matches the real Axon Body's published specs: Body 1 records 480p through a 130° lens, Body 2 1080p at 143°, Body 3 1080p (about 143°, estimated), Body 4 1440p at 160°, Body 5 up to 4K; markers and the alerts log need LTE, from Body 3. Body 4's picture looks exactly like your MCM settings. Each camera has its own 3D model, icon and battery life.
 - **Body 1 is the starter camera**: 5,000 RU at every trader, and every new game starts with one. **Body 2 to 5 are craft only**, each from the one before, behind the same recipe books as GAMMA's night vision. On an existing save, the camera you already carry becomes Body 4.
 - **Battery animations fitted to every camera**: own grips and battery seat on each Axon Body.
 - **Every effect moves.** Interference swells, spikes and tears like a failing digital feed, storms build up, hits jolt the picture, blood splatters stack and drip, and compression blocks up while you turn. No more effects freezing after long play.
@@ -48,7 +48,7 @@ Everything can be tuned or turned off in MCM.
 | [![Interference building up, hard hits, then SIGNAL LOST](docs/images/fx_interference.webp)](docs/images/fx_interference.mp4) | [![Blood splatters, drips and stacks on the lens](docs/images/fx_blood.webp)](docs/images/fx_blood.mp4) |
 | Interference in a psy field, near an anomaly and in a full emission, two hard hits, then the feed dies block by block to SIGNAL LOST. | A hit right in front of the camera: an irregular splash that drips like blood on glass (slowed, then sped up), and splatters stacking. |
 
-| Night mode (IR) and compression |
+| Night mode (IR, optional) and compression |
 |:---:|
 | [![IR night mode and compression keyframes](docs/images/fx_ir_compression.webp)](docs/images/fx_ir_compression.mp4) |
 | IR night mode: the lamp lights the middle, the gain hunts and dark areas boil in blocks. Compression: crisp on each keyframe, then the shadows block up. |
@@ -57,7 +57,7 @@ Everything can be tuned or turned off in MCM.
 
 ## Screenshots
 
-| Front-only face blur, skeleton markers & AXON BODY 4 overlay | Automatic low-light infrared (IR) mode & aim-only labels |
+| Front-only face blur, skeleton markers & AXON BODY 4 overlay | Optional low-light infrared (IR) mode (off by default) & aim-only labels |
 |---|---|
 | ![Front-only face blur and tactical markers](docs/images/face_blur_markers.jpg) | ![Night low-light infrared mode and tactical markers](docs/images/night_ir.jpg) |
 
@@ -93,7 +93,7 @@ The camera you carry decides what the feed can do, matched one to one to the rea
 
 | | Body 1 | Body 2 | Body 3 | Body 4 | Body 5 |
 |---|---|---|---|---|---|
-| Real camera | 2013, 480p, 130° | 2015, 1080p, 143° | 2019, 1080p, LTE | 2023, 1440p, 160° | 2026, up to 4K |
+| Real camera | 2013, 480p, 130° | 2015, 1080p, 143° | 2019, 1080p, ~143° (est.), LTE | 2023, 1440p, 160° | 2026, up to 4K |
 | Sharpness / lens | softest, narrowest | sharper, wider | as Body 2, less motion blur | reference | sharpest |
 | Compression | heaviest | heavy | medium | reference | lightest |
 | Night noise | most | most | less | reference | least |

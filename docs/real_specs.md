@@ -39,7 +39,7 @@ The camera generations (optional bodycam item) follow these published specs one 
 
 
 ## How the mod uses them (zbc_tiers.script)
-Multipliers on the MCM values; Body 4's picture is the identity. (i) = estimated.
+Multipliers on the MCM values; Body 4's picture is the identity. Zoom is the exception: it multiplies the final lens zoom (after the distortion fill), so the field-of-view ratio holds exactly. (i) = estimated.
 
 | In-game | Real basis | B1 | B2 | B3 | B4 | B5 |
 |---|---|---|---|---|---|---|
