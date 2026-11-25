@@ -2,6 +2,7 @@ r"""Zone Bodycam - build the bodycam item's game textures from the Blender outpu
 
     py -I make_item_textures.py <bake dir> <component gamedata dir>
     py -I make_item_textures.py --atlas [<staging dir>] [<component gamedata dir>]
+    py -I make_item_textures.py --atlas-1x1 [--src <2x2 atlas dds>] [--out <1x1 atlas dds>]
 
 <bake dir> is OUT from bake_export.py (PHASE "bake"): swatches.json, one <mat>.png per baked material and
 icon.png. Writes, one texture per model material (no shared atlas):
@@ -15,7 +16,7 @@ icon.png. Writes, one texture per model material (no shared atlas):
                                                (300,0) Body 3 | (400,0) Body 5 Pro
 """
 import argparse, glob, json, os, struct, sys
-from PIL import Image
+from PIL import Image, ImageFilter
 
 SWATCH = 8               # flat-material texture size
 PREFIX = "item_zbc_bodycam_"
@@ -37,6 +38,14 @@ ATLAS_SLOTS = (
     ("ab3", 300),
     ("ab5", 400),
 )
+
+# --atlas-1x1: optional 1x1 inventory icons (optional/bodycam_item_icons_1x1, FOMOD "Small 1x1 icons").
+# Same camera order as ATLAS_SLOTS, one 50x50 cell each, in a 256x64 power-of-two texture:
+#   (0,0) Body 4 | (50,0) Gen 1 | (100,0) Body 2 | (150,0) Body 3 | (200,0) Body 5 Pro
+ATLAS_1X1_TEX = (256, 64)
+ATLAS_1X1_X = {"ab4": 0, "ab1": 50, "ab2": 100, "ab3": 150, "ab5": 200}
+ATLAS_1X1_MARGIN = 2
+DEFAULT_1X1_GAMEDATA = os.path.join(REPO_ROOT, "optional", "bodycam_item_icons_1x1", "gamedata")
 
 DDSD_CAPS, DDSD_HEIGHT, DDSD_WIDTH, DDSD_PITCH, DDSD_PIXELFORMAT, DDSD_MIPMAPCOUNT = 0x1, 0x2, 0x4, 0x8, 0x1000, 0x20000
 DDSCAPS_COMPLEX, DDSCAPS_TEXTURE, DDSCAPS_MIPMAP = 0x8, 0x1000, 0x400000
@@ -130,6 +139,45 @@ def atlas_texture(icon_paths, out_dds, backup_png=DEFAULT_BACKUP_AB4):
     return tex.size
 
 
+def _alpha_bbox(img, threshold=8):
+    return img.getchannel("A").point(lambda a: 255 if a > threshold else 0).getbbox()
+
+
+def atlas_1x1_texture(src_atlas_dds, out_dds, margin=ATLAS_1X1_MARGIN):
+    """1x1 icons for the optional small-icon component, cut from the shipped 2x2 atlas so they show exactly
+    the approved art: each 100x100 slot is cropped to its visible pixels, fitted (aspect kept) into a
+    50x50 cell less `margin` on each side, lightly sharpened (alpha untouched) and centred."""
+    src = Image.open(src_atlas_dds).convert("RGBA")
+    box = CELL_PX - 2 * margin
+    tex = Image.new("RGBA", ATLAS_1X1_TEX, (0, 0, 0, 0))
+    for key, x0 in ATLAS_SLOTS:
+        slot = src.crop((x0, 0, x0 + ICON_CELLS[0] * CELL_PX, ICON_CELLS[1] * CELL_PX))
+        bbox = _alpha_bbox(slot)
+        if not bbox:
+            raise ValueError("%s slot at x=%d of %s is empty" % (key, x0, src_atlas_dds))
+        img = slot.crop(bbox)
+        s = box / max(img.size)
+        img = img.resize((max(1, round(img.width * s)), max(1, round(img.height * s))), Image.LANCZOS)
+        alpha = img.getchannel("A")
+        img = img.filter(ImageFilter.UnsharpMask(1, 50, 2))
+        img.putalpha(alpha)
+        cx = ATLAS_1X1_X[key]
+        tex.paste(img, (cx + (CELL_PX - img.width) // 2, (CELL_PX - img.height) // 2))
+    os.makedirs(os.path.dirname(out_dds), exist_ok=True)
+    tex.save(out_dds, format="DDS")
+    return tex.size
+
+
+def run_atlas_1x1_cli(argv):
+    p = argparse.ArgumentParser(description="Build the 256x64 1x1 icon atlas from the shipped 2x2 atlas.")
+    p.add_argument("--atlas-1x1", action="store_true")
+    p.add_argument("--src", default=os.path.join(DEFAULT_GAMEDATA, "textures", "ui", "ui_icon_zbc_bodycam.dds"))
+    p.add_argument("--out", default=os.path.join(DEFAULT_1X1_GAMEDATA, "textures", "ui", "ui_icon_zbc_bodycam_1x1.dds"))
+    args = p.parse_args(argv)
+    aw, ah = atlas_1x1_texture(args.src, args.out)
+    print("1x1 atlas: %dx%d RGBA DDS -> %s" % (aw, ah, args.out))
+
+
 def run_atlas_cli(argv):
     p = argparse.ArgumentParser(description="Build 512x128 5-camera UI icon DDS atlas.")
     p.add_argument("--atlas", action="store_true", help="Assemble 512x128 5-camera icon atlas")
@@ -161,7 +209,9 @@ def run_atlas_cli(argv):
 
 
 if __name__ == "__main__":
-    if "--atlas" in sys.argv[1:]:
+    if "--atlas-1x1" in sys.argv[1:]:
+        run_atlas_1x1_cli(sys.argv[1:])
+    elif "--atlas" in sys.argv[1:]:
         run_atlas_cli(sys.argv[1:])
     else:
         bake_dir, gamedata = sys.argv[1:3]

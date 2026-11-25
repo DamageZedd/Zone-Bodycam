@@ -14,6 +14,35 @@
 							<files>
 								<folder source="optional\bodycam_item\gamedata" destination="gamedata" priority="1" />
 							</files>
+							<conditionFlags>
+								<flag name="zbc_bodycam_item">On</flag>
+							</conditionFlags>
+							<typeDescriptor>
+								<type name="Optional" />
+							</typeDescriptor>
+						</plugin>
+					</plugins>
+				</group>
+			</optionalFileGroups>
+		</installStep>
+		<installStep name="Bodycam item icons">
+			<visible>
+				<flagDependency flag="zbc_bodycam_item" value="On" />
+			</visible>
+			<optionalFileGroups order="Explicit">
+				<group name="Inventory icon size" type="SelectExactlyOne">
+					<plugins order="Explicit">
+						<plugin name="Standard 2x2 icons">
+							<description>The Axon Body cameras take 2x2 cells in the inventory (default).</description>
+							<typeDescriptor>
+								<type name="Recommended" />
+							</typeDescriptor>
+						</plugin>
+						<plugin name="Small 1x1 icons">
+							<description>The Axon Body cameras take a single 1x1 cell in the inventory, with smaller icons of the same cameras. Needs modded exes (DLTX; GAMMA has them).</description>
+							<files>
+								<folder source="optional\bodycam_item_icons_1x1\gamedata" destination="gamedata" priority="2" />
+							</files>
 							<typeDescriptor>
 								<type name="Optional" />
 							</typeDescriptor>

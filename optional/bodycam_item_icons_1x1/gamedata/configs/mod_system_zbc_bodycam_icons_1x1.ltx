@@ -1,0 +1,40 @@
+; Zone Bodycam - small 1x1 inventory icons for the five Axon Body cameras (optional FOMOD component, needs the
+; bodycam item component). DLTX patch for the sections in items\items\items_zbc_bodycam.ltx (needs modded exes;
+; GAMMA has them). Atlas: textures\ui\ui_icon_zbc_bodycam_1x1.dds, 256x64, one 50x50 cell per camera, built by
+; tools\bodycam_item\make_item_textures.py --atlas-1x1. Every key is set on every section: the children carry
+; their own inv_grid_x and must not depend on what they inherit from [zbc_bodycam_item].
+
+![zbc_bodycam_item]
+icons_texture   = ui\ui_icon_zbc_bodycam_1x1
+inv_grid_width  = 1
+inv_grid_height = 1
+inv_grid_x      = 0
+inv_grid_y      = 0
+
+![zbc_bodycam_1]
+icons_texture   = ui\ui_icon_zbc_bodycam_1x1
+inv_grid_width  = 1
+inv_grid_height = 1
+inv_grid_x      = 1
+inv_grid_y      = 0
+
+![zbc_bodycam_2]
+icons_texture   = ui\ui_icon_zbc_bodycam_1x1
+inv_grid_width  = 1
+inv_grid_height = 1
+inv_grid_x      = 2
+inv_grid_y      = 0
+
+![zbc_bodycam_3]
+icons_texture   = ui\ui_icon_zbc_bodycam_1x1
+inv_grid_width  = 1
+inv_grid_height = 1
+inv_grid_x      = 3
+inv_grid_y      = 0
+
+![zbc_bodycam_5]
+icons_texture   = ui\ui_icon_zbc_bodycam_1x1
+inv_grid_width  = 1
+inv_grid_height = 1
+inv_grid_x      = 4
+inv_grid_y      = 0

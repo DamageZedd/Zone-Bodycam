@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Small 1x1 inventory icons** (FOMOD step "Bodycam item icons", shown with the bodycam item): an optional DLTX patch (`optional/bodycam_item_icons_1x1`) makes the five Axon Body cameras take one inventory cell instead of 2x2, with 50x50 icons cut from the same art (`make_item_textures.py --atlas-1x1`). Test: `tools/tests/zbc_item_icons_1x1_test.lua`.
+
 ## v1.4.0 - 2026-11-25
 
 ### Fixed
