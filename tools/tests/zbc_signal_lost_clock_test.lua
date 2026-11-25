@@ -109,7 +109,7 @@ check(bc:find("function ZbcDeathClock:Update%(%)%s+CUIScriptWnd%.Update%(self%)%
 	"the ZbcDeathClock window ticks the clock every frame")
 do
 	local sh = bc:find("death_clock:Show(true)", 1, true)
-	local ad = bc:find("get_hud():AddDialogToRender(death_clock)", 1, true)
+	local ad = bc:find("h:AddDialogToRender(death_clock)", 1, true)
 	check(sh and ad and sh < ad and ad - sh < 120,
 		"the clock window is shown before it is added (the HUD only updates shown dialogs)")
 end

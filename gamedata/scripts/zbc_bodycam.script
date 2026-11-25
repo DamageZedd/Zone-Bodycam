@@ -1510,10 +1510,13 @@ function get_rolling_shutter()
 	return lens_state and lens_state.shutter or 0
 end
 
+-- no game HUD yet (a load or level change in progress): nothing is created; actor_on_update retries
 local function hud_add()
 	if HUD or not cfg.enabled or not powered() then return end
+	local h = get_hud()
+	if not h then return end
 	HUD = ZbcHud()
-	get_hud():AddDialogToRender(HUD)
+	h:AddDialogToRender(HUD)
 end
 
 local function hud_remove()
@@ -1610,9 +1613,11 @@ local function death_clock_start(death_t)
 	death_real = real_now()
 	death_game_t = death_t
 	death_logged = false
+	local h = get_hud()
+	if not h then return end                 -- no game HUD: the shader's game-clock age still plays
 	death_clock = ZbcDeathClock()
 	death_clock:Show(true)                   -- shown, like any HUD dialog, or the HUD skips its Update
-	get_hud():AddDialogToRender(death_clock)
+	h:AddDialogToRender(death_clock)
 end
 
 local function settings_changed()
@@ -1769,8 +1774,8 @@ function actor_on_update()
 	if not was_powered then
 		was_powered = true
 		motion_reset()                       -- fades back in
-		hud_add()
 	end
+	if not HUD then hud_add() end            -- also retries one skipped while there was no game HUD
 	local visible = hud_visible()
 	local ox, oy, orr, inten = 0, 0, 0, 0
 	local vx, vy, vt, vr, occ_x, occ_y, rs = 0, 0, 0, 0, 0, 0, 0
