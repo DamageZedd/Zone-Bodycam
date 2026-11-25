@@ -6,7 +6,7 @@
 
 *See the Zone through a chest-mounted police bodycam.*
 
-![Version](https://img.shields.io/badge/version-v1.3.0-e0a43c?style=for-the-badge) ![Author](https://img.shields.io/badge/by-Damage__Zedd-8fae5a?style=for-the-badge) ![Game](https://img.shields.io/badge/S.T.A.L.K.E.R.-Anomaly%201.5.3%20%2F%20GAMMA-555555?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-v1.4.0-e0a43c?style=for-the-badge) ![Author](https://img.shields.io/badge/by-Damage__Zedd-8fae5a?style=for-the-badge) ![Game](https://img.shields.io/badge/S.T.A.L.K.E.R.-Anomaly%201.5.3%20%2F%20GAMMA-555555?style=for-the-badge)
 
 [![Zone Bodycam gameplay](docs/images/gameplay.webp)](docs/images/gameplay.mp4)
 
@@ -14,13 +14,16 @@
 
 </div>
 
-## What's new in v1.3.0
+## What's new in v1.4.0
 
-- **Rain on the lens is the game's own visor drops.** Dynamic Visor Drops (or the base game's mask rain) now shows on the bodycam, with or without a mask. Our own drops are gone.
-- **Wipe with T.** The mask-wipe key (Zoom in) clears the drops, with or without a mask.
-- **Calmer psy fields.** A steady psy field (like around the Yantar lab) only flickers the picture now; it tears apart only when your psy health is nearly gone. New **Interference strength** slider.
-- **Every effect can be switched off in MCM**: new switches for rain on the lens, the lens housing edge and the battery gauge. *Lens dirt* is now *Blood on the lens*.
-- **Turn off Dynamic Smoother Droplets** if you use it: it breaks Dynamic Visor Drops, mask or not.
+- **Five camera generations, Axon Body 1 to 5** (optional item). The camera you carry decides what the feed can do: Body 1 is grainy, soft and has no GPS, night mode or identification; Body 5 is the cleanest, with the fastest identification. Body 4 looks exactly like your MCM settings. Each camera has its own 3D model, icon and battery life.
+- **Body 1 is the starter camera**: 5,000 RU at every trader, and every new game starts with one. **Body 2 to 5 are craft only**, each from the one before, behind the same recipe books as GAMMA's night vision. On an existing save, the camera you already carry becomes Body 4.
+- **Battery animations fitted to every camera**: own grips and battery seat on each Axon Body.
+- **Every effect moves.** Interference swells, spikes and tears like a failing digital feed, storms build up, hits jolt the picture, blood splatters stack and drip, and compression blocks up while you turn. No more effects freezing after long play.
+- **T plays the visor-wipe animation** when you wipe the lens, mask or not.
+- **Signal lost always plays on death**, also with death screen mods that stop time (Death Like Romeo), and replaces their screen while it is on. Without the Shader Bus their screen plays instead.
+- **Markers through scopes** are placed right at every zoom step, including the top of 3-24x scopes.
+- **Fixes:** identified people are remembered across loads and level changes again; no more "cannot access class member Alive!" log spam from the markers; no overlay error while a level loads.
 
 Full history in [CHANGELOG.md](CHANGELOG.md).
 
@@ -113,7 +116,7 @@ The camera you carry decides what the feed can do: **Axon Body 1 is the worst, A
 | **Body motion** | Overall amount, turn lag, walking bob, camera roll, impacts, breathing |
 | **Overlay** | Overlay on/off, recording timer on/off, battery gauge on/off, device name, show your name, logo style, time zone, text size and opacity |
 | **Ally markers** | On/off, only NPCs you can see, show names, mark enemies, mark mutants, style, friendly/enemy/companion colours, range, size, opacity |
-| **Item** (optional) | Battery life, hand animations on/off |
+| **Item** (optional) | Battery life, hand animations on/off, camera generations on/off |
 
 ## Good to know
 

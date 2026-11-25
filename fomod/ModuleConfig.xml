@@ -10,7 +10,7 @@
 				<group name="Optional components" type="SelectAny">
 					<plugins order="Explicit">
 						<plugin name="Bodycam item (battery powered)">
-							<description>Adds a Body Camera item sold by general traders. The bodycam effect only runs while you carry a charged camera anywhere in your inventory; it drains in real time and takes standard batteries (drag a battery onto it). Battery life is set in MCM (Zone Bodycam: Item). The REC timer keeps counting while the camera is off. Leave unchecked to keep the bodycam always on.</description>
+							<description>Adds battery-powered Axon Body cameras in five generations: Body 1 is the worst, Body 5 the best (picture quality and features such as GPS, night mode and identification). Body 1 is sold by traders for 5,000 and given on a new game; Body 2 to 5 are crafted, each from the one before, behind the electronics recipe books. The bodycam effect only runs while you carry a charged camera anywhere in your inventory; it drains in real time and takes standard batteries (drag a battery onto it). Battery life and camera generations are set in MCM (Zone Bodycam: Item). The REC timer keeps counting while the camera is off. Leave unchecked to keep the bodycam always on.</description>
 							<files>
 								<folder source="optional\bodycam_item\gamedata" destination="gamedata" priority="1" />
 							</files>

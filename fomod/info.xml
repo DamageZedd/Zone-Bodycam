@@ -2,7 +2,7 @@
 <fomod>
 	<Name>Zone Bodycam</Name>
 	<Author>Built for this GAMMA setup. Motion model after Sludge's Intrusive 3D Masks.</Author>
-	<Version>1.3.0</Version>
-	<Description>Chest-mounted tactical bodycam: post-upscale optical fisheye lens, squircle housing and chest-rig occlusion, Axon CMOS sensor pipeline, damped body motion, line-of-sight ally markers, and a top-right overlay rendered inside postprocess above the vignette. Automatically scales across 4:3, 16:9, 21:9, and 32:9 displays with zero extra patches required. Everything is configurable in MCM. Optional: a battery-powered Body Camera item with hand animations. The lens needs modded exes 2026.10.11 or newer (Shader Bus); the Slop-Ray engine also works.</Description>
+	<Version>1.4.0</Version>
+	<Description>Chest-mounted tactical bodycam: post-upscale optical fisheye lens, squircle housing and chest-rig occlusion, Axon CMOS sensor pipeline, damped body motion, line-of-sight ally markers, dynamic camera effects and a top-right overlay rendered inside postprocess above the vignette. Automatically scales across 4:3, 16:9, 21:9, and 32:9 displays with zero extra patches required. Everything is configurable in MCM. Optional: battery-powered Axon Body cameras in five generations (Body 1 worst, Body 5 best) with hand animations. The lens needs modded exes 2026.10.11 or newer (Shader Bus); the Slop-Ray engine also works.</Description>
 	<Groups><element>Visual</element></Groups>
 </fomod>

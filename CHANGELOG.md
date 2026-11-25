@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## v1.4.0 - 2026-11-25
 
 ### Fixed
+- **Overlay error while loading or changing level** (`zbc_bodycam.script`): the overlay window was added to the game HUD without checking it was up, so a load or level change could throw `attempt to index a nil value` and the overlay never came back. Nothing is created until the HUD is there, and it is retried every update. Test: `tools/tests/zbc_hud_guard_test.lua`.
+- **"cannot access class member Alive!" log spam** (`zbc_allies.script`): the ally markers called `alive()` on whatever the camera pointed at, so barrels, crates, artefacts and stashes logged an error every frame. The aimed-at object is now checked to be a stalker or mutant first. Test: `tools/tests/zbc_allies_aim_target_test.lua`.
 - **No death screen at all without the Shader Bus** (`zbc_bodycam.script`, `zbc_fx.script`): with signal lost on, Death Like Romeo's death handler is taken over, but on exes without the Shader Bus signal lost cannot play and returned silently, so neither screen showed. `signal_lost` now says whether it played, and Romeo's screen plays when it did not. Test: `tools/tests/zbc_death_screen_nobus_test.lua`.
 - **Identified people were forgotten on every load and level change** (`zbc_bodycam.script`): its first update cleared `zbc_allies`' identifications right after `load_state` had restored them from the save. `zbc_allies` already clears them itself for a game started without the saved data. Test: `tools/tests/zbc_saved_ids_test.lua`.
 - **The left wrist stayed bent after pushing the battery in** (all cameras, `hud_anim2.py`): after the push it now straightens into line with the forearm over about 0.4 s instead of keeping the pushing angle until the hand leaves the screen.
@@ -11,6 +13,7 @@
 - **Markers through a variable-zoom scope were wrong at its highest zoom** (`zbc_allies.script`, also the face blur): a zoom factor of 8 or less was read as a plain power, so the 24x top of a 3-24x scope was placed as 4x. Every zoom step now uses 100 / zoom factor, as the Bodycam exes render it.
 
 ### Changed
+- **The lens wipe plays the visor-wipe hand animation** (`zbc_fx.script`): the mask-wipe key (Zoom in, T by default) now plays the game's mask-wipe animation for the camera lens too, with or without a mask, and the drops are wiped in step with the hand. When the animation cannot start, the drops are simply cleared as before.
 - **Signal lost is the only death screen while it is on** (`zbc_fx.script`): another death screen mod's death handler is taken off `actor_on_before_death` on load, so Death Like Romeo's black screen, time stop, mute, logo and quote no longer cover the camera's own death. Romeo's files are not touched; its handler is only called by us when signal lost does not play (camera off or out of power, or a death another mod cancels, such as a Soulslike respawn), and it is given back when signal lost is switched off. Test: `tools/tests/zbc_death_screen_test.lua`.
 - **Every camera effect moves** instead of sitting still:
   - **Interference** swells and fades around its level from the source, gets short random spikes (more often and stronger the more interference there is), tracking bands roll through the picture, a hum wobble scrolls up it and the colour split jitters. An **emission or psy storm builds up** over its first 40 s instead of switching straight to one flat level.
@@ -41,7 +44,7 @@
   - **Axon Body 5 Pro** (`[zbc_bodycam_5]`): `0.33 kg`, `24000 RU`, Tier 5, `4.8 h` (+20%) battery endurance (`drain_mult = 0.833`), `AXON BODY 5` OSD watermark.
   - **Bespoke 1:1 3D world & first-person HUD models**: procedural Blender builders (`tools/bodycam_item/build_model_{1,2,3,5}.py` alongside `build_model.py`), world physics meshes (`zbc_bodycam_{1,2,3,5}.ogf`), in-hand animated battery-swap HUD meshes (`zbc_bodycam_{1,2,3,5}_hud.ogf` bound to `[zbc_bodycam_{1,2,3,5}_anim_hud]`), uncompressed mipmapped BGRA material textures, and a `512×128` RGBA 5-camera inventory icon atlas (`ui_icon_zbc_bodycam.dds`, built via `make_item_textures.py --atlas`).
   - **Smart multi-camera selection, endurance & dynamic OSD watermark (`zbc_item.script`, `zbc_item_anim.script`, `zbc_bodycam.script`)**: automatically runs the fullest carried camera with generation tie-breaking (`best_index(charges, gens)`) and `0.2%` active-camera hysteresis (`STICKY_EPS`) to prevent 1 Hz ping-ponging between two full cameras, routes `"dead"` and `"insert"` hand animations to the matching camera's HUD section, and dynamically updates the default top-right OSD device watermark (`set_device_source` / `effective_device_label()`) while still honoring custom MCM device labels.
-  - **21-trader Zone progression & full ENG/RUS localization**: tiered `supplies_1`–`supplies_3` DLTX stock across all 18 existing trader profiles plus 3 new Ecologist & ISG files (`mod_trade_ecolog_sakharov_zbc_bodycam.ltx`, `mod_trade_ecolog_hermann_zbc_bodycam.ltx`, `mod_trade_isg_zbc_bodycam.ltx`), and matching English + `windows-1251` Russian item names and descriptions.
+  - **English and Russian** names and descriptions for all five cameras (Russian in `windows-1251`).
 
 ## v1.3.0 - 2026-11-22
 
