@@ -400,6 +400,18 @@ function markable(obj)
 	return true
 end
 
+-- The aimed-at object can become the ID target. It is checked for stalker/monster BEFORE alive():
+-- the engine logs "cannot access class member Alive!" for every alive() call on a barrel, crate,
+-- artefact or stash.
+function aim_target_ok(tobj, actor, scan_mutants, scan_enemies)
+	if not (tobj and tobj:id() ~= 0) then return false end
+	local is_stk = IsStalker and IsStalker(tobj)
+	local is_mon = scan_mutants and IsMonster and IsMonster(tobj)
+	if not (is_stk or is_mon) then return false end
+	if not (tobj.alive and tobj:alive() and markable(tobj)) then return false end
+	return scan_enemies or tobj:relation(actor) ~= game_object.enemy
+end
+
 -- The Bodycam exes can decouple the camera from the gun; first_person's "camera_aim" pose is where the
 -- gun really points. Unarmed, sprinting, in freelook or while the weapon is busy, the camera centre
 -- counts instead. Returns position, direction or nil.
@@ -2029,10 +2041,7 @@ function update(pool, cfg, L, visible)
 	else
 		tobj = level.get_target_obj and level.get_target_obj()
 	end
-	if tobj and tobj:id() ~= 0 and tobj.alive and tobj:alive() and markable(tobj)
-		and (IsStalker(tobj) or (scan_mutants and IsMonster and IsMonster(tobj)))
-		and (scan_enemies or tobj:relation(actor) ~= game_object.enemy)
-	then
+	if aim_target_ok(tobj, actor, scan_mutants, scan_enemies) then
 		aim_target = tobj:id()
 	end
 	if aim_target then
