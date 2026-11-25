@@ -9,11 +9,17 @@
   <string id="ui_mcm_zone_bodycam_breathing">
     <text>Дыхание</text>
   </string>
+  <string id="ui_mcm_zone_bodycam_custom_device_label">
+    <text>Своё название устройства</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_custom_device_label_desc">
+    <text>Вкл.: текст ниже заменяет настоящее название модели камеры. Выкл. (по умолчанию): оверлей показывает настоящее название камеры, которую вы носите (AXON BODY, AXON BODY 2 ... AXON BODY 5), и меняется вместе с ней.</text>
+  </string>
   <string id="ui_mcm_zone_bodycam_device_label">
     <text>Название устройства</text>
   </string>
   <string id="ui_mcm_zone_bodycam_device_label_desc">
-    <text>Текст перед серийным номером во второй строке.</text>
+    <text>Текст перед серийным номером во второй строке. Используется только при включённом «Своё название устройства».</text>
   </string>
   <string id="ui_mcm_zone_bodycam_distortion">
     <text>Искажение «рыбий глаз»</text>

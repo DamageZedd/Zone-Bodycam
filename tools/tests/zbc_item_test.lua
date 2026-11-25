@@ -798,7 +798,10 @@ do
 	cur_dev = "AXON BODY"
 	mcm_vals["zone_bodycam/device_label"] = "CUSTOM UNIT 7"
 	if cbs.on_option_change then cbs.on_option_change() end
-	check(benv.effective_device_label() == "CUSTOM UNIT 7", "custom user MCM device_label overrides device_source")
+	check(benv.effective_device_label() == "AXON BODY", "custom MCM text alone does not replace the real camera name (toggle off)")
+	mcm_vals["zone_bodycam/custom_device_label"] = true
+	if cbs.on_option_change then cbs.on_option_change() end
+	check(benv.effective_device_label() == "CUSTOM UNIT 7", "custom device name toggle on: the MCM text overrides device_source")
 end
 
 -- Configs & Assets verification (LTX, DLTX, 21 trader files, OGFs, and 512x128 DDS atlas)

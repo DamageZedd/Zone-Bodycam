@@ -65,6 +65,7 @@ function on_mcm_load()
 			{ id = "gps_line",       type = "check", val = 1, def = d("gps_line") },
 			{ id = "event_log",      type = "check", val = 1, def = d("event_log") },
 			{ id = "review_key",     type = "key_bind", val = 2, def = d("review_key") },
+			{ id = "custom_device_label", type = "check", val = 1, def = d("custom_device_label") },
 			{ id = "device_label",   type = "input", val = 0, def = d("device_label") },
 			{ id = "show_name",      type = "check", val = 1, def = d("show_name") },
 			{ id = "logo_style",     type = "list",  val = 2, def = d("logo_style"),

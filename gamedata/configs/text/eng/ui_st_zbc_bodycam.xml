@@ -9,11 +9,17 @@
   <string id="ui_mcm_zone_bodycam_breathing">
     <text>Breathing</text>
   </string>
+  <string id="ui_mcm_zone_bodycam_custom_device_label">
+    <text>Custom device name</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_custom_device_label_desc">
+    <text>On: the text below replaces the camera's real model name. Off (default): the overlay shows the real name of the camera you carry (AXON BODY, AXON BODY 2 ... AXON BODY 5) and changes with it.</text>
+  </string>
   <string id="ui_mcm_zone_bodycam_device_label">
     <text>Device name</text>
   </string>
   <string id="ui_mcm_zone_bodycam_device_label_desc">
-    <text>Text before the serial number on the second line.</text>
+    <text>Text before the serial number on the second line. Used only with "Custom device name" on.</text>
   </string>
   <string id="ui_mcm_zone_bodycam_distortion">
     <text>Fisheye distortion</text>

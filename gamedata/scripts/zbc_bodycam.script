@@ -78,7 +78,8 @@ defaults = {
 	breathing      = 1.0,
 	-- overlay
 	overlay        = true,
-	device_label   = "AXON BODY 4",
+	custom_device_label = false,  -- off: the carried camera's real model name (AXON BODY .. AXON BODY 5)
+	device_label   = "AXON BODY 4",  -- custom device name, used only with custom_device_label on
 	logo_style     = 0,      -- 0 official logo texture, 1 swirl triangle, 2 plain triangle, 3 none
 	show_name      = true,
 	timezone       = 0,      -- 0 Zone time (+0200 / +0300 summer), 1 UTC
@@ -464,7 +465,7 @@ local function battery_level()
 end
 
 -- Device watermark: the item component registers a function giving the carried camera's model label
--- (e.g. "AXON BODY 2"). Used only while device_label is at its default, so custom MCM text still wins.
+-- (e.g. "AXON BODY 2"). The MCM device name replaces it only while its "custom device name" toggle is on.
 local device_source = nil
 
 function set_device_source(fn)
@@ -489,13 +490,21 @@ end
 
 function active_tier() return cur_tier end
 
+-- The device name on the overlay: the custom MCM text when its toggle is on (and it is not blank), else the
+-- carried camera's real model name, else (no item component or no camera) fallback.
+function pick_device_label(custom_on, custom_text, auto_label, fallback)
+	if custom_on == true and type(custom_text) == "string" and custom_text:find("%S") then return custom_text end
+	if type(auto_label) == "string" and #auto_label > 0 then return auto_label end
+	return fallback
+end
+
 function effective_device_label()
-	local cur = cfg.device_label or defaults.device_label
-	if cur == defaults.device_label and device_source then
+	local auto = nil
+	if device_source then
 		local ok, v = pcall(device_source)
-		if ok and type(v) == "string" and #v > 0 then return v end
+		if ok then auto = v end
 	end
-	return cur
+	return pick_device_label(cfg.custom_device_label, cfg.device_label, auto, defaults.device_label)
 end
 
 -- Each bar is a 25% chunk: lit bars (0..4) for a charge, any charge left shows at least one bar
