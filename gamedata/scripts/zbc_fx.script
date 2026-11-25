@@ -520,7 +520,11 @@ function actor_on_before_death(who, flags)
 		return
 	end
 	F.death_t = now_s()
-	if zbc_bodycam.signal_lost then zbc_bodycam.signal_lost(F.death_t) end
+	-- signal lost cannot play without the Shader Bus: the death screen we took over plays instead
+	if not zbc_bodycam.signal_lost or zbc_bodycam.signal_lost(F.death_t) == false then
+		F.death_t = 0
+		others_death(who, flags)
+	end
 end
 
 -- Rain on the lens is the game's own visor drops: level_environment.update_rain_droplets (Dynamic

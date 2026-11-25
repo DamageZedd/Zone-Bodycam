@@ -1718,9 +1718,11 @@ end
 
 -- Called by zbc_fx on the actor's death: the shader takes it from here (glitch, cut to black,
 -- "SIGNAL LOST" over the last timestamp), timed from death_t on its own clock, so it keeps going
--- even if the scripts stop updating.
+-- even if the scripts stop updating. Returns true when it plays (or already is), false when it cannot
+-- (no Shader Bus): zbc_fx then gives the death to the other death screen it took over.
 function signal_lost(death_t)
-	if dead or not bus_ready() then return end
+	if dead then return true end
+	if not bus_ready() then return false end
 	dead = true
 	send("glitch", 0, 0, death_t, 0)               -- the shader times the break-up from death_t
 	local ok, err = pcall(death_clock_start, death_t)   -- and from the real clock, if game time stops
@@ -1730,6 +1732,7 @@ function signal_lost(death_t)
 	upload_osd_chars(date, "", "", zbc_allies and zbc_allies.upper_cp1251
 		and zbc_allies.upper_cp1251(game.translate_string("st_zbc_signal_lost")) or "SIGNAL LOST")
 	hud_remove()                                   -- markers, labels and HUD text go with the feed
+	return true
 end
 
 -- a different camera generation carried: the settings, lens lanes and overlay lines follow it
