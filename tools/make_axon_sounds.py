@@ -148,6 +148,28 @@ def build_axon_mic_clip():
     return out
 
 
+def build_axon_respond():
+    """Distinct urgent 3-note Axon Respond dispatch alert chime."""
+    return (
+        _tone(2450.0, 0.050, amp=0.72)
+        + _silence(0.028)
+        + _tone(2950.0, 0.050, amp=0.75)
+        + _silence(0.028)
+        + _tone(3450.0, 0.085, amp=0.78)
+        + _silence(0.015)
+    )
+
+
+def build_axon_sync():
+    """Gentle ascending 2-note hub dock/sync chime."""
+    return (
+        _tone(1560.0, 0.065, amp=0.45, harmonic2=0.08, harmonic3=0.0)
+        + _silence(0.040)
+        + _tone(2080.0, 0.095, amp=0.50, harmonic2=0.08, harmonic3=0.0)
+        + _silence(0.015)
+    )
+
+
 SOUNDS = {
     "axon_start": build_axon_start,
     "axon_stop": build_axon_stop,
@@ -156,6 +178,8 @@ SOUNDS = {
     "axon_low_batt": build_axon_low_batt,
     "axon_mute": build_axon_mute,
     "axon_mic_clip": build_axon_mic_clip,
+    "axon_respond": build_axon_respond,
+    "axon_sync": build_axon_sync,
 }
 
 

@@ -1,0 +1,294 @@
+--[[
+	Zone Bodycam - Axon Respond & Psy OSD Corruption (zbc_respond.script)
+
+	1. Companion / Squad "Axon Respond" Live Feed Alerts (Body 3+ LTE gated; or always when tier is nil):
+	   - Companion wounded / down alerts
+	   - High-tier mutant contact alerts (chimera, pseudogiant/gigant, controller, burer,
+	     bloodsucker, psysucker, karlik, poltergeist)
+	   - 5.0s active ALERT banner state, 15.0s per-type cooldown to prevent spam
+	   - Fires callbacks.on_alert(text, kind) for audio + event log integration
+
+	2. Psy / Controller OSD Text Corruption:
+	   - corrupt_osd_text(str, psy_intensity, step_seed) deterministically glitches OSD digits/chars
+	     when psy_intensity > 0.15 using pure Lua math (no math.random side effects)
+	   - get_psy_intensity(actor) safely reads actor.psy_health (0 when headless)
+
+	Safe when Anomaly globals (db, axr_companions, level) are absent (e.g., headless tests).
+]]
+
+local min, max, floor = math.min, math.max, math.floor
+local sub, upper, lower, find = string.sub, string.upper, string.lower, string.find
+
+DEFAULTS = {
+	respond_alerts  = true,
+	psy_osd_corrupt = true,
+}
+
+local ALERT_DURATION  = 5.0
+local ALERT_COOLDOWN  = 15.0
+local MAX_CONTACT_DIST = 150.0
+local PSY_THRESHOLD   = 0.15
+
+local HIGH_TIER_MUTANTS = {
+	{ pattern = "chimera",     label = "CHIMERA" },
+	{ pattern = "pseudogiant", label = "PSEUDOGIANT" },
+	{ pattern = "gigant",      label = "PSEUDOGIANT" },
+	{ pattern = "controller",  label = "CONTROLLER" },
+	{ pattern = "burer",       label = "BURER" },
+	{ pattern = "bloodsucker", label = "BLOODSUCKER" },
+	{ pattern = "psysucker",   label = "PSYSUCKER" },
+	{ pattern = "karlik",      label = "KARLIK" },
+	{ pattern = "poltergeist", label = "POLTERGEIST" },
+}
+
+local GLITCH_DIGITS  = { "X", "8", "9", "?", "#", "*", "0", "3" }
+local GLITCH_LETTERS = { "X", "#", "?", "3", "7", "_", "/", "!" }
+
+local sim_time           = 0.0
+local alert_text         = nil
+local alert_timer        = 0.0
+local last_alert_time    = {}
+local companion_hp_cache = {}
+local callbacks          = {}
+
+local function opt_bool(cfg, key, default_val)
+	if type(cfg) == "table" and cfg[key] ~= nil then
+		return cfg[key] == true
+	end
+	return default_val
+end
+
+local function clamp(v, lo, hi)
+	if v < lo then return lo end
+	if v > hi then return hi end
+	return v
+end
+
+local function match_high_tier_mutant(species)
+	if type(species) ~= "string" or species == "" then
+		return nil
+	end
+	local s = lower(species)
+	for i = 1, #HIGH_TIER_MUTANTS do
+		local entry = HIGH_TIER_MUTANTS[i]
+		if find(s, entry.pattern, 1, true) then
+			return entry.label
+		end
+	end
+	return nil
+end
+
+local function trigger_alert(kind, text, tier, cfg)
+	if not supports_respond(tier) then
+		return false
+	end
+	if not opt_bool(cfg, "respond_alerts", DEFAULTS.respond_alerts) then
+		return false
+	end
+	local prev = last_alert_time[kind]
+	if prev ~= nil and (sim_time - prev) < ALERT_COOLDOWN then
+		return false
+	end
+
+	last_alert_time[kind] = sim_time
+	alert_text = text
+	alert_timer = ALERT_DURATION
+
+	if type(callbacks.on_alert) == "function" then
+		pcall(callbacks.on_alert, text, kind)
+	end
+	return true
+end
+
+function supports_respond(tier)
+	if tier == nil then
+		return true
+	end
+	local t = tonumber(tier)
+	return t ~= nil and t >= 3
+end
+
+function set_callbacks(tbl)
+	if type(tbl) == "table" then
+		callbacks.on_alert = tbl.on_alert
+	else
+		callbacks = {}
+	end
+end
+
+function reset()
+	sim_time = 0.0
+	alert_text = nil
+	alert_timer = 0.0
+	last_alert_time = {}
+	companion_hp_cache = {}
+	callbacks = {}
+end
+
+function get_active_alert()
+	if alert_text ~= nil and alert_timer > 0.0 then
+		return alert_text
+	end
+	return nil
+end
+
+function is_alert_active()
+	return alert_text ~= nil and alert_timer > 0.0
+end
+
+function on_companion_hit(name, hp_ratio, tier, cfg)
+	if type(hp_ratio) == "number" and hp_ratio <= 0.0 then
+		return on_companion_down(name, tier, cfg)
+	end
+	if type(hp_ratio) == "number" and hp_ratio >= 1.0 then
+		return false
+	end
+	local label = (type(name) == "string" and name ~= "")
+		and ("ALERT: " .. upper(name) .. " HIT")
+		or "ALERT: SQUAD WOUNDED"
+	return trigger_alert("companion_hit", label, tier, cfg)
+end
+
+function on_companion_down(name, tier, cfg)
+	return trigger_alert("companion_down", "ALERT: SQUAD DOWN", tier, cfg)
+end
+
+function on_high_tier_mutant(species, dist, tier, cfg)
+	local label = match_high_tier_mutant(species)
+	if not label then
+		return false
+	end
+	if type(dist) == "number" and dist > MAX_CONTACT_DIST then
+		return false
+	end
+	return trigger_alert("high_tier_mutant", "CONTACT: " .. label, tier, cfg)
+end
+
+function poll_squad(dt, tier, cfg)
+	if not axr_companions or type(axr_companions.companion_squads) ~= "table" then
+		return
+	end
+	if not level or type(level.object_by_id) ~= "function" then
+		return
+	end
+	if not supports_respond(tier) or not opt_bool(cfg, "respond_alerts", DEFAULTS.respond_alerts) then
+		return
+	end
+
+	local ok = pcall(function()
+		for _, squad in pairs(axr_companions.companion_squads) do
+			if squad and type(squad.squad_members) == "function" then
+				for member in squad:squad_members() do
+					local id = member and member.id
+					if id then
+						local npc = level.object_by_id(id)
+						if npc then
+							local alive = true
+							if type(npc.alive) == "function" then
+								alive = (npc:alive() == true)
+							end
+							local hp = (type(npc.health) == "number") and npc.health
+								or (type(npc.health) == "function" and npc:health())
+								or 1.0
+							local name = (type(npc.character_name) == "function") and npc:character_name() or nil
+							local prev_hp = companion_hp_cache[id]
+
+							if not alive or hp <= 0.0 then
+								if prev_hp == nil or prev_hp > 0.0 then
+									on_companion_down(name, tier, cfg)
+								end
+								companion_hp_cache[id] = 0.0
+							else
+								if prev_hp ~= nil and hp < (prev_hp - 0.05) then
+									on_companion_hit(name, hp, tier, cfg)
+								end
+								companion_hp_cache[id] = hp
+							end
+						end
+					end
+				end
+			end
+		end
+	end)
+	return ok
+end
+
+function update(dt, tier, cfg)
+	if type(dt) == "number" and dt > 0.0 then
+		sim_time = sim_time + dt
+		if alert_timer > 0.0 then
+			alert_timer = alert_timer - dt
+			if alert_timer <= 0.0 then
+				alert_timer = 0.0
+				alert_text = nil
+			end
+		end
+	end
+
+	poll_squad(dt, tier, cfg)
+end
+
+function corrupt_osd_text(str, psy_intensity, step_seed)
+	if type(str) ~= "string" or str == "" then
+		return str
+	end
+	if type(psy_intensity) ~= "number" or psy_intensity <= PSY_THRESHOLD then
+		return str
+	end
+
+	local intensity = clamp(psy_intensity, 0.0, 1.0)
+	local rate = ((intensity - PSY_THRESHOLD) / (1.0 - PSY_THRESHOLD)) * 0.55
+	local seed = floor(tonumber(step_seed) or 0) % 65536
+	if seed < 0 then seed = seed + 65536 end
+
+	local out = {}
+	local len = #str
+	for i = 1, len do
+		local ch = sub(str, i, i)
+		local b = string.byte(ch)
+		local is_digit = (b >= 48 and b <= 57)
+		local is_alpha = (b >= 65 and b <= 90) or (b >= 97 and b <= 122)
+
+		if is_digit or is_alpha then
+			local h = (seed * 1103515245 + i * 12345 + 987654321) % 2147483647
+			local roll = (h % 1000) / 1000.0
+			if roll < rate then
+				if is_digit then
+					local idx = (floor(h / 1000) % #GLITCH_DIGITS) + 1
+					ch = GLITCH_DIGITS[idx]
+				else
+					local idx = (floor(h / 1000) % #GLITCH_LETTERS) + 1
+					ch = GLITCH_LETTERS[idx]
+				end
+			end
+		end
+		out[i] = ch
+	end
+
+	return table.concat(out)
+end
+
+function get_psy_intensity(actor)
+	local act = actor
+	if act == nil and db and db.actor then
+		act = db.actor
+	end
+	if not act then
+		return 0.0
+	end
+
+	local psy_health = 1.0
+	local ok, val = pcall(function()
+		if type(act.psy_health) == "number" then
+			return act.psy_health
+		elseif type(act.psy_health) == "function" then
+			return act:psy_health()
+		end
+		return 1.0
+	end)
+	if ok and type(val) == "number" then
+		psy_health = clamp(val, 0.0, 1.0)
+	end
+
+	return clamp(1.0 - psy_health, 0.0, 1.0)
+end

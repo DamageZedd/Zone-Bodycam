@@ -132,6 +132,19 @@ defaults = {
 	found_footage_chance_high    = 0.08,
 	found_footage_chance_low     = 0.02,
 	found_footage_spawn_item     = true,
+	-- occlusion & anomaly artifacts (zbc_anomalies.script)
+	chest_occlusion              = true,
+	chest_occlusion_strength     = 0.75,
+	anomaly_artifacts            = true,
+	-- lens crack repair & MCM reset
+	repair_lens_key              = 0,
+	reset_lens_crack             = false,
+	-- safe hub sync & sellable intel (zbc_intel.script)
+	hub_sync                     = true,
+	intel_sell_enabled           = true,
+	-- Axon Respond alerts & psy OSD corruption (zbc_respond.script)
+	respond_alerts               = true,
+	psy_osd_corrupt              = true,
 }
 
 local CLAMPS = {
@@ -182,6 +195,7 @@ local CLAMPS = {
 	optics_condensation_strength = { 0, 1 },
 	found_footage_chance_high    = { 0, 1 },
 	found_footage_chance_low     = { 0, 1 },
+	chest_occlusion_strength     = { 0, 1 },
 }
 
 local LIST_OPTS = {
@@ -211,6 +225,7 @@ local prev_upd_t = nil
 local prev_weapon_id = false -- false until first update so initial load does not trigger Signal
 local prev_torch_on = nil
 local optics_loaded = false
+local cur_flex_pov = false
 
 -- Safe module function lookup: avoids firing metatable __index/__call stubs in standalone tests.
 local function mod_fn(m, name)
@@ -311,6 +326,8 @@ local function clear_send_cache()
 	end
 	local cfn = mod_fn(zbc_optics, "clear_send_cache")
 	if cfn then cfn() end
+	local acfn = mod_fn(zbc_anomalies, "clear_send_cache")
+	if acfn then acfn() end
 end
 
 local function bus_ready()
@@ -468,6 +485,8 @@ local function lens_off(keep_faces)
 	if not tokens then return end   -- never registers lanes just to clear them
 	local zfn = mod_fn(zbc_optics, "zero")
 	if zfn then zfn() end
+	local azfn = mod_fn(zbc_anomalies, "zero")
+	if azfn then azfn() end
 	if not keep_faces then
 		faces_off()
 		fx_off()
@@ -674,6 +693,15 @@ local function is_ads()
 		return ok and (res == true)
 	end
 	return w == true
+end
+
+local function is_reloading()
+	local actor = db and db.actor
+	if not (actor and actor.active_item) then return false end
+	local item = actor:active_item()
+	if not (item and IsWeapon and IsWeapon(item) and item.get_state) then return false end
+	local ok, st = pcall(item.get_state, item)
+	return ok and st == 7
 end
 
 local function read_dir_pitch(dir) return dir:getP() end
@@ -885,7 +913,7 @@ local function motion_update()
 		return S.out_x, S.out_y, S.out_r, S.out_i, S.out_vx, S.out_vy, S.out_vt, S.out_vr, S.out_ox, S.out_oy, S.out_rs
 	end
 
-	local M = cfg.motion
+	local M = cfg.motion * (cur_flex_pov and 0.4 or 1.0)
 
 	-- 1. Turn lag: how far the view turned this frame, measured on the previous screen axes,
 	--    so the sign is right whatever the engine's yaw convention.
@@ -1138,9 +1166,14 @@ local function serial_for(name)
 	return cached_serial
 end
 
-local function actor_ident(dev_label)
+local function actor_ident(dev_label, psy_int, psy_seed)
 	local name = actor_name()
 	local ser = serial_for(name)
+	if psy_int and psy_int > 0.15 and cfg.psy_osd_corrupt then
+		local cfn = mod_fn(zbc_respond, "corrupt_osd_text")
+		if cfn then ser = cfn(ser, psy_int, psy_seed) end
+		return dev_label .. " " .. ser, cached_upper_name
+	end
 	if dev_label ~= cached_dev_in or not cached_dev_line then
 		cached_dev_in = dev_label
 		cached_dev_line = dev_label .. " " .. ser
@@ -1236,7 +1269,7 @@ function ZbcHud:__init() super()
 	self.batt_shown = false
 	self.batt_color = nil
 	self.rec_line = new_line(REC_CHARS)
-	self.sig_line = new_line(8)
+	self.sig_line = new_line(MAX_CHARS)
 	self.sig_tag = nil
 	self.sig_x = nil
 	-- event log (zbc_eventlog.script): a few lines under the recording timer, always HUD-drawn
@@ -1262,6 +1295,8 @@ function ZbcHud:__init() super()
 	self.osd_w = nil
 	self.osd_h = nil
 	self.osd_fs = nil
+	self.osd_psy_seed = 0
+	self.sec_psy_seed = 0
 	self.sec_date = nil
 	self:Apply()
 end
@@ -1433,6 +1468,19 @@ function ZbcHud:RefreshLog(visible)
 	end
 end
 
+local function resolve_osd_tag()
+	local r_active = mod_fn(zbc_respond, "is_alert_active")
+	if r_active and r_active() then return "ALERT" end
+	local sig_fn = mod_fn(zbc_signal, "get_osd_tag")
+	if sig_fn then
+		local t = sig_fn()
+		if type(t) == "string" and t ~= "" then return t end
+	end
+	local i_sync = mod_fn(zbc_intel, "is_syncing")
+	if i_sync and i_sync() then return "SYNC" end
+	return nil
+end
+
 function ZbcHud:RefreshRec(visible, lens_on)
 	local show = cfg.rec_timer and visible and rec.secs ~= nil
 	local secs = rec_whole()
@@ -1488,20 +1536,33 @@ function ZbcHud:RefreshRec(visible, lens_on)
 		self.batt_shown = hud_batt
 	end
 
-	-- Signal / standby / mute status tag alongside REC / EVENT (SIGNAL, MUTE, BUF)
+	-- Status tag / Respond alert banner alongside REC / EVENT.
+	-- When Shader Bus >= 7 draws the short tag natively in zbc_osd.h (lens_on == true),
+	-- sig_line only draws the full Respond alert banner (e.g. "ALERT: SQUAD DOWN") so short tags aren't double-drawn.
 	if self.sig_line then
-		local sig_fn = mod_fn(zbc_signal, "get_osd_tag")
-		local sig_tag = (visible and sig_fn) and sig_fn() or nil
-		if type(sig_tag) == "string" and sig_tag ~= "" and self.glyph and (show or cfg.overlay) then
+		local r_alert = mod_fn(zbc_respond, "get_active_alert")
+		local alert_banner = (visible and r_alert) and r_alert() or nil
+		local short_tag = visible and resolve_osd_tag() or nil
+		local sig_tag, sig_kind = nil, nil
+		if type(alert_banner) == "string" and alert_banner ~= "" then
+			sig_tag = alert_banner
+			sig_kind = "ALERT"
+		elseif not lens_on and type(short_tag) == "string" and short_tag ~= "" then
+			sig_tag = short_tag
+			sig_kind = short_tag
+		end
+		if sig_tag and self.glyph and (show or cfg.overlay) then
 			local G = self.glyph
 			local sx = show and (G.rec_x + (#rec_text(secs, fx_event) + 1) * F.advance * G.scale) or (G.log_x or 0)
 			if self.sig_line.text ~= sig_tag or self.sig_x ~= sx or self.sig_tag ~= sig_tag then
 				self.sig_x, self.sig_tag = sx, sig_tag
 				local op_ta = floor(255 * clamp01(cfg.text_opacity))
 				local cr, cg, cb = 255, 255, 255
-				if sig_tag == "SIGNAL" then cr, cg, cb = 255, 200, 60
-				elseif sig_tag == "MUTE" then cr, cg, cb = 255, 95, 80
-				elseif sig_tag == "BUF" then cr, cg, cb = 150, 210, 255 end
+				if sig_kind == "ALERT" then cr, cg, cb = 255, 85, 70
+				elseif sig_kind == "SIGNAL" then cr, cg, cb = 255, 200, 60
+				elseif sig_kind == "MUTE" then cr, cg, cb = 255, 95, 80
+				elseif sig_kind == "BUF" then cr, cg, cb = 150, 210, 255
+				elseif sig_kind == "SYNC" then cr, cg, cb = 110, 235, 180 end
 				local col = GetARGB(op_ta, cr, cg, cb)
 				for _, gl in ipairs(self.sig_line.glyphs) do gl:SetTextureColor(col) end
 				self.sig_line.visible = true
@@ -1517,8 +1578,12 @@ end
 
 -- the four overlay lines: date, device + serial, name, GPS. Hidden lines are left out, so the GPS
 -- line moves up when the name is off.
-function overlay_lines(date)
-	local dev_str, upper_name = actor_ident(effective_device_label())
+function overlay_lines(date, psy_int, psy_seed)
+	if psy_int and psy_int > 0.15 and cfg.psy_osd_corrupt then
+		local cfn = mod_fn(zbc_respond, "corrupt_osd_text")
+		if cfn then date = cfn(date, psy_int, psy_seed) end
+	end
+	local dev_str, upper_name = actor_ident(effective_device_label(), psy_int, psy_seed)
 	local l = { date, dev_str }
 	if cfg.show_name then l[#l + 1] = upper_name end
 	local actor = db.actor
@@ -1537,6 +1602,17 @@ function ZbcHud:Refresh(visible, lens_on, lens)
 	local osd_in_post = lens_on and atlas_uploaded
 	self:RefreshRec(visible, osd_in_post)
 	self:RefreshLog(visible)
+
+	local psy_int, psy_seed = 0, 0
+	if cfg.psy_osd_corrupt then
+		local gpf = mod_fn(zbc_respond, "get_psy_intensity")
+		if gpf then
+			psy_int = tonumber(gpf(db.actor)) or 0
+			if psy_int > 0.15 then
+				psy_seed = floor((time_global and time_global() or 0) / 250)
+			end
+		end
+	end
 
 	-- the housing follows the lens itself, so it stays while the lens fades out (no exposed edges)
 	local ring_vis = lens_on and not cfg.edge_in_image
@@ -1569,6 +1645,7 @@ function ZbcHud:Refresh(visible, lens_on, lens)
 			or self.last_w ~= self.osd_w
 			or self.last_h ~= self.osd_h
 			or self.last_fs ~= self.osd_fs
+			or psy_seed ~= self.osd_psy_seed
 			or self.lines[1].text ~= nil
 		then
 			self.sec = sec
@@ -1580,9 +1657,10 @@ function ZbcHud:Refresh(visible, lens_on, lens)
 			self.osd_w = self.last_w
 			self.osd_h = self.last_h
 			self.osd_fs = self.last_fs
+			self.osd_psy_seed = psy_seed
 			self.osd_dirty = false
 			self.lines[1].text = nil
-			upload_osd_chars(overlay_lines(date))
+			upload_osd_chars(overlay_lines(date, psy_int, psy_seed))
 		end
 		return
 	end
@@ -1605,11 +1683,12 @@ function ZbcHud:Refresh(visible, lens_on, lens)
 
 	local date, sec = date_line()
 	local dev = effective_device_label()
-	if date ~= self.sec_date or sec ~= self.sec or dev ~= self.sec_dev or self.lines[1].text == nil then
+	if date ~= self.sec_date or sec ~= self.sec or dev ~= self.sec_dev or psy_seed ~= self.sec_psy_seed or self.lines[1].text == nil then
 		self.sec = sec
 		self.sec_date = date
 		self.sec_dev = dev
-		local l = { overlay_lines(date) }
+		self.sec_psy_seed = psy_seed
+		local l = { overlay_lines(date, psy_int, psy_seed) }
 		for i = 1, OSD_LINES do
 			self:SetLine(i, l[i])
 			self:ShowLine(i, #l[i] > 0)
@@ -1665,6 +1744,7 @@ end
 local was_powered = true
 
 local function power_down()
+	cur_flex_pov = false
 	hud_remove()
 	lens_off()
 	motion_reset()
@@ -1740,8 +1820,17 @@ local function death_clock_start(death_t)
 end
 
 local function settings_changed()
+	if mcm_get("reset_lens_crack") == true then
+		local rfn = mod_fn(zbc_optics, "on_repair")
+		if rfn then rfn() end
+		if ui_mcm and ui_mcm.set then
+			pcall(ui_mcm.set, "zone_bodycam/reset_lens_crack", false)
+		end
+	end
 	clear_send_cache()
 	load_settings()
+	user_cfg.reset_lens_crack = false
+	cfg.reset_lens_crack = false
 	sync_lens_settings()
 	if not cfg.enabled then
 		hud_remove()
@@ -1777,6 +1866,8 @@ local function settings_changed()
 	if HUD then HUD:Apply() end
 end
 
+local wire_respond_callbacks
+
 function actor_on_first_update()
 	in_menu = false                          -- loading from the title menu may not fire main_menu_on_quit
 	dead = false
@@ -1786,6 +1877,7 @@ function actor_on_first_update()
 	prev_upd_t = nil
 	prev_weapon_id = false
 	prev_torch_on = nil
+	cur_flex_pov = false
 	faces_was_on = false
 	if zbc_faces and zbc_faces.reset then zbc_faces.reset() end
 	-- identifications: zbc_allies restores them from the save and clears them itself for a new game
@@ -1799,6 +1891,11 @@ function actor_on_first_update()
 		if orfn then orfn() end
 	end
 	optics_loaded = false
+	local anr = mod_fn(zbc_anomalies, "reset")
+	if anr then anr() end
+	local rrf = mod_fn(zbc_respond, "reset")
+	if rrf then rrf() end
+	if wire_respond_callbacks then wire_respond_callbacks() end
 	local arfn = mod_fn(zbc_audio, "reset")
 	if arfn then arfn() end
 	local am_fn = mod_fn(zbc_audio, "set_muted")
@@ -1860,6 +1957,10 @@ function signal_lost(death_t)
 	dead = true
 	local zfn = mod_fn(zbc_optics, "zero")
 	if zfn then zfn() end
+	if tokens then
+		local azfn = mod_fn(zbc_anomalies, "zero")
+		if azfn then azfn() end
+	end
 	send("glitch", 0, 0, death_t, 0)               -- the shader times the break-up from death_t
 	local ok, err = pcall(death_clock_start, death_t)   -- and from the real clock, if game time stops
 	printf("[Zone Bodycam] signal lost at %.2f s%s", death_t, ok and "" or (": clock failed: " .. tostring(err)))
@@ -1909,6 +2010,8 @@ function actor_on_update()
 		if tokens then
 			local zfn = mod_fn(zbc_optics, "zero")
 			if zfn then zfn() end
+			local azfn = mod_fn(zbc_anomalies, "zero")
+			if azfn then azfn() end
 		end
 		if zbc_fx and zbc_fx.frame then
 			local now = time_global() / 1000
@@ -1921,6 +2024,25 @@ function actor_on_update()
 	if not was_powered then
 		was_powered = true
 		motion_reset()                       -- fades back in
+	end
+
+	local flex_fn = mod_fn(zbc_item, "has_flex_pov")
+	local has_flex_pov = (flex_fn and flex_fn()) and true or false
+	cur_flex_pov = has_flex_pov
+
+	-- Safe hub DOCK/SYNC + Axon Respond squad alerts
+	do
+		local hub_fn = mod_fn(zbc_intel, "is_at_safe_hub")
+		local at_hub = (hub_fn and hub_fn(db.actor)) and true or false
+		local sync_fn = mod_fn(zbc_intel, "update_hub_sync")
+		if sync_fn then sync_fn(upd_dt, at_hub, cur_tier, cfg) end
+		local r_upd = mod_fn(zbc_respond, "update")
+		if r_upd then
+			r_upd(upd_dt, cur_tier, cfg)
+		else
+			local r_poll = mod_fn(zbc_respond, "poll_squad")
+			if r_poll then r_poll(upd_dt, cur_tier, cfg) end
+		end
 	end
 
 	-- Axon Signal triggers (weapon draw, headlamp toggle) & state update
@@ -1995,6 +2117,16 @@ function actor_on_update()
 			oufn(upd_dt, fx_dark, rain_f, indoors, sprinting, cur_tier, cfg)
 		end
 	end
+	if tokens then
+		local aufn = mod_fn(zbc_anomalies, "update")
+		if aufn then
+			local electro_prox, thermal_prox = 0, 0
+			local dpfn = mod_fn(zbc_anomalies, "detect_anomaly_proximity")
+			if dpfn then electro_prox, thermal_prox = dpfn(db.actor) end
+			local osd_tag = (visible and (cfg.rec_timer or cfg.overlay)) and resolve_osd_tag() or nil
+			aufn(upd_dt, is_ads(), is_reloading(), has_flex_pov, electro_prox, thermal_prox, osd_tag, cfg)
+		end
+	end
 	if HUD then
 		-- the lens exactly as the shader sees it, for placing ally markers
 		local L = lens_state
@@ -2013,8 +2145,11 @@ function actor_on_net_destroy()
 	prev_upd_t = nil
 	prev_weapon_id = false
 	prev_torch_on = nil
+	cur_flex_pov = false
 	faces_was_on = false
 	if zbc_faces and zbc_faces.reset then zbc_faces.reset() end
+	local anr = mod_fn(zbc_anomalies, "reset")
+	if anr then anr() end
 	hud_remove()
 	clear_send_cache()
 	lens_off()
@@ -2078,6 +2213,21 @@ function on_key_press(key)
 		end
 		return
 	end
+	local rlk = tonumber(cfg.repair_lens_key)
+	if rlk and rlk > 0 and key == rlk then
+		if not (Check_UI and Check_UI()) and not (actor_menu and actor_menu.last_mode and actor_menu.last_mode ~= 0) then
+			if powered() then
+				local rfn = mod_fn(zbc_item, "repair_lens_with_toolkit")
+				if rfn then
+					rfn(db.actor)
+				else
+					local ofn = mod_fn(zbc_optics, "on_repair")
+					if ofn then ofn() end
+				end
+			end
+		end
+		return
+	end
 	if not (zbc_review and zbc_review.toggle) then return end
 	local rk = tonumber(cfg.review_key)
 	if not rk or rk <= 0 or key ~= rk then
@@ -2122,6 +2272,30 @@ local function wire_signal_callbacks()
 	})
 end
 
+local function wire_intel_callbacks()
+	local set_fn = mod_fn(zbc_intel, "set_callbacks")
+	if not set_fn then return end
+	set_fn({
+		on_sync = function()
+			local afn = mod_fn(zbc_audio, "on_sync")
+			if afn then afn(cfg) end
+		end,
+	})
+end
+
+wire_respond_callbacks = function()
+	local set_fn = mod_fn(zbc_respond, "set_callbacks")
+	if not set_fn then return end
+	set_fn({
+		on_alert = function(text, kind)
+			local afn = mod_fn(zbc_audio, "on_respond_alert")
+			if afn then afn(cfg) end
+			local efn = mod_fn(zbc_eventlog, "add")
+			if efn then efn(kind or "signal", text, true) end
+		end,
+	})
+end
+
 local function save_state(m_data)
 	local fn = mod_fn(zbc_optics, "save_state")
 	if fn then fn(m_data) end
@@ -2136,6 +2310,8 @@ end
 function on_game_start()
 	load_settings()
 	wire_signal_callbacks()
+	wire_intel_callbacks()
+	wire_respond_callbacks()
 	lens_off()                               -- clears a value left in user.ltx by a crash
 	RegisterScriptCallback("save_state", save_state)
 	RegisterScriptCallback("load_state", load_state)

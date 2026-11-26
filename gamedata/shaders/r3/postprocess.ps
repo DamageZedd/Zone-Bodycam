@@ -33,7 +33,7 @@ float4 main( p_postpr I ) : SV_Target
 	float	fx_rim = 0.0;
 	float2	uv_0 = I.Tex0;
 	float2	uv_1 = I.Tex1;
-	[branch] if (ZBC_FX || ZBC_OPTICS_UV)
+	[branch] if (ZBC_FX || ZBC_OPTICS_UV || ZBC_EXT_UV)
 	{
 		if (ZBC_FX)
 		{
@@ -42,6 +42,8 @@ float4 main( p_postpr I ) : SV_Target
 		}
 		[branch] if (ZBC_OPTICS_UV)
 			uv_0 += zbc_optics_uv(I.Tex0);
+		[branch] if (ZBC_EXT_UV)
+			uv_0 += zbc_ext_uv(I.Tex0);
 		uv_1 = I.Tex1 + (uv_0 - I.Tex0);
 	}
 	bool	same_tc = (abs(I.Tex1.x - I.Tex0.x) + abs(I.Tex1.y - I.Tex0.y) < 0.000001);
@@ -53,7 +55,7 @@ float4 main( p_postpr I ) : SV_Target
 		else
 			t_1 = zbc_lens_sample(s_base1, uv_1);
 	}
-	else [branch] if (ZBC_FACES || ZBC_FX || ZBC_OPTICS_UV)
+	else [branch] if (ZBC_FACES || ZBC_FX || ZBC_OPTICS_UV || ZBC_EXT_UV)
 	{
 		t_0 = zbc_plain_sample(s_base0, uv_0);
 		[branch] if (same_tc)
@@ -80,6 +82,8 @@ float4 main( p_postpr I ) : SV_Target
 		image = zbc_fx_color(image, I.Tex0, fx_g, fx_rim, scene_vis);
 	[branch] if (ZBC_OPTICS)
 		image = zbc_optics_pass(image, I.Tex0, scene_vis);
+	[branch] if (ZBC_EXT_COLOR)
+		image = zbc_ext_pass(image, I.Tex0, scene_vis);
 	float	osd_mask = 0.0;
 	[branch] if (ZBC_ACTIVE)
 		zbc_osd_composite(image, I.Tex0, osd_mask);

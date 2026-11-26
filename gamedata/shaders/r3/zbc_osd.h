@@ -258,6 +258,42 @@ uint zbc_rec_char(uint i, uint secs, uint nh)
 	return 48u + s % 10u;
 }
 
+// Shader-side status tag below the top-left REC/EVENT line (bus_zbc_ext.w):
+// 0 = none, 1 = SIGNAL, 2 = MUTE, 3 = BUF, 4 = SYNC, 5 = ALERT
+uint zbc_osd_tag_code()
+{
+	float raw = bus_zbc_ext.w;
+	if (raw < 0.5)
+		return 0u;
+	uint code = (uint)floor(raw + 0.5);
+	return (code <= 5u) ? code : 0u;
+}
+
+uint zbc_osd_tag_len(uint code)
+{
+	if (code == 1u) return 6u;   // SIGNAL
+	if (code == 2u) return 4u;   // MUTE
+	if (code == 3u) return 3u;   // BUF
+	if (code == 4u) return 4u;   // SYNC
+	if (code == 5u) return 5u;   // ALERT
+	return 0u;
+}
+
+uint zbc_osd_tag_char(uint code, uint i)
+{
+	if (code == 1u)   // "SIGNAL"
+		return (i == 0u) ? 83u : ((i == 1u) ? 73u : ((i == 2u) ? 71u : ((i == 3u) ? 78u : ((i == 4u) ? 65u : 76u))));
+	if (code == 2u)   // "MUTE"
+		return (i == 0u) ? 77u : ((i == 1u) ? 85u : ((i == 2u) ? 84u : 69u));
+	if (code == 3u)   // "BUF"
+		return (i == 0u) ? 66u : ((i == 1u) ? 85u : 70u);
+	if (code == 4u)   // "SYNC"
+		return (i == 0u) ? 83u : ((i == 1u) ? 89u : ((i == 2u) ? 78u : 67u));
+	if (code == 5u)   // "ALERT"
+		return (i == 0u) ? 65u : ((i == 1u) ? 76u : ((i == 2u) ? 69u : ((i == 3u) ? 82u : 84u)));
+	return 32u;
+}
+
 // Top-left recording timer: red dot (same look as hud\zbc_dot) + "REC HH:MM:SS", premultiplied RGBA.
 // Mirrors the top-right layout: same margin as the logo, on the first text line.
 float4 zbc_rec_eval(float2 uv_s, float text_op, float2 asp)
@@ -344,6 +380,42 @@ float4 zbc_rec_eval(float2 uv_s, float text_op, float2 asp)
 			}
 		}
 	}
+
+	// 3. Status tag directly below the REC/EVENT line (bus_zbc_ext.w: SIGNAL / MUTE / BUF / SYNC / ALERT)
+	uint  tag_code = zbc_osd_tag_code();
+	float tag_y0_v = top_v + em_v - pad_v;
+	if (tag_code > 0u && text_op > 0.001 && uv_s.y >= tag_y0_v && uv_s.y < tag_y0_v + cell_h_v)
+	{
+		uint  tlen   = zbc_osd_tag_len(tag_code);
+		float tx0_u  = (bus_zbc_rec.x > 0.5)
+		             ? (left_u + 2.0 * half_v / asp.x + ZBC_REC_GAP * em_u - pad_u)
+		             : (left_u - pad_u);
+		float tend_u = tx0_u + (float)(tlen - 1u) * adv_u + cell_w_u;
+		if (uv_s.x >= tx0_u && uv_s.x < tend_u)
+		{
+			float gy = (uv_s.y - tag_y0_v) / cell_h_v;
+			int   c0 = (int)floor((uv_s.x - tx0_u) / adv_u);
+			[loop] for (int dc = -1; dc <= 0; dc++)
+			{
+				int ci = c0 + dc;
+				if (ci >= 0 && ci < (int)tlen)
+				{
+					float cx0 = tx0_u + (float)ci * adv_u;
+					if (uv_s.x >= cx0 && uv_s.x < cx0 + cell_w_u)
+					{
+						uint   ch    = zbc_osd_tag_char(tag_code, (uint)ci);
+						float2 la    = zbc_osd_glyph_sample(ch, float2((uv_s.x - cx0) / cell_w_u, gy));
+						float  src_a = saturate(la.y * text_op);
+						if (src_a > 0.0001)
+						{
+							acc.rgb = la.xxx * src_a + acc.rgb * (1.0 - src_a);
+							acc.a   = src_a + acc.a * (1.0 - src_a);
+						}
+					}
+				}
+			}
+		}
+	}
 	return acc;
 }
 
@@ -404,10 +476,13 @@ void zbc_osd_filter(inout float3 image, float2 uv, float2 uv_o, bool rec, float 
 	}
 }
 
-// Top-left recording timer.
+// Top-left recording timer (and optional shader-side status tag below REC/EVENT).
 void zbc_rec_composite(inout float3 image, float2 uv, float2 uv_o, float2 asp, float ca_px, float dy_px, inout float osd_mask)
 {
-	float text_op = saturate(bus_zbc_rec.w);
+	uint  tag_code = zbc_osd_tag_code();
+	float text_op  = saturate(bus_zbc_rec.w);
+	if (tag_code > 0u && text_op <= 0.001)
+		text_op = saturate(bus_zbc_osd_info.z);
 	float batt_on = (bus_zbc_batt.x > 0.5) ? saturate(bus_zbc_batt.w) : 0.0;
 	if (max(text_op, batt_on) <= 0.001)
 		return;
@@ -425,6 +500,18 @@ void zbc_rec_composite(inout float3 image, float2 uv, float2 uv_o, float2 asp, f
 		float b_top = top_v + (ZBC_REC_DOT_CY - 0.5 * ZBC_REC_DOT_D - ZBC_BATT_ABOVE - ZBC_BATT_H) * em_v;
 		r_min.y = min(r_min.y, b_top - 0.1 * em_v);
 		r_max.x = max(r_max.x, left_u + (ZBC_BATT_W + 0.1) * em_u);
+	}
+	if (tag_code > 0u)
+	{
+		uint  tlen = zbc_osd_tag_len(tag_code);
+		float tx0  = (bus_zbc_rec.x > 0.5)
+		           ? (left_u + (ZBC_REC_DOT_D + ZBC_REC_GAP) * em_u - (5.0 / 64.0) * em_u)
+		           : (left_u - (5.0 / 64.0) * em_u);
+		float tx1  = tx0 + (float)(tlen - 1u) * (33.0 / 64.0) * em_u + (43.0 / 64.0) * em_u;
+		float ty0  = top_v + em_v - (5.0 / 64.0) * em_v;
+		float ty1  = ty0 + (81.0 / 64.0) * em_v;
+		r_min = min(r_min, float2(tx0, ty0));
+		r_max = max(r_max, float2(tx1, ty1));
 	}
 	float2 pad_roi = float2(ca_px + screen_res.z, dy_px + screen_res.w);
 	if (uv_o.x < r_min.x - pad_roi.x || uv_o.x > r_max.x + pad_roi.x
@@ -492,7 +579,7 @@ void zbc_osd_right(inout float3 image, float2 uv, float2 uv_o, float2 asp, float
 void zbc_osd_composite(inout float3 image, float2 uv, inout float osd_mask)
 {
 	osd_mask = 0.0;
-	bool rec_on   = (bus_zbc_rec.x > 0.5 || bus_zbc_batt.x > 0.5) && uv.x <= 0.45 && uv.y <= 0.22;
+	bool rec_on   = (bus_zbc_rec.x > 0.5 || bus_zbc_batt.x > 0.5 || zbc_osd_tag_code() > 0u) && uv.x <= 0.45 && uv.y <= 0.22;
 	bool right_on = bus_zbc_osd_info.x > 0.5 && uv.x >= 0.55 && uv.y <= 0.22;
 	[branch] if (rec_on || right_on)
 	{

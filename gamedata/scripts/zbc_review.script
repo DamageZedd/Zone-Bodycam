@@ -104,16 +104,67 @@ function format_event_row(e, is_selected)
 	return mark .. "REC " .. rec_clock(e.rec or 0) .. "   " .. tostring(e.clock or "00:00") .. "   " .. body
 end
 
+local function format_intel_ru(n)
+	if zbc_intel and zbc_intel.format_ru then
+		return zbc_intel.format_ru(n)
+	end
+	local s = tostring(floor(tonumber(n) or 0))
+	while true do
+		local next_s, k = s:gsub("^(%-?%d+)(%d%d%d)", "%1,%2")
+		s = next_s
+		if k == 0 then break end
+	end
+	return s
+end
+
+function format_intel_tag(ff_rec)
+	if type(ff_rec) ~= "table" then return nil end
+	if ff_rec.redeemed == true then return "[UPLOADED]" end
+	if zbc_intel and zbc_intel.estimate_payout then
+		local ru = zbc_intel.estimate_payout(ff_rec)
+		return string.format("[INTEL: %s RU]", format_intel_ru(ru))
+	end
+	return nil
+end
+
+function found_footage_hint(ff_rec, at_hub, cfg)
+	if type(ff_rec) ~= "table" then return nil end
+	if cfg and cfg.intel_sell_enabled == false then return nil end
+	if ui_mcm and ui_mcm.get and not (cfg and cfg.intel_sell_enabled ~= nil) then
+		local ok, en = pcall(ui_mcm.get, "zone_bodycam/intel_sell_enabled")
+		if ok and en == false then return nil end
+	end
+	if ff_rec.redeemed == true then return "[UPLOADED]" end
+	if not (zbc_intel and zbc_intel.estimate_payout) then return nil end
+
+	local ru = zbc_intel.estimate_payout(ff_rec)
+	local anywhere = cfg and cfg.intel_sell_anywhere == true
+	if not anywhere and ui_mcm and ui_mcm.get then
+		local ok, sa = pcall(ui_mcm.get, "zone_bodycam/intel_sell_anywhere")
+		if ok and sa == true then anywhere = true end
+	end
+	if at_hub == nil and zbc_intel.is_at_safe_hub then
+		at_hub = zbc_intel.is_at_safe_hub()
+	end
+	if at_hub == true or anywhere then
+		return string.format("[S] Upload intel (+%s RU)", format_intel_ru(ru))
+	end
+	return "[S] Upload intel at safe hub"
+end
+
 -- Computes the Body 5 Incident Summary / Found Footage header text for the active view (pure logic)
 function active_header_text(mode, hist, tier, ff_rec, ff_idx, ff_count)
 	if mode == "found_footage" and type(ff_rec) == "table" then
-		return string.format("FOUND FOOTAGE [%d/%d]   %s (%s)   %s   LOC: %s   TIME: %s",
+		local base = string.format("FOUND FOOTAGE [%d/%d]   %s (%s)   %s   LOC: %s   TIME: %s",
 			ff_idx or 1, ff_count or 1,
 			upper(ff_rec.stalker_name or "UNKNOWN"),
 			upper(ff_rec.faction_label or ff_rec.faction or "STALKER"),
 			upper(ff_rec.camera_model or "AXON BODY"),
 			upper(ff_rec.level_name or ff_rec.level or "ZONE"),
 			tostring(ff_rec.timestamp or ""))
+		local tag = format_intel_tag(ff_rec)
+		if tag then base = base .. "   " .. tag end
+		return base
 	end
 	if tier and tier >= 5 and zbc_eventlog and zbc_eventlog.build_incident_summary then
 		return zbc_eventlog.build_incident_summary(hist, tier)
@@ -203,8 +254,12 @@ function ZbcReview:Refresh()
 
 	if #ff_list > 0 then
 		if self.mode == "found_footage" then
-			self.mode_bar:TextControl():SetText(string.format("[MODE: FOUND FOOTAGE %d/%d]   TAB: LIVE FEED   [/]: PREV/NEXT TAPE",
-				self.ff_idx, #ff_list))
+			local bar_text = string.format("[MODE: FOUND FOOTAGE %d/%d]   TAB: LIVE FEED   [/]: PREV/NEXT TAPE",
+				self.ff_idx, #ff_list)
+			if self.intel_status_msg and self.intel_status_msg ~= "" then
+				bar_text = bar_text .. "   |   " .. upper(self.intel_status_msg)
+			end
+			self.mode_bar:TextControl():SetText(bar_text)
 			self.mode_bar:TextControl():SetTextColor(GetARGB(255, 255, 200, 90))
 		else
 			self.mode_bar:TextControl():SetText(string.format("[MODE: LIVE FEED]   TAB: FOUND FOOTAGE (%d RECOVERED)", #ff_list))
@@ -236,6 +291,12 @@ function ZbcReview:Refresh()
 	local hint_text = tr("st_zbc_review_hint", "Left / right: scrub   Home / End: first / last   Esc: close")
 	if #ff_list > 0 then
 		hint_text = hint_text .. "   Tab: switch feed   [ / ]: cycle tapes"
+	end
+	if self.mode == "found_footage" and ff_rec then
+		local intel_hint = found_footage_hint(ff_rec)
+		if intel_hint and intel_hint ~= "" then
+			hint_text = hint_text .. "   " .. intel_hint
+		end
 	end
 	self.hint:TextControl():SetText(hint_text)
 	self.hint:TextControl():SetTextColor(GetARGB(255, 150, 150, 150))
@@ -304,14 +365,24 @@ function ZbcReview:OnKeyboard(dik, action)
 	elseif ((K.DIK_TAB and dik == K.DIK_TAB) or (K.DIK_F and dik == K.DIK_F)) and #ff_list > 0 then
 		self.mode = (self.mode == "live") and "found_footage" or "live"
 		self.sel = nil
+		self.intel_status_msg = nil
 	elseif self.mode == "found_footage" and #ff_list > 1 and
 		((K.DIK_LBRACKET and dik == K.DIK_LBRACKET) or (K.DIK_PRIOR and dik == K.DIK_PRIOR) or (K.DIK_Q and dik == K.DIK_Q)) then
 		self.ff_idx = ((self.ff_idx - 2) % #ff_list) + 1
 		self.sel = nil
+		self.intel_status_msg = nil
 	elseif self.mode == "found_footage" and #ff_list > 1 and
 		((K.DIK_RBRACKET and dik == K.DIK_RBRACKET) or (K.DIK_NEXT and dik == K.DIK_NEXT) or (K.DIK_E and dik == K.DIK_E)) then
 		self.ff_idx = (self.ff_idx % #ff_list) + 1
 		self.sel = nil
+		self.intel_status_msg = nil
+	elseif self.mode == "found_footage" and
+		((K.DIK_S and dik == K.DIK_S) or (K.DIK_RETURN and dik == K.DIK_RETURN) or (K.DIK_NUMPADENTER and dik == K.DIK_NUMPADENTER)) then
+		if zbc_intel and zbc_intel.sell_record then
+			local at_hub = zbc_intel.is_at_safe_hub and zbc_intel.is_at_safe_hub() or false
+			local _, _, _, msg = zbc_intel.sell_record(self.ff_idx, at_hub)
+			self.intel_status_msg = msg
+		end
 	elseif (K.DIK_LEFT and dik == K.DIK_LEFT) or (K.DIK_A and dik == K.DIK_A)
 		or (K.DIK_UP and dik == K.DIK_UP) or (K.DIK_W and dik == K.DIK_W) then
 		self.sel = max((self.sel or 1) - 1, 1)

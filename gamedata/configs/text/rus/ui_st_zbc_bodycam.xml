@@ -645,4 +645,58 @@
   <string id="ui_mcm_zone_bodycam_found_footage_spawn_item_desc">
     <text>При установленном компоненте предмета камеры на теле сталкера появляется соответствующая разряженная камера Axon Body.</text>
   </string>
+  <string id="ui_mcm_zone_bodycam_chest_occlusion">
+    <text>Перекрытие грудью / прикладом (ADS)</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_chest_occlusion_desc">
+    <text>Лёгкий силуэт приклада оружия и разгрузки в нижней части кадра при прицеливании и перезарядке. Отключается автоматически с креплением Axon Flex POV.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_chest_occlusion_strength">
+    <text>Сила перекрытия</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_chest_occlusion_strength_desc">
+    <text>Непрозрачность силуэта оружия и разгрузки по нижнему краю при прицеливании и перезарядке.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_anomaly_artifacts">
+    <text>Аномальные помехи сенсора</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_anomaly_artifacts_desc">
+    <text>Аномалии Электра вызывают сине-белые полосы скользящего затвора, а Жарка и термические аномалии — тепловое дрожание изображения.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_repair_lens_key">
+    <text>Клавиша ремонта трещины линзы</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_repair_lens_key_desc">
+    <text>Устраняет стойкие трещины на линзе. При установленном компоненте предмета требуется ремкомплект или набор для чистки в инвентаре.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_reset_lens_crack">
+    <text>Сбросить трещину линзы (однократно)</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_reset_lens_crack_desc">
+    <text>Отметьте и примените для немедленного сброса трещины в углу линзы; автоматически сбрасывается обратно.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_hub_sync">
+    <text>Синхронизация на базах (SYNC)</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_hub_sync_desc">
+    <text>Камеры Body 3+ при входе в безопасную зону или к торговцам воспроизводят сигнал док-станции и показывают статус SYNC на 4 секунды.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_intel_sell_enabled">
+    <text>Продажа найденных записей</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_intel_sell_enabled_desc">
+    <text>Позволяет сдавать неиспользованные найденные записи в окне просмотра записей (S / Enter) на базах за рубли и репутацию.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_respond_alerts">
+    <text>Оповещения отряда Axon Respond</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_respond_alerts_desc">
+    <text>Сигнал диспетчера Body 3+ и баннер ALERT при ранении или гибели напарников и контакте с опасными мутантами.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_psy_osd_corrupt">
+    <text>Искажение текста OSD при пси-воздействии</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_psy_osd_corrupt_desc">
+    <text>Сильное пси-излучение искажает символы времени и серийного номера в правом верхнем углу экрана.</text>
+  </string>
 </string_table>

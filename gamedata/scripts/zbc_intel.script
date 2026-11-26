@@ -1,0 +1,626 @@
+--[[
+	Zone Bodycam - Safe Hub DOCK/SYNC & Sellable Found Footage Intel (zbc_intel.script)
+
+	Pure logic + guarded Anomaly runtime integration:
+	1. Safe Hub DOCK / SYNC (Body 3+ LTE/Wi-Fi gated; or always when tiers are off):
+	   - Detects when the actor is inside a safe zone or near a friendly hub trader.
+	   - Entering a safe hub with Body 3+ (and hub_sync enabled) triggers a brief SYNC state
+	     (4.0s) and fires the optional on_sync callback once per hub visit, with a 120s real-time
+	     cooldown after leaving the hub.
+	2. Sellable Found Footage Intel:
+	   - Estimates RU payout (tier base x faction multiplier) and faction goodwill (+15..+50).
+	   - Sells individual tapes or all unredeemed tapes in one batch when at a safe hub (or
+	     anywhere when cfg.intel_sell_anywhere == true), preventing double-selling via
+	     record.redeemed, awarding RU + goodwill safely, and logging to zbc_eventlog.
+]]
+
+local floor, min, max, sqrt = math.floor, math.min, math.max, math.sqrt
+
+SYNC_DURATION     = 4.0
+SYNC_COOLDOWN     = 120.0
+SYNC_MIN_TIER     = 3
+HUB_TRADER_RADIUS = 35.0
+
+DEFAULTS = {
+	hub_sync            = true,
+	intel_sell_enabled  = true,
+	intel_sell_anywhere = false,
+}
+
+TIER_BASE_RU = {
+	[1] = 1200,
+	[2] = 2000,
+	[3] = 3200,
+	[4] = 4800,
+	[5] = 7000,
+}
+
+TIER_BASE_GOODWILL = {
+	[1] = 15,
+	[2] = 22,
+	[3] = 30,
+	[4] = 40,
+	[5] = 50,
+}
+
+FACTION_MULTIPLIERS = {
+	monolith  = 1.5,
+	isg       = 1.5,
+	killer    = 1.25,
+	merc      = 1.25,
+	mercenary = 1.25,
+	army      = 1.25,
+	military  = 1.25,
+	ecolog    = 1.25,
+	ecologist = 1.25,
+	stalker   = 1.0,
+	bandit    = 1.0,
+	renegade  = 1.0,
+	dolg      = 1.0,
+	freedom   = 1.0,
+	csky      = 1.0,
+	greh      = 1.0,
+	zombied   = 1.0,
+}
+
+SAFE_HUB_LEVELS = {
+	l05_bar    = true,
+	fake_start = true,
+}
+
+HUB_TRADERS = {
+	esc_m_trader                            = true, -- Sidorovich
+	esc_2_12_stalker_nimble                 = true, -- Nimble
+	esc_smart_terrain_5_7_loner_mechanic_stalker = true,
+	mar_base_owl_stalker_trader             = true, -- Spore
+	mar_base_stalker_tech                   = true, -- Novikov
+	bar_visitors_barman_stalker_trader      = true, -- Barkeep
+	bar_dolg_general_petrenko_stalker       = true, -- Petrenko
+	yan_stalker_sakharov                    = true, -- Sakharov
+	cit_killers_merc_trader_stalker         = true, -- Dushman
+	mil_smart_terrain_7_7_freedom_leader_stalker = true, -- Lukash
+	mil_freedom_barman_mlr                  = true,
+	zat_a2_stalker_barmen                   = true, -- Beard
+	zat_b30_owl_stalker_trader              = true, -- Owl
+	jup_a6_stalker_barmen                   = true, -- Hawaiian
+	jup_b220_trapper                        = true,
+	pri_monolith_monolith_trader_stalker    = true,
+	red_greh_trader                         = true,
+	ds_domik_isg_trader                     = true,
+}
+
+local sync_timer            = 0
+local cooldown_timer        = 0
+local was_at_hub            = false
+local synced_this_visit     = false
+local total_sold            = 0
+local total_ru_earned       = 0
+local total_goodwill_earned = 0
+local callbacks             = {}
+local pending_reset         = true
+
+---------------------------------------------------------------------------------------------------
+-- Helpers
+---------------------------------------------------------------------------------------------------
+
+local function clamp(v, lo, hi)
+	v = tonumber(v)
+	if not v or v ~= v then return lo end
+	if v < lo then return lo end
+	if v > hi then return hi end
+	return v
+end
+
+local function parse_nonneg(v, def)
+	local n = tonumber(v)
+	if not n or n ~= n then return def end
+	return max(0, n)
+end
+
+function format_ru(n)
+	local s = tostring(floor(tonumber(n) or 0))
+	while true do
+		local next_s, k = s:gsub("^(%-?%d+)(%d%d%d)", "%1,%2")
+		s = next_s
+		if k == 0 then break end
+	end
+	return s
+end
+
+local function fire(name, ...)
+	local fn = callbacks[name]
+	if type(fn) == "function" then
+		pcall(fn, ...)
+	end
+end
+
+local function read_cfg(override)
+	local c = {}
+	for k, v in pairs(DEFAULTS) do c[k] = v end
+	if ui_mcm and ui_mcm.get then
+		local function opt(key)
+			local ok, v = pcall(ui_mcm.get, "zone_bodycam/" .. key)
+			if ok and v ~= nil then return v end
+			return nil
+		end
+		local hs = opt("hub_sync")
+		if hs ~= nil then c.hub_sync = (hs == true) end
+		local ise = opt("intel_sell_enabled")
+		if ise ~= nil then c.intel_sell_enabled = (ise == true) end
+		local isa = opt("intel_sell_anywhere")
+		if isa ~= nil then c.intel_sell_anywhere = (isa == true) end
+	end
+	if type(override) == "table" then
+		for k, v in pairs(override) do c[k] = v end
+	end
+	return c
+end
+
+function tier_allows_sync(tier)
+	if tier == nil or tier == false then return true end
+	local t = tonumber(tier)
+	if not t or t ~= t then return true end
+	t = floor(t + 0.5)
+	if t < 1 or t > 5 then return true end
+	return t >= SYNC_MIN_TIER
+end
+
+---------------------------------------------------------------------------------------------------
+-- Safe hub detection
+---------------------------------------------------------------------------------------------------
+
+local function read_pos(obj)
+	if not obj then return nil end
+	if type(obj.position) == "function" then
+		local ok, p = pcall(function() return obj:position() end)
+		if ok and p then return p end
+	elseif type(obj.position) == "table" then
+		return obj.position
+	elseif type(obj.pos) == "table" then
+		return obj.pos
+	end
+	return nil
+end
+
+local function dist_between(a, b)
+	if not a or not b then return math.huge end
+	if type(a.distance_to) == "function" then
+		local ok, d = pcall(function() return a:distance_to(b) end)
+		if ok and tonumber(d) then return tonumber(d) end
+	end
+	local ax, ay, az = tonumber(a.x), tonumber(a.y) or 0, tonumber(a.z)
+	local bx, by, bz = tonumber(b.x), tonumber(b.y) or 0, tonumber(b.z)
+	if not ax or not az or not bx or not bz then return math.huge end
+	local dx, dy, dz = ax - bx, ay - by, az - bz
+	return sqrt(dx * dx + dy * dy + dz * dz)
+end
+
+local function is_friendly_hub_trader(npc, actor)
+	if not npc then return false end
+	if type(npc.alive) == "function" then
+		local ok, alive = pcall(function() return npc:alive() end)
+		if ok and not alive then return false end
+	elseif npc.alive == false then
+		return false
+	end
+
+	if npc.hostile == true then return false end
+	if actor and type(npc.relation) == "function" and game_object and game_object.enemy ~= nil then
+		local ok, rel = pcall(function() return npc:relation(actor) end)
+		if ok and rel == game_object.enemy then return false end
+	end
+
+	if npc.is_trader == true then return true end
+	if type(npc.is_trader) == "function" then
+		local ok, tr = pcall(function() return npc:is_trader() end)
+		if ok and tr then return true end
+	end
+
+	local sec = (type(npc.section) == "function" and npc:section()) or npc.section or ""
+	local name = (type(npc.name) == "function" and npc:name()) or npc.name or ""
+	if HUB_TRADERS[sec] or HUB_TRADERS[name] then return true end
+
+	local lower_id = string.lower(tostring(sec) .. " " .. tostring(name))
+	if lower_id:find("trader", 1, true) or lower_id:find("barmen", 1, true)
+		or lower_id:find("barman", 1, true) or lower_id:find("sakharov", 1, true)
+		or lower_id:find("sidorovich", 1, true) then
+		return true
+	end
+	return false
+end
+
+local function sr_no_weapon_active(actor)
+	if type(sr_no_weapon) ~= "table" then return false end
+	if type(sr_no_weapon.is_actor_inside) == "function" then
+		local ok, v = pcall(sr_no_weapon.is_actor_inside, actor)
+		if ok and v then return true end
+	end
+	if sr_no_weapon.inside == true then return true end
+	if type(sr_no_weapon.inside) == "table" and next(sr_no_weapon.inside) ~= nil then
+		return true
+	end
+	if sr_no_weapon.actor_inside == true then return true end
+	return false
+end
+
+-- Detects when the actor is inside a safe zone, near a friendly hub trader, or on a safe-hub level.
+-- Optional `opts` supports clean unit-test injection: { traders = {...}, safe_levels = {...}, trader_radius = n }.
+function is_at_safe_hub(actor, level_name, opts)
+	if actor == false then return false end
+	if actor == nil and db and db.actor then
+		actor = db.actor
+	end
+
+	if type(actor) == "table" or type(actor) == "userdata" then
+		if actor.in_safe_zone == true or actor.safe_hub == true then
+			return true
+		end
+		if type(actor.is_in_safe_zone) == "function" then
+			local ok, v = pcall(function() return actor:is_in_safe_zone() end)
+			if ok and v then return true end
+		end
+	end
+
+	if type(GetEvent) == "function" then
+		local ok, ev = pcall(GetEvent, "current_safe_zone")
+		if ok and ev and ev ~= false and ev ~= 0 and ev ~= "0" and ev ~= "" then
+			return true
+		end
+	end
+
+	if sr_no_weapon_active(actor) then
+		return true
+	end
+
+	local o = type(opts) == "table" and opts or nil
+	local radius = tonumber(o and o.trader_radius) or HUB_TRADER_RADIUS
+	local actor_pos = read_pos(actor)
+	if actor_pos then
+		local candidates = o and o.traders
+		if type(candidates) == "table" then
+			for _, npc in ipairs(candidates) do
+				if is_friendly_hub_trader(npc, actor) and dist_between(actor_pos, read_pos(npc)) <= radius then
+					return true
+				end
+			end
+		elseif db and type(db.OnlineStalkers) == "table" and level and type(level.object_by_id) == "function" then
+			for _, id in ipairs(db.OnlineStalkers) do
+				local ok, npc = pcall(level.object_by_id, id)
+				if ok and npc and is_friendly_hub_trader(npc, actor) and dist_between(actor_pos, read_pos(npc)) <= radius then
+					return true
+				end
+			end
+		end
+	end
+
+	local lvl = level_name
+	if lvl == nil and level and type(level.name) == "function" then
+		local ok, n = pcall(level.name)
+		if ok then lvl = n end
+	end
+	if type(lvl) == "string" and lvl ~= "" then
+		local safe_tbl = (o and type(o.safe_levels) == "table" and o.safe_levels) or SAFE_HUB_LEVELS
+		if safe_tbl[lvl] == true then
+			return true
+		end
+	end
+
+	return false
+end
+
+---------------------------------------------------------------------------------------------------
+-- DOCK / SYNC state machine
+---------------------------------------------------------------------------------------------------
+
+function is_syncing()
+	return sync_timer > 0
+end
+
+function get_sync_remaining()
+	return sync_timer
+end
+
+function get_cooldown_remaining()
+	return cooldown_timer
+end
+
+function update_hub_sync(dt, at_hub, tier, cfg)
+	local c = read_cfg(cfg)
+	local step = parse_nonneg(dt, 0)
+
+	if sync_timer > 0 then
+		sync_timer = max(0, sync_timer - step)
+	end
+
+	if not c.hub_sync then
+		sync_timer = 0
+		if at_hub ~= nil then
+			was_at_hub = (at_hub == true)
+			if not was_at_hub then
+				synced_this_visit = false
+			end
+		end
+		return false
+	end
+
+	if at_hub == nil then
+		at_hub = is_at_safe_hub()
+	else
+		at_hub = (at_hub == true)
+	end
+
+	if not at_hub then
+		if was_at_hub then
+			was_at_hub = false
+			if synced_this_visit then
+				cooldown_timer = SYNC_COOLDOWN
+			elseif cooldown_timer > 0 then
+				cooldown_timer = max(0, cooldown_timer - step)
+			end
+			synced_this_visit = false
+		elseif cooldown_timer > 0 then
+			cooldown_timer = max(0, cooldown_timer - step)
+		end
+		return is_syncing()
+	end
+
+	was_at_hub = true
+	if not synced_this_visit and cooldown_timer <= 0 and tier_allows_sync(tier) then
+		synced_this_visit = true
+		sync_timer = SYNC_DURATION
+		local unredeemed = 0
+		if zbc_found_footage and type(zbc_found_footage.get_unredeemed_count) == "function" then
+			local ok, cnt = pcall(zbc_found_footage.get_unredeemed_count)
+			if ok and tonumber(cnt) then unredeemed = tonumber(cnt) end
+		end
+		fire("on_sync", {
+			tier       = tier,
+			duration   = SYNC_DURATION,
+			unredeemed = unredeemed,
+		})
+	end
+
+	return is_syncing()
+end
+
+---------------------------------------------------------------------------------------------------
+-- Sellable Found Footage Intel
+---------------------------------------------------------------------------------------------------
+
+local function normalize_faction(faction)
+	if type(faction) ~= "string" or faction == "" then return "stalker" end
+	return string.lower(faction):gsub("^actor_", "")
+end
+
+function estimate_payout(rec)
+	if type(rec) ~= "table" then return 0, 0 end
+	local tier = clamp(floor((tonumber(rec.tier) or 1) + 0.5), 1, 5)
+	local base_ru = TIER_BASE_RU[tier] or TIER_BASE_RU[1]
+	local faction = normalize_faction(rec.faction)
+	local mult = FACTION_MULTIPLIERS[faction] or 1.0
+	local ru = floor(base_ru * mult + 0.5)
+
+	local base_gw = TIER_BASE_GOODWILL[tier] or TIER_BASE_GOODWILL[1]
+	local goodwill = clamp(floor(base_gw + (mult - 1.0) * 10 + 0.5), 15, 50)
+	return ru, goodwill
+end
+
+local function award_payout(ru, goodwill)
+	if not (db and db.actor) then return end
+	local actor = db.actor
+	if ru > 0 and type(actor.give_money) == "function" then
+		pcall(function() actor:give_money(ru) end)
+	end
+	if goodwill > 0 then
+		local comm = "stalker"
+		if type(character_community) == "function" then
+			local ok, c = pcall(character_community, actor)
+			if ok and type(c) == "string" and c ~= "" then comm = c:gsub("^actor_", "") end
+		elseif type(actor.character_community) == "function" then
+			local ok, c = pcall(function() return actor:character_community() end)
+			if ok and type(c) == "string" and c ~= "" then comm = c:gsub("^actor_", "") end
+		end
+		local actor_id = 0
+		if type(actor.id) == "function" then
+			local ok, id = pcall(function() return actor:id() end)
+			if ok and tonumber(id) then actor_id = tonumber(id) end
+		end
+		if relation_registry and type(relation_registry.change_community_goodwill) == "function" then
+			pcall(relation_registry.change_community_goodwill, comm, actor_id, goodwill)
+		end
+	end
+end
+
+local function log_intel_sale(text, target, location)
+	if zbc_eventlog and type(zbc_eventlog.add) == "function" then
+		pcall(zbc_eventlog.add, "signal", text, true, nil, nil, nil, {
+			target   = target,
+			location = location,
+		})
+	end
+end
+
+function sell_record(idx, at_hub, cfg)
+	local c = read_cfg(cfg)
+	if not c.intel_sell_enabled then
+		return false, 0, 0, "Intel sales disabled"
+	end
+	if not (zbc_found_footage and type(zbc_found_footage.get_record) == "function") then
+		return false, 0, 0, "Found footage module unavailable"
+	end
+
+	local rec = zbc_found_footage.get_record(idx)
+	if type(rec) ~= "table" then
+		return false, 0, 0, "Record not found"
+	end
+	if rec.redeemed == true then
+		return false, 0, 0, "Intel already uploaded"
+	end
+
+	if at_hub == nil then
+		at_hub = is_at_safe_hub()
+	end
+	if not (at_hub == true or c.intel_sell_anywhere == true) then
+		return false, 0, 0, "Must be at a safe hub to upload intel"
+	end
+
+	local ru, goodwill = estimate_payout(rec)
+	if type(zbc_found_footage.mark_redeemed) == "function" then
+		zbc_found_footage.mark_redeemed(idx)
+	end
+	rec.redeemed = true
+
+	award_payout(ru, goodwill)
+	total_sold = total_sold + 1
+	total_ru_earned = total_ru_earned + ru
+	total_goodwill_earned = total_goodwill_earned + goodwill
+
+	local msg = string.format("Uploaded %s intel: +%s RU (+%d goodwill)",
+		tostring(rec.stalker_name or "tape"), format_ru(ru), goodwill)
+	log_intel_sale(string.format("INTEL UPLOADED: %s (+%s RU)",
+		string.upper(tostring(rec.stalker_name or "TAPE")), format_ru(ru)),
+		rec.stalker_name, rec.level_name)
+	fire("on_sell", {
+		idx      = idx,
+		record   = rec,
+		ru       = ru,
+		goodwill = goodwill,
+		count    = 1,
+	})
+	return true, ru, goodwill, msg
+end
+
+function sell_all_records(at_hub, cfg)
+	local c = read_cfg(cfg)
+	if not c.intel_sell_enabled then
+		return false, 0, 0, "Intel sales disabled", 0
+	end
+	if not (zbc_found_footage and type(zbc_found_footage.get_records) == "function") then
+		return false, 0, 0, "Found footage module unavailable", 0
+	end
+
+	local recs = zbc_found_footage.get_records()
+	if type(recs) ~= "table" or #recs == 0 then
+		return false, 0, 0, "No unredeemed intel available", 0
+	end
+
+	local pending = {}
+	for i = 1, #recs do
+		if type(recs[i]) == "table" and recs[i].redeemed ~= true then
+			pending[#pending + 1] = i
+		end
+	end
+	if #pending == 0 then
+		return false, 0, 0, "No unredeemed intel available", 0
+	end
+
+	if at_hub == nil then
+		at_hub = is_at_safe_hub()
+	end
+	if not (at_hub == true or c.intel_sell_anywhere == true) then
+		return false, 0, 0, "Must be at a safe hub to upload intel", 0
+	end
+
+	local total_ru, total_gw, count = 0, 0, 0
+	for _, idx in ipairs(pending) do
+		local rec = recs[idx]
+		local ru, gw = estimate_payout(rec)
+		if type(zbc_found_footage.mark_redeemed) == "function" then
+			zbc_found_footage.mark_redeemed(idx)
+		end
+		rec.redeemed = true
+		total_ru = total_ru + ru
+		total_gw = total_gw + gw
+		count = count + 1
+	end
+
+	award_payout(total_ru, total_gw)
+	total_sold = total_sold + count
+	total_ru_earned = total_ru_earned + total_ru
+	total_goodwill_earned = total_goodwill_earned + total_gw
+
+	local msg = string.format("Uploaded %d intel tape(s): +%s RU (+%d goodwill)",
+		count, format_ru(total_ru), total_gw)
+	log_intel_sale(string.format("BATCH INTEL UPLOAD (%d): +%s RU", count, format_ru(total_ru)), nil, nil)
+	fire("on_sell", {
+		ru       = total_ru,
+		goodwill = total_gw,
+		count    = count,
+	})
+	return true, total_ru, total_gw, msg, count
+end
+
+---------------------------------------------------------------------------------------------------
+-- Callbacks, stats & persistence
+---------------------------------------------------------------------------------------------------
+
+function set_callbacks(tbl)
+	if type(tbl) == "table" then
+		callbacks = {
+			on_sync = tbl.on_sync,
+			on_sell = tbl.on_sell,
+		}
+	else
+		callbacks = {}
+	end
+end
+
+function get_stats()
+	return {
+		total_sold            = total_sold,
+		total_ru_earned       = total_ru_earned,
+		total_goodwill_earned = total_goodwill_earned,
+	}
+end
+
+function reset()
+	sync_timer            = 0
+	cooldown_timer        = 0
+	was_at_hub            = false
+	synced_this_visit     = false
+	total_sold            = 0
+	total_ru_earned       = 0
+	total_goodwill_earned = 0
+end
+
+function save_state(m_data)
+	if type(m_data) ~= "table" then return end
+	m_data.zbc_intel = {
+		sync_timer            = sync_timer,
+		cooldown_timer        = cooldown_timer,
+		was_at_hub            = was_at_hub,
+		synced_this_visit     = synced_this_visit,
+		total_sold            = total_sold,
+		total_ru_earned       = total_ru_earned,
+		total_goodwill_earned = total_goodwill_earned,
+	}
+end
+
+function load_state(m_data)
+	pending_reset = false
+	local d = type(m_data) == "table" and m_data.zbc_intel
+	if type(d) ~= "table" then
+		reset()
+		return
+	end
+	sync_timer            = parse_nonneg(d.sync_timer, 0)
+	cooldown_timer        = parse_nonneg(d.cooldown_timer, 0)
+	was_at_hub            = (d.was_at_hub == true)
+	synced_this_visit     = (d.synced_this_visit == true)
+	total_sold            = floor(parse_nonneg(d.total_sold, 0))
+	total_ru_earned       = floor(parse_nonneg(d.total_ru_earned, 0))
+	total_goodwill_earned = floor(parse_nonneg(d.total_goodwill_earned, 0))
+end
+
+local function on_first_update()
+	if pending_reset then reset() end
+	pending_reset = true
+end
+
+function on_game_start()
+	if RegisterScriptCallback then
+		RegisterScriptCallback("save_state", save_state)
+		RegisterScriptCallback("load_state", load_state)
+		RegisterScriptCallback("actor_on_first_update", on_first_update)
+	end
+end

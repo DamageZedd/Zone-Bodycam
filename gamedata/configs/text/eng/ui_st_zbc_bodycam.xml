@@ -645,4 +645,58 @@
   <string id="ui_mcm_zone_bodycam_found_footage_spawn_item_desc">
     <text>When the optional bodycam item component is installed, recovered stalkers also drop their low-charge Axon Body camera.</text>
   </string>
+  <string id="ui_mcm_zone_bodycam_chest_occlusion">
+    <text>ADS / reload chest occlusion</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_chest_occlusion_desc">
+    <text>Subtle weapon stock and chest-rig silhouette across the lower edge while aiming down sights or reloading. Automatically disabled when wearing the Axon Flex POV mount.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_chest_occlusion_strength">
+    <text>Chest occlusion strength</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_chest_occlusion_strength_desc">
+    <text>Opacity scale of the lower-edge weapon and rig silhouette during ADS and reloads.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_anomaly_artifacts">
+    <text>Anomaly sensor artifacts</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_anomaly_artifacts_desc">
+    <text>Electro anomalies cause blue-white rolling-shutter CMOS scanline interference; Burner and Thermal anomalies create rising convective heat shimmer.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_repair_lens_key">
+    <text>Repair lens crack key</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_repair_lens_key_desc">
+    <text>Repairs persistent lens cracks. With the bodycam item component installed, requires a weapon/equipment repair or cleaning kit in your inventory.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_reset_lens_crack">
+    <text>Reset lens crack (one-shot)</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_reset_lens_crack_desc">
+    <text>Check and apply to immediately clear any persistent lens corner crack; automatically resets to off afterward.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_hub_sync">
+    <text>Safe hub DOCK / SYNC</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_hub_sync_desc">
+    <text>Body 3+ cameras automatically play a brief SYNC status and dock chime when entering a safe hub or trader zone.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_intel_sell_enabled">
+    <text>Sellable Found Footage intel</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_intel_sell_enabled_desc">
+    <text>Allows uploading unredeemed Found Footage tapes in Footage Review (S / Enter) at safe hubs for RU and faction goodwill.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_respond_alerts">
+    <text>Axon Respond squad alerts</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_respond_alerts_desc">
+    <text>Body 3+ LTE live-feed dispatch chimes and ALERT banners when companions are wounded or down, or high-tier mutants are contacted.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_psy_osd_corrupt">
+    <text>Psy OSD text corruption</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_psy_osd_corrupt_desc">
+    <text>Heavy psy exposure glitches the timestamp and serial characters in the top-right OSD overlay.</text>
+  </string>
 </string_table>

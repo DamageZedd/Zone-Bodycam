@@ -26,12 +26,17 @@ uniform float4 bus_zbc_blood;    // x..w: how far each splatter's drips have run
 // Optical & sensor realism (scripts\zbc_optics.script). Default (0, 0, 0, 0) = inactive.
 uniform float4 bus_zbc_optics;   // x: exposure blowout (0..1)  y: low-light chroma noise (0..1)  z: condensation (0..1)  w: hairline lens crack (0..1)
 
+// Extended realism, anomaly artifacts & shader-side OSD tags (scripts\zbc_anomalies.script). Default (0, 0, 0, 0) = inactive.
+uniform float4 bus_zbc_ext;      // x: chest_occlusion (0..1)  y: electro_band (0..1)  z: thermal_shimmer (0..1)  w: osd_tag_code (0=none, 1=SIGNAL, 2=MUTE, 3=BUF, 4=SYNC, 5=ALERT)
+
 #define ZBC_INTENSITY (saturate(bus_zbc_motion.x))
 #define ZBC_ACTIVE    (bus_zbc_motion.x > 0.0005)
 #define ZBC_FACES     (bus_zbc_faces.x > 0.5)
 #define ZBC_FX        (bus_zbc_glitch.x + bus_zbc_glitch.y + bus_zbc_glitch.z + dot(bus_zbc_dirt, 1.0) > 0.0005)
 #define ZBC_OPTICS    (bus_zbc_optics.x + bus_zbc_optics.y + bus_zbc_optics.z + bus_zbc_optics.w > 0.0005)
 #define ZBC_OPTICS_UV (bus_zbc_optics.z > 0.001 || bus_zbc_optics.w > 0.001)
+#define ZBC_EXT_UV    (bus_zbc_ext.z > 0.001)
+#define ZBC_EXT_COLOR (bus_zbc_ext.x > 0.001 || bus_zbc_ext.y > 0.001)
 
 // width / height of the display
 float2 zbc_aspect() { return float2(max(screen_res.x * screen_res.w, 0.1), 1.0); }
@@ -879,6 +884,90 @@ float3 zbc_optics_pass(float3 c, float2 uv, float scene_vis)
 				c = max(c + (c_vec * (0.14 * chroma * dark_w) + bias) * scene_vis, 0.0);
 			}
 		}
+	}
+
+	return max(c, 0.0);
+}
+
+//------------------------------------------------------------------------------------------------
+// Extended realism & anomaly artifacts (scripts\zbc_anomalies.script):
+//   bus_zbc_ext.x: dynamic chest / weapon stock occlusion vignette (lower-right / lower-edge, <=28%)
+//   bus_zbc_ext.y: Electro anomaly rolling-shutter blue-white CMOS scanline interference band
+//   bus_zbc_ext.z: Burner/Thermal anomaly convective heat-shimmer UV ripple (0 extra taps)
+//   bus_zbc_ext.w: shader-side OSD tag code (consumed in zbc_osd.h)
+//------------------------------------------------------------------------------------------------
+
+// Extended UV stage: subtle rising convective heat-shimmer near Burner/Thermal anomalies (0 texture taps)
+float2 zbc_ext_uv(float2 uv)
+{
+	float2 off = float2(0.0, 0.0);
+	[branch] if (bus_zbc_ext.z > 0.001)
+	{
+		float th     = saturate(bus_zbc_ext.z);
+		float tt     = zbc_time();
+		float rise   = uv.y * 10.0 + tt * 5.5;
+		float w1     = sin(rise + uv.x * 14.0);
+		float w2     = sin(uv.y * 23.0 + tt * 8.7 - uv.x * 19.0) * 0.55;
+		float vn     = zbc_vnoise(float2(uv.x * 9.0, uv.y * 7.5 + tt * 2.6)) - 0.5;
+		float vert_w = lerp(0.55, 1.0, smoothstep(0.05, 0.85, uv.y));
+		float amp    = 0.0022 * th * vert_w;
+		off.x += (w1 * 0.55 + w2 * 0.35 + vn * 0.75) * amp;
+		off.y += (w2 * 0.40 - vn * 0.45) * (amp * 0.65);
+	}
+	return off;
+}
+
+// Extended colour stage (runs before OSD so overlay text stays crisp on top):
+// dynamic weapon/chest occlusion silhouette and Electro rolling-shutter scanline interference band.
+float3 zbc_ext_pass(float3 c, float2 uv, float scene_vis)
+{
+	if (scene_vis <= 0.001)
+		return c;
+
+	// 1. Dynamic lower-right / lower-edge weapon stock & plate carrier occlusion (bus_zbc_ext.x)
+	// Kept strictly non-intrusive (zero at center aim, capped at <=28% darkening in bottom-right corner).
+	[branch] if (bus_zbc_ext.x > 0.001)
+	{
+		float occ     = saturate(bus_zbc_ext.x);
+		float diag    = (uv.x - 0.52) * 0.85 + (uv.y - 0.62) * 1.15;
+		float arch    = 0.055 * sin(uv.x * 5.2 - 1.1);
+		float stock_m = smoothstep(lerp(0.68, 0.30, occ), lerp(0.95, 0.76, occ), diag + arch)
+		              * smoothstep(0.46, 0.74, uv.x)
+		              * smoothstep(0.56, 0.80, uv.y);
+		float rig_y   = uv.y + 0.04 * (uv.x - 0.35) + 0.025 * sin(uv.x * 7.5);
+		float rig_m   = smoothstep(lerp(0.96, 0.80, occ), lerp(1.04, 0.98, occ), rig_y)
+		              * smoothstep(0.18, 0.65, uv.x);
+		float mask    = saturate(max(stock_m, rig_m * 0.62));
+		c *= 1.0 - 0.28 * mask * occ * scene_vis;
+	}
+
+	// 2. Electro anomaly rolling-shutter blue-white CMOS scanline interference band (bus_zbc_ext.y)
+	[branch] if (bus_zbc_ext.y > 0.001)
+	{
+		float  el      = saturate(bus_zbc_ext.y);
+		float  tt      = zbc_time();
+		float  tf      = zbc_tstep(24.0);
+		float  band_y1 = frac(tt * 1.65 + zbc_hash(float2(tf, 19.3)) * 0.08);
+		float  band_y2 = frac(band_y1 + 0.47);
+		float  d1      = abs(uv.y - band_y1);
+		d1             = min(d1, 1.0 - d1);
+		float  d2      = abs(uv.y - band_y2);
+		d2             = min(d2, 1.0 - d2);
+		float  bw1     = lerp(0.025, 0.065, el);
+		float  bw2     = bw1 * 0.55;
+		float  b1      = exp(-(d1 * d1) / max(bw1 * bw1, 1e-4));
+		float  b2      = exp(-(d2 * d2) / max(bw2 * bw2, 1e-4)) * 0.42;
+		float  band    = saturate(b1 + b2);
+
+		float  row_px  = floor(uv.y * screen_res.y * 0.5);
+		float  scan_ln = 0.65 + 0.35 * sin(uv.y * screen_res.y * 1.5708);
+		float  row_jit = zbc_hash(float2(row_px, tf + 7.1));
+		float  sparkle = smoothstep(0.62, 0.98, row_jit) * band;
+		float  h_var   = 0.82 + 0.18 * sin(uv.x * 18.0 + tt * 9.0 + row_jit * 6.2832);
+		float  env     = band * scan_ln * h_var * el * scene_vis;
+
+		float3 el_col  = float3(0.55, 0.82, 1.00);
+		c = c * (1.0 + 0.14 * env) + el_col * (0.20 * env + 0.18 * sparkle * el * scene_vis);
 	}
 
 	return max(c, 0.0);

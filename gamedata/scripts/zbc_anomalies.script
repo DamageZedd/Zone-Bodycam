@@ -1,0 +1,472 @@
+--[[
+	Zone Bodycam - Weapon/Chest Occlusion, Anomaly Shader Artifacts & Shader-Side OSD Tags
+
+	Drives the single Shader Bus float4 lane "zbc_ext" (bound to HLSL uniform float4 bus_zbc_ext):
+	  x: chest_occlusion  (0..1)  subtle lower-right / lower-edge weapon stock & rig silhouette during ADS/reloads
+	  y: electro_band     (0..1)  rolling-shutter blue-white CMOS scanline interference near Electro anomalies
+	  z: thermal_shimmer  (0..1)  convective vertical heat-shimmer UV ripple near Burner/Thermal anomalies
+	  w: osd_tag_code     (0..5)  shader-side top-left OSD status tag (0=none, 1=SIGNAL, 2=MUTE, 3=BUF, 4=SYNC, 5=ALERT)
+
+	Public API (wired in Phase 2 by integrator):
+	  update(dt, is_aiming, is_reloading, has_flex_pov, electro_prox, thermal_prox, osd_tag_str, cfg) -> x, y, z, w
+	  detect_anomaly_proximity(actor) -> electro_prox, thermal_prox
+	  encode_osd_tag(tag_str) -> 0..5
+	  classify_anomaly(sec_or_name) -> "electro" | "thermal" | nil
+	  zero() / reset() / clear_send_cache() / get_state()
+]]
+
+local exp   = math.exp
+local abs   = math.abs
+local sin   = math.sin
+local sqrt  = math.sqrt
+local min   = math.min
+local max   = math.max
+
+---------------------------------------------------------------------------------------------------
+-- Constants & defaults
+---------------------------------------------------------------------------------------------------
+
+BUS_OWNER = "zone_bodycam_v1"
+BUS_LANE  = "zbc_ext"
+
+-- Recommended MCM keys & defaults (Phase 2 integrator exposes these in zbc_bodycam / zbc_bodycam_mcm)
+DEFAULTS = {
+	chest_occlusion          = true,
+	chest_occlusion_strength = 0.75,
+	anomaly_artifacts        = true,
+}
+
+OSD_TAGS = {
+	SIGNAL = 1,
+	MUTE   = 2,
+	BUF    = 3,
+	SYNC   = 4,
+	ALERT  = 5,
+}
+
+-- Anomaly proximity detection ranges (metres)
+ELECTRO_RANGE = 10.0
+ELECTRO_INNER = 2.0
+THERMAL_RANGE = 9.0
+THERMAL_INNER = 1.8
+
+-- Occlusion & anomaly smoothing constants (seconds)
+local OCC_AIM_TARGET    = 0.78   -- rifle stock / arm rise during ADS
+local OCC_RELOAD_TARGET = 1.00   -- arms / weapon crossing lower-right during reload
+local OCC_TAU_UP        = 0.14   -- snappy raise into ADS / reload
+local OCC_TAU_DN        = 0.22   -- smooth drop back to clear view
+
+local ELECTRO_TAU_UP    = 0.08   -- fast EM pickup rise
+local ELECTRO_TAU_DN    = 0.28   -- crisp decay after leaving Electro zone
+local ELECTRO_SPIKE_TAU = 0.14   -- short rolling-shutter EM discharge pulse decay
+
+local THERMAL_TAU_UP    = 0.18   -- convective heat buildup
+local THERMAL_TAU_DN    = 0.55   -- lingering heat decay after stepping away
+local THERMAL_FLARE_TAU = 0.25   -- brief heat-wave surge decay
+
+local SEND_EPS          = 0.0005
+
+---------------------------------------------------------------------------------------------------
+-- Helpers
+---------------------------------------------------------------------------------------------------
+
+local function clamp(v, lo, hi)
+	if v ~= v then return lo end
+	if v < lo then return lo end
+	if v > hi then return hi end
+	return v
+end
+
+local function clamp01(v)
+	return clamp(tonumber(v) or 0, 0, 1)
+end
+
+local function finite(v)
+	return type(v) == "number" and v == v and v > -1e9 and v < 1e9
+end
+
+local function exp_approach(cur, target, dt, tau_up, tau_dn)
+	if dt <= 0 then return cur end
+	local tau = (target > cur) and tau_up or tau_dn
+	if tau <= 0 then return target end
+	return cur + (target - cur) * (1.0 - exp(-dt / tau))
+end
+
+local function cfg_bool(cfg, key)
+	if type(cfg) == "table" and cfg[key] ~= nil then
+		return cfg[key] and true or false
+	end
+	return DEFAULTS[key] and true or false
+end
+
+local function cfg_num(cfg, key)
+	if type(cfg) == "table" and cfg[key] ~= nil then
+		local n = tonumber(cfg[key])
+		if n and n == n then return n end
+	end
+	return DEFAULTS[key]
+end
+
+local function master_enabled(cfg)
+	if type(cfg) ~= "table" then return true end
+	if cfg.enabled == false or cfg.lens_enabled == false then return false end
+	return true
+end
+
+---------------------------------------------------------------------------------------------------
+-- OSD tag encoding
+---------------------------------------------------------------------------------------------------
+
+function encode_osd_tag(tag_str)
+	if type(tag_str) ~= "string" then return 0 end
+	local trimmed = tag_str:match("^%s*(.-)%s*$")
+	if not trimmed or trimmed == "" then return 0 end
+	return OSD_TAGS[string.upper(trimmed)] or 0
+end
+
+---------------------------------------------------------------------------------------------------
+-- Anomaly classification & safe proximity detection
+---------------------------------------------------------------------------------------------------
+
+function classify_anomaly(sec_or_name)
+	if type(sec_or_name) ~= "string" or sec_or_name == "" then return nil end
+	local s = string.lower(sec_or_name)
+	-- Ignore benign campfires / non-anomaly space restrictors
+	if s:find("campfire", 1, true) or s:find("camp_zone", 1, true) then
+		return nil
+	end
+	if s:find("electr", 1, true)
+	or s:find("galantine", 1, true)
+	or s:find("tesla", 1, true)
+	or s:find("spark", 1, true)
+	or s:find("pulse", 1, true)
+	or s:find("af_flash", 1, true)
+	or s:find("af_moonlight", 1, true)
+	or s:find("af_dummy_battery", 1, true) then
+		return "electro"
+	end
+	if s:find("thermal", 1, true)
+	or s:find("zharka", 1, true)
+	or s:find("burner", 1, true)
+	or s:find("fireball", 1, true)
+	or s:find("steam", 1, true)
+	or s:find("flame", 1, true)
+	or s:find("af_cristall", 1, true)
+	or s:find("af_drops", 1, true)
+	or s:find("af_eye", 1, true)
+	or s:find("af_fire", 1, true) then
+		return "thermal"
+	end
+	return nil
+end
+
+local function safe_pos(obj)
+	if not obj then return nil end
+	if type(obj.position) == "function" then
+		local ok, p = pcall(obj.position, obj)
+		if ok and p then return p end
+	elseif type(obj.position) == "table" then
+		return obj.position
+	end
+	return nil
+end
+
+local function safe_str_method(obj, method)
+	if not obj or type(obj[method]) ~= "function" then return nil end
+	local ok, v = pcall(obj[method], obj)
+	if ok and type(v) == "string" then return v end
+	return nil
+end
+
+local function pos_dist(a, b)
+	if not (a and b) then return nil end
+	if type(a.distance_to) == "function" then
+		local ok, d = pcall(a.distance_to, a, b)
+		if ok and type(d) == "number" and d == d then return d end
+	end
+	if type(a.x) == "number" and type(b.x) == "number" then
+		local dx = a.x - b.x
+		local dy = (a.y or 0) - (b.y or 0)
+		local dz = (a.z or 0) - (b.z or 0)
+		return sqrt(dx * dx + dy * dy + dz * dz)
+	end
+	return nil
+end
+
+local function prox_from_dist(d, range, inner)
+	if not d or d >= range then return 0 end
+	return clamp01((range - d) / max(range - inner, 0.1))
+end
+
+local function scan_table(tbl, apos, require_zone_prefix, scale)
+	local el, th = 0, 0
+	if type(tbl) ~= "table" then return el, th end
+	for key, entry in pairs(tbl) do
+		local obj = (type(entry) == "table" and entry.object) or entry
+		if obj then
+			local sec  = safe_str_method(obj, "section")
+			local name = safe_str_method(obj, "name") or (type(key) == "string" and key or nil)
+			local allowed = not require_zone_prefix
+			if not allowed then
+				local probe = string.lower((sec or "") .. " " .. (name or ""))
+				if probe:find("zone_", 1, true) or probe:find("anom", 1, true) or probe:find("mine_", 1, true) or probe:find("af_", 1, true) then
+					allowed = true
+				end
+			end
+			if allowed then
+				local kind = classify_anomaly(sec) or classify_anomaly(name)
+				if kind then
+					local opos = safe_pos(obj)
+					local d = pos_dist(opos, apos)
+					if d then
+						if kind == "electro" then
+							local p = prox_from_dist(d, ELECTRO_RANGE, ELECTRO_INNER) * scale
+							if p > el then el = p end
+						elseif kind == "thermal" then
+							local p = prox_from_dist(d, THERMAL_RANGE, THERMAL_INNER) * scale
+							if p > th then th = p end
+						end
+					end
+				end
+			end
+		end
+	end
+	return el, th
+end
+
+-- Safe Anomaly helper: scans nearby anomaly zones (and artefacts if exposed) and returns (electro_prox, thermal_prox) in 0..1.
+-- Always returns (0, 0) cleanly in headless environments or when actor / db is unavailable.
+function detect_anomaly_proximity(actor)
+	if not actor then return 0, 0 end
+	local apos = safe_pos(actor)
+	if not apos then return 0, 0 end
+	if type(db) ~= "table" then return 0, 0 end
+
+	local el1, th1 = scan_table(db.anomaly_by_name, apos, false, 1.0)
+	local el2, th2 = scan_table(db.zone_by_name,    apos, true,  1.0)
+	local el3, th3 = scan_table(db.artefacts,       apos, false, 0.45)
+
+	return clamp01(max(el1, el2, el3)), clamp01(max(th1, th2, th3))
+end
+
+---------------------------------------------------------------------------------------------------
+-- Shader Bus transport (lazy registration + change-threshold caching)
+---------------------------------------------------------------------------------------------------
+
+local bus_token  = nil   -- nil: untried, false: unavailable, handle: registered token
+local sent_cache = nil   -- { x, y, z, w }
+
+local function bus_ready()
+	if bus_token == nil then
+		if shader_bus and shader_bus.try_register and shader_bus.set then
+			local tok = shader_bus.try_register(BUS_LANE, BUS_OWNER, "Zone Bodycam extended")
+			bus_token = tok or false
+			sent_cache = nil
+		else
+			bus_token = false
+		end
+	end
+	return bus_token ~= false and bus_token ~= nil
+end
+
+local function changed(a, b)
+	if a == nil then return true end
+	if (a == 0) ~= (b == 0) then return true end
+	return abs(a - b) >= SEND_EPS
+end
+
+local function send_ext(x, y, z, w)
+	if not bus_ready() then return false end
+	if not (finite(x) and finite(y) and finite(z) and finite(w)) then return false end
+	local c = sent_cache
+	if c and not changed(c[1], x) and not changed(c[2], y) and not changed(c[3], z) and not changed(c[4], w) then
+		return false
+	end
+	if not c then
+		sent_cache = { x, y, z, w }
+	else
+		c[1], c[2], c[3], c[4] = x, y, z, w
+	end
+	shader_bus.set(bus_token, x, y, z, w)
+	return true
+end
+
+function clear_send_cache()
+	sent_cache = nil
+end
+
+---------------------------------------------------------------------------------------------------
+-- Internal state
+---------------------------------------------------------------------------------------------------
+
+local sim_clock        = 0
+local chest_occ        = 0
+local electro_level    = 0
+local electro_spike    = 0
+local electro_spike_cd = 0
+local thermal_level    = 0
+local thermal_flare    = 0
+local prev_thermal     = 0
+local last_tag_code    = 0
+
+---------------------------------------------------------------------------------------------------
+-- Public API
+---------------------------------------------------------------------------------------------------
+
+function reset()
+	sim_clock        = 0
+	chest_occ        = 0
+	electro_level    = 0
+	electro_spike    = 0
+	electro_spike_cd = 0
+	thermal_level    = 0
+	thermal_flare    = 0
+	prev_thermal     = 0
+	last_tag_code    = 0
+	sent_cache       = nil
+end
+
+function zero()
+	send_ext(0, 0, 0, 0)
+	return 0, 0, 0, 0
+end
+
+function get_state()
+	return {
+		chest_occlusion  = chest_occ,
+		electro_level    = electro_level,
+		electro_spike    = electro_spike,
+		electro_spike_cd = electro_spike_cd,
+		thermal_level    = thermal_level,
+		thermal_flare    = thermal_flare,
+		osd_tag_code     = last_tag_code,
+	}
+end
+
+-- Main per-frame update:
+--   dt             : frame delta time in seconds
+--   is_aiming      : bool, actor currently ADS
+--   is_reloading   : bool, actor currently reloading
+--   has_flex_pov   : bool, Flex POV active (automatically forces chest_occlusion = 0)
+--   electro_prox   : 0..1 proximity to Electro anomaly
+--   thermal_prox   : 0..1 proximity to Burner/Thermal anomaly
+--   osd_tag_str    : optional tag string ("SIGNAL", "MUTE", "BUF", "SYNC", "ALERT")
+--   cfg            : optional MCM settings table
+-- Sends (x, y, z, w) to Shader Bus lane "zbc_ext" and returns x, y, z, w.
+function update(dt, is_aiming, is_reloading, has_flex_pov, electro_prox, thermal_prox, osd_tag_str, cfg)
+	dt = tonumber(dt) or 0
+	if dt ~= dt or dt < 0 then dt = 0 end
+	if dt > 0.5 then dt = 0.5 end
+
+	sim_clock = sim_clock + dt
+	if sim_clock > 600.0 then sim_clock = sim_clock - 600.0 end
+
+	if not master_enabled(cfg) then
+		chest_occ        = 0
+		electro_level    = 0
+		electro_spike    = 0
+		electro_spike_cd = 0
+		thermal_level    = 0
+		thermal_flare    = 0
+		prev_thermal     = 0
+		last_tag_code    = 0
+		send_ext(0, 0, 0, 0)
+		return 0, 0, 0, 0
+	end
+
+	-- 1. Dynamic weapon / chest occlusion (automatically zeroed under Flex POV or when disabled)
+	local occ_enabled = (not has_flex_pov) and cfg_bool(cfg, "chest_occlusion")
+	local occ_str     = clamp01(cfg_num(cfg, "chest_occlusion_strength"))
+	if not occ_enabled or occ_str <= 0 then
+		chest_occ = 0
+	else
+		local target = 0
+		if is_reloading then
+			target = OCC_RELOAD_TARGET
+		elseif is_aiming then
+			target = OCC_AIM_TARGET
+		end
+		target = clamp01(target * occ_str)
+		chest_occ = exp_approach(chest_occ, target, dt, OCC_TAU_UP, OCC_TAU_DN)
+		if target == 0 and chest_occ < 0.001 then
+			chest_occ = 0
+		end
+	end
+
+	-- 2. Electro & Thermal anomaly artifacts
+	local anom_enabled = cfg_bool(cfg, "anomaly_artifacts")
+	local el_out, th_out = 0, 0
+	if not anom_enabled then
+		electro_level    = 0
+		electro_spike    = 0
+		electro_spike_cd = 0
+		thermal_level    = 0
+		thermal_flare    = 0
+		prev_thermal     = 0
+	else
+		-- 2a. Electro rolling-shutter EM band: smoothed hum + periodic discharge spikes
+		local el_p = clamp01(electro_prox)
+		local el_target = el_p * 0.55
+		electro_level = exp_approach(electro_level, el_target, dt, ELECTRO_TAU_UP, ELECTRO_TAU_DN)
+		if el_target == 0 and electro_level < 0.002 then
+			electro_level = 0
+		end
+
+		if electro_spike > 0 and dt > 0 then
+			electro_spike = electro_spike * exp(-dt / ELECTRO_SPIKE_TAU)
+			if electro_spike < 0.002 then electro_spike = 0 end
+		end
+
+		if el_p > 0.01 then
+			electro_spike_cd = electro_spike_cd - dt
+			if electro_spike_cd <= 0 then
+				local burst = clamp01(0.35 + 0.65 * el_p)
+				if burst > electro_spike then electro_spike = burst end
+				-- Faster discharge cadence the closer the actor gets to the Electro field
+				local jitter = 0.85 + 0.30 * (0.5 + 0.5 * sin(sim_clock * 7.3 + 1.1))
+				electro_spike_cd = (1.30 - 0.92 * el_p) * jitter
+			end
+		else
+			electro_spike_cd = 0
+		end
+
+		el_out = clamp01(max(electro_level, electro_spike))
+		if el_out < 0.002 then el_out = 0 end
+
+		-- 2b. Thermal convective shimmer: smooth rise, brief entry heat-wave flare, lingering decay
+		local th_p = clamp01(thermal_prox)
+		if th_p > prev_thermal + 0.12 and th_p > 0.15 then
+			local flare = clamp01(th_p)
+			if flare > thermal_flare then thermal_flare = flare end
+		end
+		prev_thermal = th_p
+
+		thermal_level = exp_approach(thermal_level, th_p, dt, THERMAL_TAU_UP, THERMAL_TAU_DN)
+		if th_p == 0 and thermal_level < 0.002 then
+			thermal_level = 0
+		end
+
+		if thermal_flare > 0 and dt > 0 then
+			thermal_flare = thermal_flare * exp(-dt / THERMAL_FLARE_TAU)
+			if thermal_flare < 0.002 then thermal_flare = 0 end
+		end
+
+		if thermal_level > 0 or thermal_flare > 0 then
+			local wave = 0.88 + 0.12 * sin(sim_clock * 2.7)
+			th_out = clamp01(max(thermal_level * wave, thermal_flare))
+			if th_out < 0.002 then th_out = 0 end
+		end
+	end
+
+	-- 3. Shader-side OSD tag code (0..5)
+	local tag_code = encode_osd_tag(osd_tag_str)
+	last_tag_code = tag_code
+
+	local x = clamp01(chest_occ)
+	local y = el_out
+	local z = th_out
+	local w = tag_code
+
+	send_ext(x, y, z, w)
+	return x, y, z, w
+end

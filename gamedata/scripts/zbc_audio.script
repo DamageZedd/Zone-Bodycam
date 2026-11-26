@@ -28,6 +28,8 @@ local SOUND_PATHS = {
 	low_batt = "zbc\\axon_low_batt",
 	mute     = "zbc\\axon_mute",
 	mic_clip = "zbc\\axon_mic_clip",
+	respond  = "zbc\\axon_respond",
+	sync     = "zbc\\axon_sync",
 }
 
 -- Body 1-2 single/older mic clips strongest; Body 3-5 have progressively cleaner 4-mic arrays.
@@ -140,6 +142,20 @@ end
 
 function on_signal(cfg)
 	return on_event(cfg)
+end
+
+function on_respond_alert(cfg)
+	if is_muted_state or not opt_bool(cfg, "audio_beeps", true) then
+		return false
+	end
+	return play_sound("respond", opt_vol(cfg))
+end
+
+function on_sync(cfg)
+	if is_muted_state or not opt_bool(cfg, "audio_beeps", true) then
+		return false
+	end
+	return play_sound("sync", opt_vol(cfg))
 end
 
 function on_mute_toggle(muted, cfg)

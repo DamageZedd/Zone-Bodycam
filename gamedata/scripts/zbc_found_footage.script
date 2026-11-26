@@ -423,6 +423,7 @@ function build_record(info)
 		timestamp     = ts,
 		cause         = info.cause,
 		cause_kind    = info.cause_kind or "unknown",
+		redeemed      = (info.redeemed == true),
 	}
 	rec.events = reconstruct_events({
 		stalker_name = stalker_name,
@@ -462,6 +463,23 @@ end
 
 function clear()
 	records = {}
+end
+
+function mark_redeemed(idx)
+	idx = tonumber(idx)
+	if not idx or not records[idx] then return false end
+	records[idx].redeemed = true
+	return true
+end
+
+function get_unredeemed_count()
+	local n = 0
+	for i = 1, #records do
+		if records[i] and records[i].redeemed ~= true then
+			n = n + 1
+		end
+	end
+	return n
 end
 
 function format_record_lines(rec)
@@ -521,6 +539,7 @@ local function copy_record(rec)
 		timestamp     = tostring(rec.timestamp or ""),
 		cause         = rec.cause and tostring(rec.cause) or nil,
 		cause_kind    = rec.cause_kind and tostring(rec.cause_kind) or nil,
+		redeemed      = (rec.redeemed == true),
 		events        = evs,
 	}
 end

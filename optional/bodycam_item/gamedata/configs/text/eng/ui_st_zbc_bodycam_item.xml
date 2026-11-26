@@ -63,4 +63,10 @@
   <string id="ui_mcm_zone_bodycam_item_tier_limits_desc">
     <text>Each Axon Body generation matches the real camera's published specs: resolution, field of view, low-light noise, compression and battery life, plus live map and identification from Body 3 (LTE). The overlay adds the name from Body 2 and the GPS line from Body 3. Your MCM effect settings stay your preference: the camera scales them up or down and turns off what it does not have. Off: every camera has Axon Body 4's picture and every MCM feature (only battery life differs).</text>
   </string>
+  <string id="st_zbc_flex_pov_name">
+    <text>Axon Flex POV Mount</text>
+  </string>
+  <string id="st_zbc_flex_pov_descr">
+    <text>A compact Axon Flex POV remote point-of-view camera head and shielded tether that plugs into an Axon Body 4 or Axon Body 5 unit to move the lens off your chest rig and onto your helmet or collar.\n\nCompatible only with Axon Body 4 and Axon Body 5 (Generations 4-5; has no effect on Body 1-3). While carried alongside an active Body 4 or Body 5, switches the overlay label to AXON FLEX POV, reduces chest sway, and eliminates chest/weapon occlusion. Crafted on a workbench (advanced toolkit, advanced electronics recipes).</text>
+  </string>
 </string_table>

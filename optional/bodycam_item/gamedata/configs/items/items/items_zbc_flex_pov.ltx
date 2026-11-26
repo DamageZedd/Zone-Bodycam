@@ -1,0 +1,25 @@
+; Zone Bodycam - Axon Flex POV helmet/collar mount attachment (optional FOMOD component)
+; Carried anywhere in the inventory alongside an Axon Body 4 or Body 5 camera (tier >= 4).
+; Relocates the lens to helmet/collar height: updates the OSD label to "AXON FLEX POV",
+; reduces chest sway, and clears chest/weapon occlusion.
+
+[zbc_flex_pov]:identity_immunities
+GroupControlSection  = spawn_group
+discovery_dependency =
+$spawn               = "devices\zbc_flex_pov"
+class                = II_ATTCH
+kind                 = i_device
+cform                = skeleton
+visual               = dynamics\devices\zbc_bodycam\zbc_bodycam.ogf
+inv_name             = st_zbc_flex_pov_name
+inv_name_short       = st_zbc_flex_pov_name
+description          = st_zbc_flex_pov_descr
+inv_weight           = 0.08
+icons_texture        = ui\ui_icon_zbc_bodycam
+inv_grid_width       = 1
+inv_grid_height      = 1
+inv_grid_x           = 0
+inv_grid_y           = 0
+cost                 = 14000
+tier                 = 4
+use_condition        = false

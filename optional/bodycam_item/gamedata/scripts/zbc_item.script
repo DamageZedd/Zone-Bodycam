@@ -11,6 +11,14 @@
 ]]
 
 ITEM_SECTION = "zbc_bodycam_item"
+FLEX_POV_SECTION  = "zbc_flex_pov"
+FLEX_POV_LABEL    = "AXON FLEX POV"
+FLEX_POV_MIN_TIER = 4
+REPAIR_KIT_SECTIONS = {
+	itm_basickit    = true,
+	itm_advancedkit = true,
+	itm_expertkit   = true,
+}
 
 CAMERA_ORDER = {
 	"zbc_bodycam_1",
@@ -136,6 +144,7 @@ end
 ---------------------------------------------------------------------------------------------------
 
 local cam_id = nil           -- id of the bodycam being drained, nil: none carried
+local flex_pov_id = nil      -- id of carried zbc_flex_pov attachment, nil: none carried
 local cam_charged = false
 local next_scan = 0
 local last_t = nil
@@ -198,6 +207,14 @@ local function carried_cam()
 	return obj
 end
 
+local function carried_flex_pov()
+	local obj = flex_pov_id and level.object_by_id(flex_pov_id)
+	local parent = obj and obj:parent()
+	if not (parent and parent:id() == (AC_ID or 0)) then return nil end
+	if obj:section() ~= FLEX_POV_SECTION then return nil end
+	return obj
+end
+
 -- picks the carried bodycam with the most charge (breaking ties by generation, with STICKY_EPS
 -- hysteresis for the already-active charged camera so two full cameras do not ping-pong every second).
 -- Also looks at every carried camera's charge: returns the HUD section of a camera that just got a new
@@ -211,12 +228,17 @@ local function scan()
 		sticky_id = prev_obj:id()
 	end
 	cam_id = nil
+	flex_pov_id = nil
 	if not actor then return end
 	local ids, scores, gens = {}, {}, {}
 	local seen, inserted = {}, nil
 	local anim = zbc_item_anim
 	actor:iterate_inventory(function(_, obj)
 		local sec = obj and obj:section()
+		if sec == FLEX_POV_SECTION then
+			flex_pov_id = obj:id()
+			return
+		end
 		local def = sec and CAMERAS[sec]
 		if def then
 			local id = obj:id()
@@ -290,7 +312,7 @@ local function refresh(now, silent)
 		inserted = cam_def and cam_def.hud
 	end
 	if cam_id and charge then seen_charge[cam_id] = charge end
-	if not silent and (inserted or (cam_id and last_charge_id and cam_id ~= last_charge_id)) then
+	if not silent and cam_id and last_charge_id and cam_id ~= last_charge_id then
 		if zbc_optics and type(rawget(zbc_optics, "on_repair")) == "function" then
 			zbc_optics.on_repair()
 		end
@@ -313,11 +335,48 @@ function battery_level()
 	return obj and obj:condition() or nil
 end
 
--- the overlay's default device label (zbc_bodycam.script): generation label of the carried camera, nil without one
+-- true when carrying the Axon Flex POV mount alongside an active Body 4 or Body 5 camera (tier >= 4)
+function has_flex_pov()
+	if not carried_flex_pov() then return false end
+	local obj = carried_cam()
+	local def = obj and CAMERAS[obj:section()]
+	return (def and def.gen >= FLEX_POV_MIN_TIER) and true or false
+end
+
+function is_repair_kit(sec)
+	if type(sec) ~= "string" or #sec == 0 then return false end
+	if REPAIR_KIT_SECTIONS[sec] then return true end
+	if sec:match("^cleaning_kit_") then return true end
+	return false
+end
+
+function repair_lens_with_toolkit(actor)
+	actor = actor or (db and db.actor)
+	if not (actor and actor.iterate_inventory) then return false end
+	local found = false
+	actor:iterate_inventory(function(_, obj)
+		if found then return end
+		local sec = obj and obj:section()
+		if is_repair_kit(sec) then
+			found = true
+		end
+	end, actor)
+	if not found then return false end
+	if zbc_optics and type(rawget(zbc_optics, "on_repair")) == "function" then
+		zbc_optics.on_repair()
+		return true
+	end
+	return false
+end
+
+-- the overlay's default device label (zbc_bodycam.script): generation label of the carried camera,
+-- overridden to "AXON FLEX POV" when carrying zbc_flex_pov with Body 4 or Body 5, nil without a camera
 function active_device_label()
 	local obj = carried_cam()
 	local def = obj and CAMERAS[obj:section()]
-	return def and def.label or nil
+	if not def then return nil end
+	if has_flex_pov() then return FLEX_POV_LABEL end
+	return def.label
 end
 
 -- the camera tier for zbc_bodycam.script (zbc_tiers.script): generation of the carried camera, nil
@@ -360,6 +419,7 @@ local function actor_on_first_update()
 	load_settings()
 	last_t = nil
 	next_scan = 0
+	flex_pov_id = nil
 	cam_charged = false
 	warned_low = 0
 	seen_charge, last_charge_id = {}, nil
