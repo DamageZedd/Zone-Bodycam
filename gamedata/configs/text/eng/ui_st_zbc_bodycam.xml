@@ -504,4 +504,145 @@
   <string id="st_zbc_review_empty">
     <text>No events recorded yet</text>
   </string>
+  <string id="st_zbc_ev_signal">
+    <text>Signal trigger</text>
+  </string>
+  <string id="st_zbc_ev_audio_mute">
+    <text>Audio mute on</text>
+  </string>
+  <string id="st_zbc_ev_audio_unmute">
+    <text>Audio mute off</text>
+  </string>
+  <string id="st_zbc_ev_found_footage">
+    <text>Found footage</text>
+  </string>
+  <string id="st_zbc_review_ff_title">
+    <text>Found footage</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_optics_blowout">
+    <text>Muzzle-flash blowout</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_optics_blowout_desc">
+    <text>Small-sensor auto-exposure blowout and lens halation on gunshots and bright flashes, strongest in the dark and recovering faster on newer cameras.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_optics_blowout_strength">
+    <text>Blowout strength</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_optics_blowout_strength_desc">
+    <text>Intensity of the muzzle-flash exposure flare and recovery bloom.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_optics_chroma">
+    <text>Low-light shadow chroma</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_optics_chroma_desc">
+    <text>Purple and green CMOS shadow chroma speckle in dark areas (when IR mode is off), strongest on older cameras.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_optics_chroma_strength">
+    <text>Shadow chroma strength</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_optics_chroma_strength_desc">
+    <text>Amount of non-IR low-light chroma noise in shadows.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_optics_condensation">
+    <text>Lens condensation</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_optics_condensation_desc">
+    <text>Edge misting on the lens in rain, when stepping indoors from cold rain, or during heavy sprinting. Wipe with the mask-wipe key (T).</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_optics_condensation_strength">
+    <text>Condensation strength</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_optics_condensation_strength_desc">
+    <text>Maximum intensity of edge condensation misting.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_optics_crack">
+    <text>Lens corner crack</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_optics_crack_desc">
+    <text>Heavy hits can leave a hairline refractive crack in the lower-left lens corner (Body 5 sapphire lens has 80% resistance). Cleared when swapping batteries or cameras.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_audio_beeps">
+    <text>Axon audio cues</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_audio_beeps_desc">
+    <text>Crisp Axon double-beeps for recording start/stop, Signal triggers, EVENT markers, and mute toggle.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_audio_volume">
+    <text>Audio cue volume</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_audio_volume_desc">
+    <text>Playback volume for all Axon bodycam audio cues and chest-mic clipping.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_audio_interval_beep">
+    <text>2-minute interval reminder</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_audio_interval_beep_desc">
+    <text>Optional periodic Axon reminder chirp every two minutes while actively recording.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_audio_low_batt">
+    <text>Low-battery warning chirps</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_audio_low_batt_desc">
+    <text>Audible low-battery alert chirps at 10% and 5% charge.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_audio_mic_clip">
+    <text>Chest-mic gunshot clipping</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_audio_mic_clip_desc">
+    <text>Brief chest-mounted microphone limiter crunch on gunfire, harsher on older single-mic cameras and cleaner on newer multi-mic arrays.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_standby_mode">
+    <text>Standby BUFFER mode</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_standby_mode_desc">
+    <text>On: the camera idles in Pre-Event Buffering (BUF, 75% less battery drain) and switches to active REC on Axon Signal triggers or manual toggle. Off: always recording.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_axon_signal">
+    <text>Axon Signal auto-trigger</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_axon_signal_desc">
+    <text>Body 2+ automatically switches from BUF to REC on weapon draw, gunfire, heavy hits, headlamp toggle, or combat sprint.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_signal_hold_sec">
+    <text>Signal recording hold (s)</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_signal_hold_sec_desc">
+    <text>Real seconds the camera keeps recording after an Axon Signal trigger before returning to BUF standby.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_standby_key">
+    <text>Manual standby / REC key</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_standby_key_desc">
+    <text>Manually toggles between BUF standby and continuous REC when Standby BUFFER mode is enabled.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_mute_key">
+    <text>Audio mute key</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_mute_key_desc">
+    <text>Toggles Axon audio mute (MUTE), suppressing camera beeps and logging the mute event.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_found_footage">
+    <text>Found footage recovery</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_found_footage_desc">
+    <text>Fallen stalkers can drop recoverable Axon bodycam logs (and low-charge camera items) viewable in the Footage Review screen (Tab).</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_found_footage_chance_high">
+    <text>Drop chance (high-tech factions)</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_found_footage_chance_high_desc">
+    <text>Recovery chance on Mercenaries, Military, Monolith, Ecologists, and ISG.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_found_footage_chance_low">
+    <text>Drop chance (loners / bandits)</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_found_footage_chance_low_desc">
+    <text>Recovery chance on Loners, Bandits, and other factions.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_found_footage_spawn_item">
+    <text>Spawn damaged camera item</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_found_footage_spawn_item_desc">
+    <text>When the optional bodycam item component is installed, recovered stalkers also drop their low-charge Axon Body camera.</text>
+  </string>
 </string_table>

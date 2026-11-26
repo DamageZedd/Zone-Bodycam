@@ -23,10 +23,15 @@ uniform float4 bus_zbc_ir;       // x: low-light (infrared) mix 0..1  y: auto-ex
 uniform float4 bus_zbc_dirt;     // x..w: hit times of up to 4 blood splatters on the lens (timers.x clock, 0 empty)
 uniform float4 bus_zbc_blood;    // x..w: how far each splatter's drips have run (1 at ~14 s, up to 3)
 
+// Optical & sensor realism (scripts\zbc_optics.script). Default (0, 0, 0, 0) = inactive.
+uniform float4 bus_zbc_optics;   // x: exposure blowout (0..1)  y: low-light chroma noise (0..1)  z: condensation (0..1)  w: hairline lens crack (0..1)
+
 #define ZBC_INTENSITY (saturate(bus_zbc_motion.x))
 #define ZBC_ACTIVE    (bus_zbc_motion.x > 0.0005)
 #define ZBC_FACES     (bus_zbc_faces.x > 0.5)
 #define ZBC_FX        (bus_zbc_glitch.x + bus_zbc_glitch.y + bus_zbc_glitch.z + dot(bus_zbc_dirt, 1.0) > 0.0005)
+#define ZBC_OPTICS    (bus_zbc_optics.x + bus_zbc_optics.y + bus_zbc_optics.z + bus_zbc_optics.w > 0.0005)
+#define ZBC_OPTICS_UV (bus_zbc_optics.z > 0.001 || bus_zbc_optics.w > 0.001)
 
 // width / height of the display
 float2 zbc_aspect() { return float2(max(screen_res.x * screen_res.w, 0.1), 1.0); }
@@ -662,6 +667,222 @@ float3 zbc_fx_color(float3 c, float2 uv, float g, float spec, float scene_vis)
 	return c;
 }
 float3 zbc_fx_color(float3 c, float2 uv, float g, float spec) { return zbc_fx_color(c, uv, g, spec, 1.0); }
+
+//------------------------------------------------------------------------------------------------
+// Optical & sensor realism (scripts\zbc_optics.script):
+//   bus_zbc_optics.x: muzzle-flash / bright-light auto-exposure blowout + dome halation/flare
+//   bus_zbc_optics.y: non-IR low-light purple/green shadow chroma speckle
+//   bus_zbc_optics.z: edge lens condensation / fogging
+//   bus_zbc_optics.w: non-intrusive hairline corner lens crack / scratch
+// Zero extra texture taps (refraction runs in the UV stage before scene sampling; shading is pure ALU).
+//------------------------------------------------------------------------------------------------
+
+// Smooth deterministic 2D value noise (zero texture fetches, precision-safe via zbc_hash)
+float zbc_vnoise(float2 p)
+{
+	float2 i = floor(p);
+	float2 f = frac(p);
+	f = f * f * (3.0 - 2.0 * f);
+	float a = zbc_hash(i);
+	float b = zbc_hash(i + float2(1.0, 0.0));
+	float c = zbc_hash(i + float2(0.0, 1.0));
+	float d = zbc_hash(i + float2(1.0, 1.0));
+	return lerp(lerp(a, b, f.x), lerp(c, d, f.x), f.y);
+}
+
+// Distance and signed side from point p to a subtly jagged glass fracture segment a -> b.
+// Returns float3(distance, signed_distance, along_t).
+float3 zbc_crack_seg(float2 p, float2 a, float2 b, float seed)
+{
+	float2 ab   = b - a;
+	float  len  = max(length(ab), 1e-4);
+	float2 dir  = ab / len;
+	float2 nrm  = float2(-dir.y, dir.x);
+	float  t    = saturate(dot(p - a, dir) / len);
+	float  env  = sin(t * 3.14159);
+	float  kink = (sin(t * 19.0 + seed) * 0.55 + sin(t * 43.0 + seed * 2.3) * 0.45) * 0.0045 * env;
+	float2 d    = p - (a + dir * (t * len) + nrm * kink);
+	return float3(length(d), dot(d, nrm), t);
+}
+
+// Per-pixel cached crack geometry from zbc_optics_uv -> zbc_optics_pass:
+// x: dark hairline core, y: specular glint, z: refraction band, w: signed fracture side (-1 / +1)
+static float4 zbc_crack_px = float4(0.0, 0.0, 0.0, 0.0);
+
+// Evaluates the outer bottom-left corner hairline crack (kept well clear of center aiming and top-right OSD).
+// Populates zbc_crack_px and returns the refractive UV offset.
+float2 zbc_crack_offset(float2 uv, float crack)
+{
+	zbc_crack_px = float4(0.0, 0.0, 0.0, 0.0);
+	float2 asp = zbc_aspect();
+	float2 p   = (uv - 0.5) * asp;
+	float  ax  = min(asp.x, 16.0 / 9.0);
+	// Early out across ~85% of the screen outside the lower-left outer corner
+	if (p.x > -0.14 * ax || p.y < 0.06)
+		return float2(0.0, 0.0);
+
+	float2 a0 = float2(-0.50 * ax, 0.46);
+	float2 b0 = float2(-0.36 * ax, 0.35);
+	float2 b1 = lerp(b0, float2(-0.24 * ax, 0.30), saturate(crack * 1.15));
+
+	float3 best = zbc_crack_seg(p, a0, b0, 1.7);
+	float3 s1   = zbc_crack_seg(p, b0, b1, 4.3);
+	if (s1.x < best.x)
+		best = s1;
+
+	if (crack > 0.30)
+	{
+		float2 c1 = lerp(b0, float2(-0.41 * ax, 0.20), saturate((crack - 0.30) / 0.70));
+		float3 s2 = zbc_crack_seg(p, b0, c1, 8.9);
+		if (s2.x < best.x)
+			best = s2;
+	}
+	if (crack > 0.55)
+	{
+		float2 d1 = lerp(b0, float2(-0.27 * ax, 0.43), saturate((crack - 0.55) / 0.45));
+		float3 s3 = zbc_crack_seg(p, b0, d1, 13.1);
+		if (s3.x < best.x)
+			best = s3;
+	}
+
+	float px = max(screen_res.w, 1e-4);
+	if (best.x > 8.0 * px)
+		return float2(0.0, 0.0);
+
+	float core  = 1.0 - smoothstep(0.45 * px, 1.45 * px, best.x);
+	float glint = (1.0 - smoothstep(0.0, 2.4 * px, abs(best.y - 1.1 * px)))
+	            * (1.0 - smoothstep(1.2 * px, 4.2 * px, best.x));
+	float band  = 1.0 - smoothstep(0.0, 7.0 * px, best.x);
+	float side  = (best.y >= 0.0) ? 1.0 : -1.0;
+
+	zbc_crack_px = float4(core, glint, band, side);
+	float2 refr_dir = normalize(float2(0.62, 0.78));
+	return refr_dir * (side * band * 0.0034 * crack) / float2(asp.x, 1.0);
+}
+
+// Optical UV stage: hairline crack refraction + subtle condensation edge film distortion (0 texture taps)
+float2 zbc_optics_uv(float2 uv)
+{
+	float2 off = float2(0.0, 0.0);
+
+	[branch] if (bus_zbc_optics.w > 0.001)
+		off += zbc_crack_offset(uv, saturate(bus_zbc_optics.w));
+
+	[branch] if (bus_zbc_optics.z > 0.001)
+	{
+		float  fog   = saturate(bus_zbc_optics.z);
+		float2 asp   = zbc_aspect();
+		float2 p     = (uv - 0.5) * asp;
+		float  r_max = max(length(float2(asp.x * 0.5, 0.5)), 0.5);
+		float  rn    = length(p) / r_max;
+		float  edge  = smoothstep(lerp(0.86, 0.22, fog), lerp(1.02, 0.62, fog), rn) * fog;
+		if (edge > 0.001)
+		{
+			float wx = zbc_vnoise(p * 14.0 + float2(5.2, 1.9)) - 0.5;
+			float wy = zbc_vnoise(p * 14.0 + float2(17.4, 9.3)) - 0.5;
+			off += float2(wx, wy) * (0.0024 * edge);
+		}
+	}
+
+	return off;
+}
+
+// Optical & sensor colour stage (runs before OSD so timestamp stays crisp on top):
+// condensation misting, hairline crack glint, muzzle-flash auto-exposure blowout + dome halation,
+// and non-IR low-light purple/green shadow chroma speckle.
+float3 zbc_optics_pass(float3 c, float2 uv, float scene_vis)
+{
+	if (scene_vis <= 0.001)
+		return c;
+
+	float2 asp = zbc_aspect();
+	float2 p   = (uv - 0.5) * asp;
+
+	// 1. Edge lens condensation / fogging (bus_zbc_optics.z)
+	[branch] if (bus_zbc_optics.z > 0.001)
+	{
+		float fog   = saturate(bus_zbc_optics.z);
+		float r_max = max(length(float2(asp.x * 0.5, 0.5)), 0.5);
+		float rn    = length(p) / r_max;
+		float cloud = zbc_vnoise(p * 4.5 + float2(11.3, 7.1)) * 0.65
+		            + zbc_vnoise(p * 11.0 + float2(3.7, 19.4)) * 0.35;
+		float inner = lerp(0.88, 0.16, fog);
+		float outer = lerp(1.02, 0.52, fog);
+		float mist  = smoothstep(inner, outer, rn + (cloud - 0.5) * 0.24) * fog * scene_vis;
+		if (mist > 0.001)
+		{
+			float  lum   = dot(c, float3(0.2126, 0.7152, 0.0722));
+			float  bead  = zbc_vnoise(p * 65.0 + float2(2.1, 5.9));
+			float3 veil  = float3(0.86, 0.90, 0.94) * (0.042 + 0.62 * lum) * (0.90 + 0.20 * bead);
+			float3 foggy = lerp(c, lerp(c, lum.xxx, 0.45) * 0.72 + veil, saturate(mist * 0.78));
+			foggy       += float3(0.90, 0.94, 1.00) * smoothstep(0.45, 1.0, lum) * mist * 0.22;
+			c = foggy;
+		}
+	}
+
+	// 2. Hairline corner lens crack / scratch shading (bus_zbc_optics.w)
+	[branch] if (bus_zbc_optics.w > 0.001)
+	{
+		float  crack = saturate(bus_zbc_optics.w);
+		float4 ck    = zbc_crack_px;
+		if (ck.x > 0.001 || ck.y > 0.001)
+		{
+			float  lum        = dot(c, float3(0.2126, 0.7152, 0.0722));
+			float3 prism_tint = (ck.w >= 0.0) ? float3(1.04, 0.99, 0.94) : float3(0.92, 0.98, 1.06);
+			c *= 1.0 - 0.34 * ck.x * crack * scene_vis;
+			c += prism_tint * (0.14 + 0.75 * lum) * ck.y * crack * scene_vis;
+		}
+	}
+
+	// 3. Muzzle-flash / bright-light auto-exposure blowout & curved dome halation/flare (bus_zbc_optics.x)
+	[branch] if (bus_zbc_optics.x > 0.001)
+	{
+		float  blow   = saturate(bus_zbc_optics.x);
+		float  blow2  = blow * blow;
+		float  gain   = 1.0 + blow * 2.4;
+		float3 blown  = c * gain + float3(1.0, 0.96, 0.90) * (blow2 * 0.46 + blow * 0.15) * scene_vis;
+		float  bl_lum = dot(blown, float3(0.2126, 0.7152, 0.0722));
+		float  clip_w = saturate((bl_lum - 0.55) * 1.4) * blow;
+		blown         = lerp(blown, bl_lum.xxx, clip_w * 0.75);
+
+		// Subtle curved dome halation veil + internal dome ghost ring + micro horizontal glare
+		float  r2      = dot(p, p);
+		float  r       = sqrt(r2);
+		float  ring_d  = r - 0.36;
+		float  halo_w  = exp(-r2 * 2.4) * 0.40;
+		float  ring_w  = exp(-ring_d * ring_d * 32.0) * 0.14;
+		float  streak  = exp(-abs(p.y) * 9.0) * exp(-abs(p.x) * 1.4) * blow2 * 0.16;
+		float3 dome    = float3(1.00, 0.92, 0.80) * halo_w
+		               + float3(0.85, 0.94, 1.05) * ring_w;
+		c = blown + (dome * blow + float3(1.00, 0.95, 0.86) * streak) * scene_vis;
+	}
+
+	// 4. Non-IR low-light purple/green shadow chroma speckle (bus_zbc_optics.y)
+	[branch] if (bus_zbc_optics.y > 0.001)
+	{
+		float chroma = saturate(bus_zbc_optics.y) * (1.0 - saturate(bus_zbc_ir.x));
+		if (chroma > 0.001)
+		{
+			float lum    = dot(c, float3(0.2126, 0.7152, 0.0722));
+			float dark_w = 1.0 - smoothstep(0.02, 0.30, lum);
+			dark_w       = dark_w * dark_w;
+			if (dark_w > 0.001)
+			{
+				float2 px     = floor(uv * screen_res.xy);
+				float2 cpx    = floor(px * 0.5);
+				float3 h_blk  = zbc_hash33(float3(cpx, zbc_tstep(24.0))) - 0.5;
+				float3 h_fine = zbc_hash33(float3(px,  zbc_tstep(30.0))) - 0.5;
+				float3 hn     = h_blk * 0.72 + h_fine * 0.28;
+				// Authentic CMOS dark-current purple/magenta vs green chroma axis
+				float3 c_vec  = float3(hn.x * 0.95 + hn.y * 0.35, -hn.x * 0.85 + hn.z * 0.15, hn.x * 0.80 - hn.y * 0.25);
+				float3 bias   = float3(0.012, 0.002, 0.016) * chroma * dark_w;
+				c = max(c + (c_vec * (0.14 * chroma * dark_w) + bias) * scene_vis, 0.0);
+			}
+		}
+	}
+
+	return max(c, 0.0);
+}
 
 // body motion: roll about the centre, then shift (p centred, in screen heights)
 float2 zbc_motion(float2 p, float amount)

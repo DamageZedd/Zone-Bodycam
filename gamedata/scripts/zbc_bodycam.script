@@ -107,6 +107,31 @@ defaults = {
 	allies_lens            = 0,      -- scope lens radius in screen heights, set by hand (0 = measured)
 	allies_color_friend    = 1,      -- green
 	allies_color_enemy     = 5,      -- red
+	-- audio (zbc_audio.script)
+	audio_beeps            = true,
+	audio_volume           = 0.5,
+	audio_interval_beep    = false,
+	audio_low_batt         = true,
+	audio_mic_clip         = true,
+	-- signal & standby (zbc_signal.script)
+	standby_mode           = false,
+	axon_signal            = true,
+	signal_hold_sec        = 60,
+	standby_key            = 0,
+	mute_key               = 0,
+	-- optical & sensor realism (zbc_optics.script)
+	optics_blowout               = true,
+	optics_blowout_strength      = 0.85,
+	optics_chroma                = true,
+	optics_chroma_strength       = 0.80,
+	optics_condensation          = true,
+	optics_condensation_strength = 0.85,
+	optics_crack                 = true,
+	-- found footage (zbc_found_footage.script)
+	found_footage                = true,
+	found_footage_chance_high    = 0.08,
+	found_footage_chance_low     = 0.02,
+	found_footage_spawn_item     = true,
 }
 
 local CLAMPS = {
@@ -150,6 +175,13 @@ local CLAMPS = {
 	allies_color_enemy     = { 0, 7 },
 	night_mode             = { 0, 2 },
 	allies_lens            = { 0, 0.4 },
+	audio_volume                 = { 0, 1 },
+	signal_hold_sec              = { 10, 300 },
+	optics_blowout_strength      = { 0, 1 },
+	optics_chroma_strength       = { 0, 1 },
+	optics_condensation_strength = { 0, 1 },
+	found_footage_chance_high    = { 0, 1 },
+	found_footage_chance_low     = { 0, 1 },
 }
 
 local LIST_OPTS = {
@@ -174,6 +206,20 @@ local cur_tier = nil         -- tier of the carried camera (zbc_tiers.script), n
 local fx_event = false       -- EVENT shown after REC (zbc_fx.script), for the HUD-drawn timer
 local fx_event_on = false    -- ... and in the lit part of its blink
 local fx_comp = 0            -- compression swing envelope 0..1 (zbc_fx.script)
+local fx_dark = 0            -- ambient darkness 0..1 from zbc_fx (used by zbc_optics)
+local prev_upd_t = nil
+local prev_weapon_id = false -- false until first update so initial load does not trigger Signal
+local prev_torch_on = nil
+local optics_loaded = false
+
+-- Safe module function lookup: avoids firing metatable __index/__call stubs in standalone tests.
+local function mod_fn(m, name)
+	if type(m) == "table" then
+		local fn = rawget(m, name)
+		if type(fn) == "function" then return fn end
+	end
+	return nil
+end
 
 local function mcm_get(id)
 	if ui_mcm and ui_mcm.get then
@@ -263,6 +309,8 @@ local function clear_send_cache()
 	for _, c in pairs(sent_cache) do
 		c[1] = nil
 	end
+	local cfn = mod_fn(zbc_optics, "clear_send_cache")
+	if cfn then cfn() end
 end
 
 local function bus_ready()
@@ -418,6 +466,8 @@ end
 
 local function lens_off(keep_faces)
 	if not tokens then return end   -- never registers lanes just to clear them
+	local zfn = mod_fn(zbc_optics, "zero")
+	if zfn then zfn() end
 	if not keep_faces then
 		faces_off()
 		fx_off()
@@ -754,8 +804,17 @@ function actor_on_land(fall_speed)
 end
 
 function actor_on_weapon_fired(obj)
-	if not (cfg.enabled and cfg.lens_enabled and S.ready) then return end
+	if not cfg.enabled then return end
 	if obj and db.actor and obj:id() ~= db.actor:id() then return end
+	if powered() then
+		local sfn = mod_fn(zbc_signal, "on_gunshot")
+		if sfn then sfn(cur_tier, cfg) end
+		local afn = mod_fn(zbc_audio, "on_gunshot")
+		if afn then afn(cur_tier, cfg) end
+		local ofn = mod_fn(zbc_optics, "on_gunshot")
+		if ofn then ofn(fx_dark, cur_tier, cfg) end
+	end
+	if not (cfg.lens_enabled and S.ready) then return end
 	kick(rnd() * 0.03, -0.05, rnd() * 0.08 * cfg.roll)
 	vkick(0.09 + rnd() * 0.06, -0.18, (0.14 + rnd() * 0.16) * cfg.roll, 0.22, rnd() * 0.018)
 end
@@ -763,9 +822,21 @@ end
 local function read_shit_power(shit) return shit.power end
 
 function actor_on_before_hit(shit)
-	if not (cfg.enabled and cfg.lens_enabled and S.ready) then return end
+	if not cfg.enabled then return end
 	local ok, p = pcall(read_shit_power, shit)
-	local k = min(max(ok and tonumber(p) or 0.3, 0.15), 1.5)
+	local power = ok and tonumber(p) or 0.3
+	if powered() then
+		local sfn = mod_fn(zbc_signal, "on_hit")
+		if sfn then sfn(cur_tier, cfg) end
+		local ofn = mod_fn(zbc_optics, "on_heavy_hit")
+		if ofn then ofn(power, cur_tier, cfg) end
+		if power >= 0.25 and cfg.event_marker then
+			local afn = mod_fn(zbc_audio, "on_event")
+			if afn then afn(cfg) end
+		end
+	end
+	if not (cfg.lens_enabled and S.ready) then return end
+	local k = min(max(power, 0.15), 1.5)
 	kick(rnd() * 0.12 * k, 0.08 * k, rnd() * 0.18 * k * cfg.roll)
 	vkick(rnd() * 0.40 * k, 0.32 * k, rnd() * 0.55 * k * cfg.roll, min(0.45 * k, 0.85), rnd() * 0.030 * k)
 end
@@ -1165,6 +1236,9 @@ function ZbcHud:__init() super()
 	self.batt_shown = false
 	self.batt_color = nil
 	self.rec_line = new_line(REC_CHARS)
+	self.sig_line = new_line(8)
+	self.sig_tag = nil
+	self.sig_x = nil
 	-- event log (zbc_eventlog.script): a few lines under the recording timer, always HUD-drawn
 	self.log_lines = {}
 	for i = 1, 3 do self.log_lines[i] = new_line(MAX_CHARS) end
@@ -1203,6 +1277,11 @@ function ZbcHud:Apply()
 	end
 	for _, g in ipairs(self.rec_line.glyphs) do g:SetTextureColor(GetARGB(ta, 255, 255, 255)) end
 	self.rec_line.text = nil
+	if self.sig_line then
+		for _, g in ipairs(self.sig_line.glyphs) do g:SetTextureColor(GetARGB(ta, 255, 255, 255)) end
+		self.sig_line.text = nil
+		self.sig_tag = nil
+	end
 	self.rec_dot:SetTextureColor(GetARGB(ta, 235, 30, 24))
 	local la = floor(255 * clamp01(cfg.logo_opacity))
 	self.logos[0]:SetTextureColor(GetARGB(la, 255, 255, 255))   -- the texture has its own colours
@@ -1269,6 +1348,10 @@ function ZbcHud:Layout()
 	if self.log_lines then for _, l in ipairs(self.log_lines) do l.text = nil end end
 	self.rec_left_u = rec_left / W
 	self.rec_line.text = nil
+	if self.sig_line then
+		self.sig_line.text = nil
+		self.sig_tag = nil
+	end
 end
 
 -- atlas cell of a Windows-1251 character (ASCII and Russian letters), nil for a space or no glyph
@@ -1403,6 +1486,32 @@ function ZbcHud:RefreshRec(visible, lens_on)
 	if self.batt_shown ~= hud_batt then
 		self.batt:Show(hud_batt)
 		self.batt_shown = hud_batt
+	end
+
+	-- Signal / standby / mute status tag alongside REC / EVENT (SIGNAL, MUTE, BUF)
+	if self.sig_line then
+		local sig_fn = mod_fn(zbc_signal, "get_osd_tag")
+		local sig_tag = (visible and sig_fn) and sig_fn() or nil
+		if type(sig_tag) == "string" and sig_tag ~= "" and self.glyph and (show or cfg.overlay) then
+			local G = self.glyph
+			local sx = show and (G.rec_x + (#rec_text(secs, fx_event) + 1) * F.advance * G.scale) or (G.log_x or 0)
+			if self.sig_line.text ~= sig_tag or self.sig_x ~= sx or self.sig_tag ~= sig_tag then
+				self.sig_x, self.sig_tag = sx, sig_tag
+				local op_ta = floor(255 * clamp01(cfg.text_opacity))
+				local cr, cg, cb = 255, 255, 255
+				if sig_tag == "SIGNAL" then cr, cg, cb = 255, 200, 60
+				elseif sig_tag == "MUTE" then cr, cg, cb = 255, 95, 80
+				elseif sig_tag == "BUF" then cr, cg, cb = 150, 210, 255 end
+				local col = GetARGB(op_ta, cr, cg, cb)
+				for _, gl in ipairs(self.sig_line.glyphs) do gl:SetTextureColor(col) end
+				self.sig_line.visible = true
+				lay_glyphs(self.sig_line, sig_tag, G, sx, G.tops[1])
+			else
+				show_line(self.sig_line, true)
+			end
+		else
+			show_line(self.sig_line, false)
+		end
 	end
 end
 
@@ -1673,6 +1782,10 @@ function actor_on_first_update()
 	dead = false
 	death_clock_stop()
 	fx_last = nil
+	fx_dark = 0
+	prev_upd_t = nil
+	prev_weapon_id = false
+	prev_torch_on = nil
 	faces_was_on = false
 	if zbc_faces and zbc_faces.reset then zbc_faces.reset() end
 	-- identifications: zbc_allies restores them from the save and clears them itself for a new game
@@ -1681,6 +1794,16 @@ function actor_on_first_update()
 	clear_send_cache()
 	cur_tier = read_tier()
 	load_settings()
+	if not optics_loaded then
+		local orfn = mod_fn(zbc_optics, "reset")
+		if orfn then orfn() end
+	end
+	optics_loaded = false
+	local arfn = mod_fn(zbc_audio, "reset")
+	if arfn then arfn() end
+	local am_fn = mod_fn(zbc_audio, "set_muted")
+	local sm_fn = mod_fn(zbc_signal, "is_muted")
+	if am_fn and sm_fn then am_fn(sm_fn()) end
 	motion_reset()
 	was_powered = powered()
 	sync_lens_settings()
@@ -1701,6 +1824,7 @@ local function fx_update()
 	local dt = fx_last and (now - fx_last) or 0
 	fx_last = now
 	local F = zbc_fx.frame(cfg, dt)
+	fx_dark = tonumber(F.dark) or fx_dark
 	fx_event = F.event and cfg.rec_timer or false
 	fx_event_on = fx_event and F.event_on or false
 	fx_comp = F.comp or 0
@@ -1734,6 +1858,8 @@ function signal_lost(death_t)
 	if dead then return true end
 	if not bus_ready() then return false end
 	dead = true
+	local zfn = mod_fn(zbc_optics, "zero")
+	if zfn then zfn() end
 	send("glitch", 0, 0, death_t, 0)               -- the shader times the break-up from death_t
 	local ok, err = pcall(death_clock_start, death_t)   -- and from the real clock, if game time stops
 	printf("[Zone Bodycam] signal lost at %.2f s%s", death_t, ok and "" or (": clock failed: " .. tostring(err)))
@@ -1773,9 +1899,17 @@ function actor_on_update()
 		end
 	end
 	rec_tick()                               -- keeps recording while the camera has no power
+	local upd_now = time_global() / 1000
+	local upd_dt = prev_upd_t and (upd_now - prev_upd_t) or 0
+	prev_upd_t = upd_now
+	if upd_dt < 0 or upd_dt > 0.5 then upd_dt = 0 end
 	if not powered() then
 		if was_powered then power_down() end
 		was_powered = false
+		if tokens then
+			local zfn = mod_fn(zbc_optics, "zero")
+			if zfn then zfn() end
+		end
 		if zbc_fx and zbc_fx.frame then
 			local now = time_global() / 1000
 			local dt = fx_last and (now - fx_last) or 0
@@ -1788,6 +1922,44 @@ function actor_on_update()
 		was_powered = true
 		motion_reset()                       -- fades back in
 	end
+
+	-- Axon Signal triggers (weapon draw, headlamp toggle) & state update
+	do
+		local actor = db.actor
+		if actor then
+			local act_item = actor.active_item and actor:active_item()
+			local wid = act_item and act_item.id and act_item:id() or nil
+			if wid ~= prev_weapon_id then
+				if wid ~= nil and prev_weapon_id ~= false then
+					local is_wpn = IsWeapon and IsWeapon(act_item)
+					if is_wpn then
+						local wfn = mod_fn(zbc_signal, "on_weapon_draw")
+						if wfn then wfn(cur_tier, cfg) end
+					end
+				end
+				prev_weapon_id = wid
+			end
+			local torch = actor.item_in_slot and actor:item_in_slot(10)
+			local torch_on = (torch and torch.torch_enabled and torch:torch_enabled()) and true or false
+			if prev_torch_on ~= nil and torch_on ~= prev_torch_on then
+				local lfn = mod_fn(zbc_signal, "on_light_toggle")
+				if lfn then lfn(cur_tier, cfg) end
+			end
+			prev_torch_on = torch_on
+		end
+		local sufn = mod_fn(zbc_signal, "update")
+		if sufn then sufn(upd_dt, cur_tier, cfg) end
+		local aufn = mod_fn(zbc_audio, "update")
+		if aufn then
+			local rec_fn = mod_fn(zbc_signal, "is_recording")
+			local is_rec = true
+			if rec_fn then is_rec = rec_fn() and true or false end
+			local bl = battery_level()
+			local batt_pct = bl and (bl * 100) or nil
+			aufn(upd_dt, is_rec, batt_pct, cur_tier, cfg)
+		end
+	end
+
 	if not HUD then hud_add() end            -- also retries one skipped while there was no game HUD
 	local visible = hud_visible()
 	local ox, oy, orr, inten = 0, 0, 0, 0
@@ -1807,6 +1979,22 @@ function actor_on_update()
 	end
 	faces_update()
 	fx_update()
+	do
+		local oufn = mod_fn(zbc_optics, "update")
+		if oufn then
+			local rain_f = (level and level.rain_factor and tonumber(level.rain_factor())) or 0
+			local indoors = false
+			local lname = level and level.name and level.name()
+			if zbc_fx and type(rawget(zbc_fx, "UNDERGROUND")) == "table" and lname and zbc_fx.UNDERGROUND[lname] then
+				indoors = true
+			elseif level and level.rain_hemi then
+				local ok_h, h = pcall(level.rain_hemi)
+				if ok_h and type(h) == "number" and h < 0.1 then indoors = true end
+			end
+			local sprinting = move_state("mcSprint")
+			oufn(upd_dt, fx_dark, rain_f, indoors, sprinting, cur_tier, cfg)
+		end
+	end
 	if HUD then
 		-- the lens exactly as the shader sees it, for placing ally markers
 		local L = lens_state
@@ -1821,6 +2009,10 @@ function actor_on_net_destroy()
 	dead = false
 	death_clock_stop()
 	fx_last = nil
+	fx_dark = 0
+	prev_upd_t = nil
+	prev_weapon_id = false
+	prev_torch_on = nil
 	faces_was_on = false
 	if zbc_faces and zbc_faces.reset then zbc_faces.reset() end
 	hud_remove()
@@ -1869,7 +2061,24 @@ end
 function review_key_now() return cfg.review_key end
 
 function on_key_press(key)
-	if not (cfg.enabled and not in_menu and db.actor and zbc_review and zbc_review.toggle) then return end
+	if not (cfg.enabled and not in_menu and db.actor) then return end
+	local sk = tonumber(cfg.standby_key)
+	if sk and sk > 0 and key == sk then
+		if not (Check_UI and Check_UI()) and not (actor_menu and actor_menu.last_mode and actor_menu.last_mode ~= 0) then
+			local sfn = powered() and mod_fn(zbc_signal, "toggle_standby")
+			if sfn then sfn(cfg) end
+		end
+		return
+	end
+	local mk = tonumber(cfg.mute_key)
+	if mk and mk > 0 and key == mk then
+		if not (Check_UI and Check_UI()) and not (actor_menu and actor_menu.last_mode and actor_menu.last_mode ~= 0) then
+			local mfn = powered() and mod_fn(zbc_signal, "toggle_mute")
+			if mfn then mfn(cfg) end
+		end
+		return
+	end
+	if not (zbc_review and zbc_review.toggle) then return end
 	local rk = tonumber(cfg.review_key)
 	if not rk or rk <= 0 or key ~= rk then
 		-- the review key of a camera without playback (Axon Body 1 and 2): say so
@@ -1886,9 +2095,50 @@ function on_key_press(key)
 	zbc_review.toggle()
 end
 
+local function wire_signal_callbacks()
+	local set_fn = mod_fn(zbc_signal, "set_callbacks")
+	if not set_fn then return end
+	set_fn({
+		on_rec_start = function()
+			local fn = mod_fn(zbc_audio, "on_rec_start")
+			if fn then fn(cfg) end
+		end,
+		on_rec_stop = function()
+			local fn = mod_fn(zbc_audio, "on_rec_stop")
+			if fn then fn(cfg) end
+		end,
+		on_signal = function(reason)
+			local afn = mod_fn(zbc_audio, "on_signal")
+			if afn then afn(cfg) end
+			local efn = mod_fn(zbc_eventlog, "signal_trigger")
+			if efn then efn(reason) end
+		end,
+		on_mute = function(muted)
+			local afn = mod_fn(zbc_audio, "on_mute_toggle")
+			if afn then afn(muted, cfg) end
+			local efn = mod_fn(zbc_eventlog, "audio_mute")
+			if efn then efn(muted) end
+		end,
+	})
+end
+
+local function save_state(m_data)
+	local fn = mod_fn(zbc_optics, "save_state")
+	if fn then fn(m_data) end
+end
+
+local function load_state(m_data)
+	optics_loaded = true
+	local fn = mod_fn(zbc_optics, "load_state")
+	if fn then fn(m_data) end
+end
+
 function on_game_start()
 	load_settings()
+	wire_signal_callbacks()
 	lens_off()                               -- clears a value left in user.ltx by a crash
+	RegisterScriptCallback("save_state", save_state)
+	RegisterScriptCallback("load_state", load_state)
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
 	RegisterScriptCallback("actor_on_update", actor_on_update)
 	RegisterScriptCallback("actor_on_net_destroy", actor_on_net_destroy)

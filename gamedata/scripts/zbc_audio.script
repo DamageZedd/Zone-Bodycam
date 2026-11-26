@@ -1,0 +1,210 @@
+--[[
+	Zone Bodycam - Axon audio realism (zbc_audio.script)
+
+	Plays crisp Axon Body camera audio cues through X-Ray's 2D sound channel:
+	- Recording start / stop double-beeps
+	- Optional 2-minute interval reminder beep
+	- EVENT / Signal trigger chime
+	- Low-battery warning chirps (10% and 5% thresholds, hysteresis reset > 15%)
+	- Mute toggle tactile click/tone (suppresses all camera cues while muted)
+	- Chest-mic gunshot limiter clip scaled by camera tier with 150ms cooldown
+
+	Safe when sound_object or db.actor is unavailable (e.g., menu or headless tests).
+]]
+
+local min, max, floor = math.min, math.max, math.floor
+
+local INTERVAL_SEC = 120.0
+local MIC_CLIP_COOLDOWN = 0.15
+local LOW_BATT_HIGH = 10
+local LOW_BATT_CRIT = 5
+local LOW_BATT_RESET = 15
+
+local SOUND_PATHS = {
+	start    = "zbc\\axon_start",
+	stop     = "zbc\\axon_stop",
+	interval = "zbc\\axon_interval",
+	event    = "zbc\\axon_event",
+	low_batt = "zbc\\axon_low_batt",
+	mute     = "zbc\\axon_mute",
+	mic_clip = "zbc\\axon_mic_clip",
+}
+
+-- Body 1-2 single/older mic clips strongest; Body 3-5 have progressively cleaner 4-mic arrays.
+local TIER_MIC_CLIP_SCALE = {
+	[1] = 1.00,
+	[2] = 0.85,
+	[3] = 0.55,
+	[4] = 0.35,
+	[5] = 0.20,
+}
+
+local sound_cache = {}
+local is_muted_state = false
+local interval_timer = 0.0
+local sim_time = 0.0
+local last_clip_time = -1.0
+local warned_10 = false
+local warned_5 = false
+
+local function opt_bool(cfg, key, default_val)
+	if type(cfg) == "table" and cfg[key] ~= nil then
+		return cfg[key] == true
+	end
+	return default_val
+end
+
+local function opt_vol(cfg)
+	if type(cfg) == "table" and type(cfg.audio_volume) == "number" then
+		return min(max(cfg.audio_volume, 0.0), 1.0)
+	end
+	return 0.5
+end
+
+local function clamp_tier(tier)
+	local t = tonumber(tier)
+	if not t then return 4 end
+	t = floor(t)
+	if t < 1 then return 1 end
+	if t > 5 then return 5 end
+	return t
+end
+
+local function get_sound(key)
+	local path = SOUND_PATHS[key]
+	if not path or not sound_object then return nil end
+	local snd = sound_cache[key]
+	if snd == nil then
+		local ok, obj = pcall(sound_object, path)
+		if ok and obj then
+			snd = obj
+			sound_cache[key] = snd
+		else
+			sound_cache[key] = false
+			return nil
+		end
+	end
+	return snd or nil
+end
+
+local function play_sound(key, vol)
+	if type(vol) ~= "number" or vol <= 0.0 then return false end
+	if not sound_object or not db or not db.actor or not vector then return false end
+	local snd = get_sound(key)
+	if not snd or not snd.play_no_feedback then return false end
+	local mode = sound_object.s2d or 0
+	local ok = pcall(snd.play_no_feedback, snd, db.actor, mode, 0, vector(), vol)
+	return ok
+end
+
+function set_muted(muted)
+	is_muted_state = (muted == true)
+end
+
+function is_muted()
+	return is_muted_state
+end
+
+function reset()
+	sound_cache = {}
+	is_muted_state = false
+	interval_timer = 0.0
+	sim_time = 0.0
+	last_clip_time = -1.0
+	warned_10 = false
+	warned_5 = false
+end
+
+function on_rec_start(cfg)
+	interval_timer = 0.0
+	if is_muted_state or not opt_bool(cfg, "audio_beeps", true) then
+		return false
+	end
+	return play_sound("start", opt_vol(cfg))
+end
+
+function on_rec_stop(cfg)
+	interval_timer = 0.0
+	if is_muted_state or not opt_bool(cfg, "audio_beeps", true) then
+		return false
+	end
+	return play_sound("stop", opt_vol(cfg))
+end
+
+function on_event(cfg)
+	if is_muted_state or not opt_bool(cfg, "audio_beeps", true) then
+		return false
+	end
+	return play_sound("event", opt_vol(cfg))
+end
+
+function on_signal(cfg)
+	return on_event(cfg)
+end
+
+function on_mute_toggle(muted, cfg)
+	set_muted(muted)
+	if not opt_bool(cfg, "audio_beeps", true) then
+		return false
+	end
+	return play_sound("mute", opt_vol(cfg))
+end
+
+function on_gunshot(tier, cfg)
+	if is_muted_state or not opt_bool(cfg, "audio_mic_clip", true) then
+		return false
+	end
+	if (sim_time - last_clip_time) < MIC_CLIP_COOLDOWN then
+		return false
+	end
+	local t = clamp_tier(tier)
+	local vol = opt_vol(cfg) * (TIER_MIC_CLIP_SCALE[t] or 0.35)
+	if vol <= 0.0 then
+		return false
+	end
+	last_clip_time = sim_time
+	return play_sound("mic_clip", vol)
+end
+
+function update(dt, is_recording, batt_pct, tier, cfg)
+	if type(dt) == "number" and dt > 0.0 then
+		sim_time = sim_time + dt
+	else
+		dt = 0.0
+	end
+
+	if type(batt_pct) == "number" and batt_pct > LOW_BATT_RESET then
+		warned_10 = false
+		warned_5 = false
+	end
+
+	if not is_recording then
+		interval_timer = 0.0
+		return
+	end
+
+	-- 2-minute interval reminder beep
+	interval_timer = interval_timer + dt
+	if interval_timer >= INTERVAL_SEC then
+		interval_timer = interval_timer - INTERVAL_SEC
+		if not is_muted_state and opt_bool(cfg, "audio_interval_beep", false) then
+			play_sound("interval", opt_vol(cfg))
+		end
+	end
+
+	-- Low-battery warning chirps at 10% and 5%
+	if type(batt_pct) == "number" then
+		if batt_pct <= LOW_BATT_CRIT and not warned_5 then
+			warned_10 = true
+			warned_5 = true
+			if not is_muted_state and opt_bool(cfg, "audio_low_batt", true) then
+				play_sound("low_batt", opt_vol(cfg))
+			end
+		elseif batt_pct <= LOW_BATT_HIGH and not warned_10 then
+			warned_10 = true
+			if not is_muted_state and opt_bool(cfg, "audio_low_batt", true) then
+				play_sound("low_batt", opt_vol(cfg))
+			end
+		end
+	end
+end

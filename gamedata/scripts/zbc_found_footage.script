@@ -1,0 +1,712 @@
+--[[
+	Zone Bodycam - lootable dead stalker bodycams / found footage (zbc_found_footage.script)
+
+	When a stalker dies in the Zone, there is a configurable chance their bodycam survived intact
+	enough to recover a final-moments "Found Footage" record (and, when the optional bodycam item
+	component is installed, a scavenged low-charge Axon Body camera on the corpse).
+
+	Pure logic works without engine globals so tools/tests/zbc_found_footage_test.lua can verify
+	faction drop tiers, deterministic log reconstruction ending in SIGNAL LOST, record caps, and
+	save/load persistence.
+]]
+
+local floor, min, max = math.floor, math.min, math.max
+
+MAX_RECORDS = 12
+
+DEFAULT_CFG = {
+	enabled           = true,
+	high_tech_chance  = 0.08,
+	low_tech_chance   = 0.02,
+	spawn_item        = true,
+	item_charge_min   = 0.12,
+	item_charge_max   = 0.45,
+}
+
+HIGH_TECH_FACTIONS = {
+	killer   = true, -- Mercenaries
+	army     = true, -- Military
+	monolith = true, -- Monolith
+	ecolog   = true, -- Ecologists
+	isg      = true, -- UNISG
+}
+
+FACTION_TIER_RANGES = {
+	killer   = { 3, 5 },
+	monolith = { 3, 5 },
+	isg      = { 3, 5 },
+	army     = { 2, 3 },
+	ecolog   = { 2, 3 },
+	dolg     = { 2, 3 },
+	freedom  = { 2, 3 },
+	csky     = { 2, 3 },
+	greh     = { 2, 4 },
+	stalker  = { 1, 2 },
+	bandit   = { 1, 2 },
+	renegade = { 1, 2 },
+	zombied  = { 1, 2 },
+}
+
+FACTION_LABELS = {
+	killer   = "MERCENARY",
+	army     = "MILITARY",
+	monolith = "MONOLITH",
+	ecolog   = "ECOLOGIST",
+	isg      = "UNISG",
+	dolg     = "DUTY",
+	freedom  = "FREEDOM",
+	csky     = "CLEAR SKY",
+	greh     = "SIN",
+	stalker  = "LONER",
+	bandit   = "BANDIT",
+	renegade = "RENEGADE",
+	zombied  = "ZOMBIED",
+}
+
+CAMERA_MODELS = {
+	[1] = { model = "AXON BODY",   section = "zbc_bodycam_1" },
+	[2] = { model = "AXON BODY 2", section = "zbc_bodycam_2" },
+	[3] = { model = "AXON BODY 3", section = "zbc_bodycam_3" },
+	[4] = { model = "AXON BODY 4", section = "zbc_bodycam_item" },
+	[5] = { model = "AXON BODY 5", section = "zbc_bodycam_5" },
+}
+
+LEVEL_NAMES = {
+	l01_escape              = "Cordon",
+	l02_garbage             = "Garbage",
+	l03_agroprom            = "Agroprom",
+	l03u_agr_underground    = "Agroprom Underground",
+	l04_darkvalley          = "Dark Valley",
+	l04u_labx18             = "Lab X-18",
+	l05_bar                 = "Rostok",
+	l06_rostok              = "Wild Territory",
+	l07_military            = "Army Warehouses",
+	l08_yantar              = "Yantar",
+	l08u_brainlab           = "Lab X-16",
+	l09_deadcity            = "Dead City",
+	l10_limansk             = "Limansk",
+	l10_radar               = "Radar",
+	l10_red_forest          = "Red Forest",
+	l10u_bunker             = "Lab X-10",
+	l11_hospital            = "Deserted Hospital",
+	l11_pripyat             = "Outskirts",
+	l12_stancia             = "CNPP South",
+	l12_stancia_2           = "CNPP North",
+	l12u_control_monolith   = "Monolith Control",
+	l12u_sarcofag           = "Sarcophagus",
+	l13_generators          = "Generators",
+	l13u_warlab             = "Warlab",
+	jupiter                 = "Jupiter",
+	jupiter_underground     = "Jupiter Underground",
+	pripyat                 = "Pripyat",
+	zaton                   = "Zaton",
+	k00_marsh               = "Great Swamp",
+	k01_darkscape           = "Darkscape",
+	k02_trucks_cemetery     = "Truck Cemetery",
+	y04_pole                = "Meadow",
+}
+
+local records = {}
+local pending_clear = true
+
+---------------------------------------------------------------------------------------------------
+-- Deterministic helpers (pure Lua, no external RNG state mutation)
+---------------------------------------------------------------------------------------------------
+
+local function upper(s)
+	s = tostring(s or "")
+	return zbc_allies and zbc_allies.upper_cp1251 and zbc_allies.upper_cp1251(s) or string.upper(s)
+end
+
+-- Simple deterministic 31-bit string hash for reproducible log reconstruction
+function hash_seed(...)
+	local h = 2166136261
+	for i = 1, select("#", ...) do
+		local s = tostring(select(i, ...) or "")
+		for j = 1, #s do
+			h = (h * 16777619 + s:byte(j)) % 2147483647
+		end
+	end
+	if h <= 0 then h = 1 end
+	return h
+end
+
+local function next_prng(state)
+	-- Park-Miller LCG in 31 bits
+	local s = (state * 48271) % 2147483647
+	if s <= 0 then s = 1 end
+	return s, (s - 1) / 2147483646
+end
+
+local function clamp(v, lo, hi)
+	v = tonumber(v)
+	if not v or v ~= v then return lo end
+	if v < lo then return lo end
+	if v > hi then return hi end
+	return v
+end
+
+function normalize_faction(faction)
+	if type(faction) ~= "string" or faction == "" then return "stalker" end
+	local f = string.lower(faction):gsub("^actor_", "")
+	return f
+end
+
+function is_high_tech_faction(faction)
+	return HIGH_TECH_FACTIONS[normalize_faction(faction)] == true
+end
+
+function faction_display_name(faction)
+	local f = normalize_faction(faction)
+	return FACTION_LABELS[f] or upper(f)
+end
+
+function level_display_name(raw_level)
+	if type(raw_level) ~= "string" or raw_level == "" then return "Zone Perimeter" end
+	if LEVEL_NAMES[raw_level] then return LEVEL_NAMES[raw_level] end
+	if game and game.translate_string then
+		local tr = game.translate_string(raw_level)
+		if type(tr) == "string" and tr ~= "" and tr ~= raw_level then return tr end
+	end
+	return raw_level:gsub("^[lk]%d+u?_", ""):gsub("_", " ")
+end
+
+function drop_chance_for_faction(faction, cfg)
+	local c = cfg or {}
+	local hi = c.high_tech_chance
+	if hi == nil then hi = DEFAULT_CFG.high_tech_chance end
+	local lo = c.low_tech_chance
+	if lo == nil then lo = DEFAULT_CFG.low_tech_chance end
+	if is_high_tech_faction(faction) then
+		return clamp(hi, 0, 1)
+	end
+	return clamp(lo, 0, 1)
+end
+
+function tier_range_for_faction(faction)
+	local r = FACTION_TIER_RANGES[normalize_faction(faction)] or { 1, 2 }
+	return r[1], r[2]
+end
+
+function pick_tier(faction, seed)
+	local lo, hi = tier_range_for_faction(faction)
+	if lo >= hi then return lo end
+	local _, u = next_prng(hash_seed(normalize_faction(faction), seed or 1))
+	return lo + min(hi - lo, floor(u * (hi - lo + 1)))
+end
+
+function camera_for_tier(tier)
+	local t = clamp(floor((tonumber(tier) or 1) + 0.5), 1, 5)
+	return CAMERA_MODELS[t] or CAMERA_MODELS[1], t
+end
+
+local function parse_clock_minutes(ts)
+	if type(ts) == "string" then
+		local h, m = ts:match("(%d%d):(%d%d)")
+		if h and m then return tonumber(h) * 60 + tonumber(m) end
+	end
+	return 12 * 60
+end
+
+local function format_clock_offset(base_mins, offset_s)
+	local total_s = base_mins * 60 + offset_s
+	while total_s < 0 do total_s = total_s + 86400 end
+	local h = floor(total_s / 3600) % 24
+	local m = floor(total_s / 60) % 60
+	return string.format("%02d:%02d", h, m)
+end
+
+local OPENERS_HIGH_TECH = {
+	"ENCRYPTED TELEMETRY SYNCED",
+	"SQUAD UPLINK ESTABLISHED",
+	"PATROL RECORDING ACTIVE",
+	"RECON FEED INITIALIZED",
+}
+
+local OPENERS_LOW_TECH = {
+	"SCAVENGED UNIT RECORDING",
+	"MANUAL RECORDING ACTIVE",
+	"BATTERY VOLTAGE LOW - RECORDING",
+	"PERIMETER SWEEP LOGGED",
+}
+
+local CONTACTS_COMBAT = {
+	"MOTION DETECTED - HOSTILE CONTACT",
+	"UNIDENTIFIED SILHOUETTE IN SECTOR",
+	"THERMAL / OPTIC ALERT - AMBUSH",
+	"PERIMETER BREACH - MULTIPLE CONTACTS",
+}
+
+local CONTACTS_MUTANT = {
+	"BIO-SIGNATURE ALERT - MUTANT PACK",
+	"PROXIMITY WARNING - STALKING PREDATOR",
+	"LOW GROWL CAPTURED ON MIC",
+}
+
+local CONTACTS_ZONE = {
+	"GEIGER COUNTER SPIKE - ANOMALOUS FIELD",
+	"PSIONIC STATIC ON VIDEO BUS",
+	"RADIO CARRIER LOST - INTERFERENCE",
+}
+
+local ENGAGEMENT_LINES = {
+	"WEAPON DISCHARGE LOGGED",
+	"SUPPRESSIVE BURST FIRED",
+	"RETURN FIRE - COVER COMPROMISED",
+	"SIDEARM DRAWN - CLOSE QUARTERS",
+}
+
+local TRAUMA_LINES = {
+	"IMPACT SHOCK - ARMOR BREACH",
+	"CRITICAL TRAUMA - STAGGER DETECTED",
+	"BIOMETRIC DROPPING - HEAVY BLEED",
+	"OPTIC HOUSING CRACKED ON IMPACT",
+}
+
+local LATE_LINES = {
+	"AUDIO MUTE TRIGGERED BY SHOCK",
+	"MEMORY BUFFER EMERGENCY FLUSH",
+	"ACCELEROMETER FREEFALL DETECTED",
+	"LOW BATTERY + SEVERE CORRUPTION",
+}
+
+-- Deterministically builds 4-6 reconstructed final-moments timeline entries ending in SIGNAL LOST.
+function reconstruct_events(params)
+	params = params or {}
+	local faction = normalize_faction(params.faction)
+	local high_tech = is_high_tech_faction(faction)
+	local level_name = params.level_name or level_display_name(params.level)
+	local cause = tostring(params.cause or "")
+	local cause_kind = params.cause_kind or "unknown"
+	local base_mins = parse_clock_minutes(params.timestamp)
+
+	local s = hash_seed(params.stalker_name, faction, params.level, params.timestamp, params.seed, cause)
+	local u
+	s, u = next_prng(s)
+	local total_entries = 4 + min(2, floor(u * 3)) -- 4, 5, or 6 entries (including final SIGNAL LOST)
+
+	local function pick(tbl)
+		local v
+		s, v = next_prng(s)
+		return tbl[1 + min(#tbl - 1, floor(v * #tbl))]
+	end
+
+	local offsets = {}
+	if total_entries == 4 then
+		offsets = { -42, -24, -10, 0 }
+	elseif total_entries == 5 then
+		offsets = { -54, -36, -21, -8, 0 }
+	else
+		offsets = { -68, -49, -33, -19, -7, 0 }
+	end
+
+	local out = {}
+	-- 1. Opener
+	local opener = high_tech and pick(OPENERS_HIGH_TECH) or pick(OPENERS_LOW_TECH)
+	out[1] = {
+		offset_s = offsets[1],
+		rec      = 0,
+		clock    = format_clock_offset(base_mins, offsets[1]),
+		kind     = "signal",
+		tag      = "SIGNAL TRIGGER",
+		text     = opener .. " (" .. upper(level_name) .. ")",
+		location = level_name,
+	}
+
+	-- 2. Contact / Hazard
+	local contact_pool = CONTACTS_COMBAT
+	if cause_kind == "mutant" then
+		contact_pool = CONTACTS_MUTANT
+	elseif cause_kind == "anomaly" or faction == "monolith" or faction == "ecolog" then
+		s, u = next_prng(s)
+		if u < 0.55 then contact_pool = CONTACTS_ZONE end
+	end
+	local c_text = pick(contact_pool)
+	if cause ~= "" and cause_kind ~= "unknown" then
+		c_text = c_text .. " [" .. upper(cause) .. "]"
+	end
+	out[2] = {
+		offset_s = offsets[2],
+		rec      = offsets[2] - offsets[1],
+		clock    = format_clock_offset(base_mins, offsets[2]),
+		kind     = "contact",
+		tag      = "CONTACT",
+		text     = c_text,
+		location = level_name,
+	}
+
+	-- 3. Engagement / Weapon fire
+	if total_entries >= 4 then
+		local idx = 3
+		if total_entries == 4 then
+			-- 4-entry compact sequence: opener -> contact -> hit/shots -> signal lost
+			local use_shots = (cause_kind ~= "anomaly")
+			out[idx] = {
+				offset_s = offsets[idx],
+				rec      = offsets[idx] - offsets[1],
+				clock    = format_clock_offset(base_mins, offsets[idx]),
+				kind     = use_shots and "shots" or "hit",
+				tag      = use_shots and "SHOT FIRED" or "HIT TAKEN",
+				text     = use_shots and pick(ENGAGEMENT_LINES) or pick(TRAUMA_LINES),
+				location = level_name,
+			}
+		else
+			-- 5 or 6 entries: shots + trauma (+ optional late mute/corruption)
+			out[3] = {
+				offset_s = offsets[3],
+				rec      = offsets[3] - offsets[1],
+				clock    = format_clock_offset(base_mins, offsets[3]),
+				kind     = "shots",
+				tag      = "SHOT FIRED",
+				text     = pick(ENGAGEMENT_LINES),
+				location = level_name,
+			}
+			out[4] = {
+				offset_s = offsets[4],
+				rec      = offsets[4] - offsets[1],
+				clock    = format_clock_offset(base_mins, offsets[4]),
+				kind     = "hit",
+				tag      = "HIT TAKEN",
+				text     = pick(TRAUMA_LINES),
+				location = level_name,
+			}
+			if total_entries == 6 then
+				out[5] = {
+					offset_s = offsets[5],
+					rec      = offsets[5] - offsets[1],
+					clock    = format_clock_offset(base_mins, offsets[5]),
+					kind     = "audio_mute",
+					tag      = "AUDIO MUTE",
+					text     = pick(LATE_LINES),
+					location = level_name,
+				}
+			end
+		end
+	end
+
+	-- Final entry: ALWAYS SIGNAL LOST
+	local last_i = #offsets
+	out[last_i] = {
+		offset_s = 0,
+		rec      = -offsets[1],
+		clock    = format_clock_offset(base_mins, 0),
+		kind     = "signal_lost",
+		tag      = "SIGNAL LOST",
+		text     = "SIGNAL LOST",
+		location = level_name,
+	}
+	return out
+end
+
+-- Builds a full Found Footage record from explicit metadata (deterministic for identical inputs).
+function build_record(info)
+	info = info or {}
+	local faction = normalize_faction(info.faction)
+	local stalker_name = tostring(info.stalker_name or "Unknown Stalker")
+	local raw_level = tostring(info.level or "l01_escape")
+	local lvl_name = info.level_name or level_display_name(raw_level)
+	local ts = tostring(info.timestamp or "2012-05-01 12:00")
+	local seed = info.seed or hash_seed(stalker_name, faction, raw_level, ts, info.npc_id)
+	local tier = info.tier and clamp(floor(tonumber(info.tier) + 0.5), 1, 5) or pick_tier(faction, seed)
+	local cam, norm_tier = camera_for_tier(tier)
+
+	local rec = {
+		id            = info.id or string.format("%s_%08x", faction, hash_seed(stalker_name, raw_level, ts, seed)),
+		stalker_name  = stalker_name,
+		faction       = faction,
+		faction_label = faction_display_name(faction),
+		level         = raw_level,
+		level_name    = lvl_name,
+		tier          = norm_tier,
+		camera_model  = cam.model,
+		item_section  = cam.section,
+		timestamp     = ts,
+		cause         = info.cause,
+		cause_kind    = info.cause_kind or "unknown",
+	}
+	rec.events = reconstruct_events({
+		stalker_name = stalker_name,
+		faction      = faction,
+		level        = raw_level,
+		level_name   = lvl_name,
+		timestamp    = ts,
+		seed         = seed,
+		cause        = info.cause,
+		cause_kind   = info.cause_kind,
+	})
+	return rec
+end
+
+---------------------------------------------------------------------------------------------------
+-- Record storage & formatting
+---------------------------------------------------------------------------------------------------
+
+function add_record(rec)
+	if type(rec) ~= "table" then return nil end
+	table.insert(records, 1, rec)
+	while #records > MAX_RECORDS do
+		table.remove(records)
+	end
+	return rec
+end
+
+function get_records()
+	return records
+end
+
+function get_record(idx)
+	idx = tonumber(idx)
+	if not idx then return nil end
+	return records[idx]
+end
+
+function clear()
+	records = {}
+end
+
+function format_record_lines(rec)
+	if type(rec) ~= "table" then return {} end
+	local lines = {
+		string.format("FOUND FOOTAGE // %s [%s]", upper(rec.stalker_name), upper(rec.faction_label or rec.faction)),
+		string.format("DEVICE: %s (TIER %d) | LOC: %s | TIME: %s",
+			upper(rec.camera_model or "AXON BODY"), tonumber(rec.tier) or 1,
+			upper(rec.level_name or rec.level or "ZONE"), tostring(rec.timestamp or "")),
+	}
+	for _, ev in ipairs(rec.events or {}) do
+		local off = tonumber(ev.offset_s) or 0
+		local sign = off < 0 and "-" or "+"
+		local abs_off = math.abs(off)
+		lines[#lines + 1] = string.format("[%s00:%02d] %s  [%s] %s",
+			sign, abs_off, tostring(ev.clock or "00:00"), tostring(ev.tag or "EVENT"), tostring(ev.text or ""))
+	end
+	return lines
+end
+
+function format_record(rec)
+	return table.concat(format_record_lines(rec), "\n")
+end
+
+---------------------------------------------------------------------------------------------------
+-- Save / load persistence
+---------------------------------------------------------------------------------------------------
+
+local function copy_record(rec)
+	if type(rec) ~= "table" or type(rec.stalker_name) ~= "string" then return nil end
+	local evs = {}
+	if type(rec.events) == "table" then
+		for _, e in ipairs(rec.events) do
+			if type(e) == "table" then
+				evs[#evs + 1] = {
+					offset_s = tonumber(e.offset_s) or 0,
+					rec      = tonumber(e.rec) or 0,
+					clock    = tostring(e.clock or "00:00"),
+					kind     = tostring(e.kind or "signal"),
+					tag      = tostring(e.tag or "EVENT"),
+					text     = tostring(e.text or ""),
+					location = e.location and tostring(e.location) or nil,
+				}
+			end
+		end
+	end
+	return {
+		id            = tostring(rec.id or ""),
+		stalker_name  = rec.stalker_name,
+		faction       = normalize_faction(rec.faction),
+		faction_label = tostring(rec.faction_label or faction_display_name(rec.faction)),
+		level         = tostring(rec.level or "l01_escape"),
+		level_name    = tostring(rec.level_name or level_display_name(rec.level)),
+		tier          = clamp(floor((tonumber(rec.tier) or 1) + 0.5), 1, 5),
+		camera_model  = tostring(rec.camera_model or "AXON BODY"),
+		item_section  = tostring(rec.item_section or "zbc_bodycam_1"),
+		timestamp     = tostring(rec.timestamp or ""),
+		cause         = rec.cause and tostring(rec.cause) or nil,
+		cause_kind    = rec.cause_kind and tostring(rec.cause_kind) or nil,
+		events        = evs,
+	}
+end
+
+function save_state(m_data)
+	if type(m_data) ~= "table" then return end
+	local saved = {}
+	local n = min(#records, MAX_RECORDS)
+	for i = 1, n do
+		local c = copy_record(records[i])
+		if c then saved[#saved + 1] = c end
+	end
+	m_data.zbc_found_footage = saved
+end
+
+function load_state(m_data)
+	records = {}
+	local list = m_data and m_data.zbc_found_footage
+	if type(list) == "table" then
+		for i = 1, min(#list, MAX_RECORDS) do
+			local c = copy_record(list[i])
+			if c then records[#records + 1] = c end
+		end
+	end
+	pending_clear = false
+end
+
+local function on_first_update()
+	if pending_clear then clear() end
+	pending_clear = true
+end
+
+---------------------------------------------------------------------------------------------------
+-- Anomaly / MCM runtime integration
+---------------------------------------------------------------------------------------------------
+
+local function read_runtime_cfg(override)
+	local c = {}
+	for k, v in pairs(DEFAULT_CFG) do c[k] = v end
+	if ui_mcm and ui_mcm.get then
+		local function opt(key)
+			local ok, v = pcall(ui_mcm.get, "zone_bodycam/" .. key)
+			if ok and v ~= nil then return v end
+			return nil
+		end
+		local en = opt("found_footage")
+		if en ~= nil then c.enabled = en and true or false end
+		if opt("enabled") == false then c.enabled = false end
+		local hi = opt("found_footage_chance_high")
+		if tonumber(hi) then c.high_tech_chance = clamp(hi, 0, 1) end
+		local lo = opt("found_footage_chance_low")
+		if tonumber(lo) then c.low_tech_chance = clamp(lo, 0, 1) end
+		local sp = opt("found_footage_spawn_item")
+		if sp ~= nil then c.spawn_item = sp and true or false end
+	end
+	if type(override) == "table" then
+		for k, v in pairs(override) do c[k] = v end
+	end
+	return c
+end
+
+local function read_game_timestamp()
+	if game and game.get_game_time then
+		local ok, gt = pcall(game.get_game_time)
+		if ok and gt and gt.get then
+			local y, mo, d, h, mi = gt:get()
+			if y and h and mi then
+				return string.format("%04d-%02d-%02d %02d:%02d", y, mo or 1, d or 1, h, mi)
+			end
+		end
+	end
+	local h = level and level.get_time_hours and level.get_time_hours() or 12
+	local m = level and level.get_time_minutes and level.get_time_minutes() or 0
+	return string.format("2012-05-01 %02d:%02d", h, m)
+end
+
+local function read_npc_info(npc, who)
+	if not npc then return nil end
+	local is_stalker = (type(npc) == "table" and npc.is_stalker ~= false)
+		or (IsStalker and IsStalker(npc))
+	if not is_stalker then return nil end
+
+	local npc_id = (npc.id and type(npc.id) == "function" and npc:id()) or npc.id or 0
+	local name = (npc.character_name and type(npc.character_name) == "function" and npc:character_name())
+		or npc.name or "Unknown Stalker"
+	local faction = (npc.character_community and type(npc.character_community) == "function" and npc:character_community())
+		or npc.faction or "stalker"
+	local lvl = (level and level.name and level.name()) or npc.level or "l01_escape"
+
+	local cause, cause_kind = nil, "unknown"
+	if who then
+		if IsMonster and IsMonster(who) then
+			cause_kind = "mutant"
+			cause = (who.section and who:section()) or "mutant"
+		elseif IsStalker and IsStalker(who) then
+			cause_kind = "combat"
+			cause = (who.character_community and who:character_community()) or "hostile"
+		elseif type(who) == "table" then
+			cause_kind = who.cause_kind or "combat"
+			cause = who.cause or who.name
+		end
+	end
+
+	return {
+		npc_id       = npc_id,
+		stalker_name = name,
+		faction      = faction,
+		level        = lvl,
+		timestamp    = read_game_timestamp(),
+		cause        = cause,
+		cause_kind   = cause_kind,
+	}
+end
+
+local function spawn_scavenged_item(npc, rec, cfg, seed)
+	if not cfg.spawn_item then return false end
+	if not (zbc_item or cfg.force_spawn_item) then return false end
+	if not (rec and rec.item_section) then return false end
+
+	local lo = clamp(cfg.item_charge_min or DEFAULT_CFG.item_charge_min, 0.06, 0.95)
+	local hi = clamp(cfg.item_charge_max or DEFAULT_CFG.item_charge_max, lo, 0.99)
+	local _, u = next_prng(hash_seed(seed, rec.id, "charge"))
+	local charge = tonumber(cfg.item_charge) or (lo + (hi - lo) * u)
+	charge = clamp(charge, 0.06, 0.99)
+
+	if alife_create_item then
+		local ok = pcall(alife_create_item, rec.item_section, npc, { cond = charge })
+		return ok
+	end
+	if alife and npc and npc.position and npc.level_vertex_id and npc.game_vertex_id and npc.id then
+		local sim = alife()
+		if sim and sim.create then
+			local ok, se_obj = pcall(function()
+				return sim:create(rec.item_section, npc:position(), npc:level_vertex_id(), npc:game_vertex_id(), npc:id())
+			end)
+			if ok and se_obj and se_obj.set_condition then
+				pcall(function() se_obj:set_condition(charge) end)
+			end
+			return ok
+		end
+	end
+	return false
+end
+
+-- Main death hook. Pure-logic friendly: accepts mock `npc` tables and `cfg` overrides (including `cfg.roll`).
+function on_npc_death(npc, who, cfg)
+	local c = read_runtime_cfg(cfg)
+	if not c.enabled then return nil end
+
+	local info = read_npc_info(npc, who)
+	if not info then return nil end
+
+	local chance = drop_chance_for_faction(info.faction, c)
+	if chance <= 0 then return nil end
+
+	local roll = tonumber(c.roll)
+	if not roll then
+		if type(c.rng) == "function" then
+			roll = tonumber(c.rng()) or 1
+		else
+			roll = math.random()
+		end
+	end
+	if roll >= chance then return nil end
+
+	info.seed = c.seed or hash_seed(info.npc_id, info.stalker_name, info.faction, info.level, info.timestamp)
+	local rec = build_record(info)
+	add_record(rec)
+	spawn_scavenged_item(npc, rec, c, info.seed)
+
+	if zbc_eventlog then
+		if zbc_eventlog.found_footage then
+			pcall(zbc_eventlog.found_footage, rec, rec.level_name)
+		elseif zbc_eventlog.add then
+			pcall(zbc_eventlog.add, "found_footage", "FOUND FOOTAGE: " .. upper(rec.stalker_name), true, nil, nil, nil, {
+				target   = rec.stalker_name,
+				location = rec.level_name,
+			})
+		end
+	end
+	return rec
+end
+
+function on_game_start()
+	RegisterScriptCallback("npc_on_death_callback", on_npc_death)
+	RegisterScriptCallback("save_state", save_state)
+	RegisterScriptCallback("load_state", load_state)
+	RegisterScriptCallback("actor_on_first_update", on_first_update)
+end

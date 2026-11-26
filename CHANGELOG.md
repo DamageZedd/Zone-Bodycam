@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Axon audio realism** (`zbc_audio.script`, `gamedata/sounds/zbc/axon_*.ogg`, `tools/make_axon_sounds.py`): crisp 2D Axon Body audio cues for recording start/stop double-beeps, `EVENT` and Signal triggers, mute toggle, optional 2-minute interval reminder chirps, low-battery warnings at 10% and 5% (with >15% hysteresis), and tier-scaled chest-mic gunshot limiter clipping (Body 1 harsher -> Body 5 cleaner, 150ms cooldown). Test: `tools/tests/zbc_audio_test.lua`.
+- **Standby BUFFER vs. REC, Axon Signal auto-trigger & Mute** (`zbc_signal.script`, `zbc_bodycam.script`, `zbc_item.script`): optional Pre-Event Buffering standby (`BUF`, 0.25x battery drain -> 75% battery savings) that automatically rolls into active `REC` on weapon draw, gunfire, hits, or headlamp toggle on Body 2+ (`SIGNAL` flash + configurable hold window before returning to `BUF`), plus manual standby and audio mute (`MUTE`) keybinds and save persistence. Test: `tools/tests/zbc_signal_test.lua`.
+- **Optical & sensor realism** (`zbc_optics.script`, `zbc_lens.h`, `postprocess.ps`, `postprocess_cm.ps`): Shader Bus `zbc_optics` lane adding muzzle-flash auto-exposure blowout with tier-scaled recovery, non-IR low-light purple/green shadow chroma speckle, lens edge condensation from rain/cold-to-warm indoor entry/sprinting (cleared by the `T` lens-wipe key via `zbc_fx.script`), and persistent lower-left hairline lens cracks on heavy hits (Body 5 sapphire lens 80% resistant, cleared on battery/camera swap). Test: `tools/tests/zbc_optics_test.lua`.
+- **Found footage recovery, enriched Event Log & Body 5 Draft One Incident Summary** (`zbc_found_footage.script`, `zbc_eventlog.script`, `zbc_review.script`): fallen stalkers can drop recoverable Axon incident logs (and matching low-charge camera items when `zbc_item` is installed), viewable in a dedicated Found Footage tab (`Tab`/`F`, `[`/`]` to cycle) inside Footage Review; event log entries now carry typed tags and weapon/target/location metadata; Axon Body 5 generates an automated Draft One Incident Summary header in Footage Review. Test: `tools/tests/zbc_found_footage_test.lua`.
+- **MCM controls & English/Russian localization** (`zbc_bodycam_mcm.script`, `ui_st_zbc_bodycam.xml`): full configuration toggles, sliders, and keybinds for all four realism systems, backwards-compatible with v1.5.0 defaults.
+
 ## v1.5.0 - 2026-11-26
 
 ### Changed

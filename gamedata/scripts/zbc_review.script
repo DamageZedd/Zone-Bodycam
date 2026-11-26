@@ -5,19 +5,31 @@
 	timeline of the recording, with a tick for every event coloured by kind, and the list around the
 	selected one. Left / right scrub through the events, Home / End jump to the first / last, Escape
 	or the key again closes it.
+
+	Upgrades:
+	- Displays typed event tags (SHOT FIRED, HIT TAKEN, KILL, EMISSION, SIGNAL TRIGGER, AUDIO MUTE,
+	  FOUND FOOTAGE, SIGNAL LOST) and optional metadata cleanly.
+	- Shows an Axon Body 5 (Draft One style) Incident Summary panel when active camera tier == 5.
+	- Allows switching to recovered Found Footage records from dead stalkers (hidden when none exist).
 ]]
 
 local floor, min, max = math.floor, math.min, math.max
 
 LIST_ROWS = 9
 KIND_COLORS = {
-	shots   = { 255, 210, 60 },
-	contact = { 255, 70, 60 },
-	hit     = { 255, 140, 40 },
-	down    = { 255, 140, 40 },
-	kill    = { 235, 235, 235 },
-	ident   = { 80, 255, 90 },
-	storm   = { 190, 110, 255 },
+	shots          = { 255, 210, 60 },
+	contact        = { 255, 70, 60 },
+	hit            = { 255, 140, 40 },
+	down           = { 255, 140, 40 },
+	kill           = { 235, 235, 235 },
+	ident          = { 80, 255, 90 },
+	storm          = { 190, 110, 255 },
+	signal         = { 90, 210, 255 },
+	signal_trigger = { 90, 210, 255 },
+	mute           = { 165, 175, 190 },
+	audio_mute     = { 165, 175, 190 },
+	found_footage  = { 255, 200, 90 },
+	signal_lost    = { 255, 55, 55 },
 }
 local DEFAULT_COLOR = { 200, 200, 200 }
 
@@ -47,10 +59,66 @@ local function place(w, x, y, wd, ht)
 	w:SetWndSize(tmp_size:set(wd, ht))
 end
 
+local function upper(s)
+	s = tostring(s or "")
+	return zbc_allies and zbc_allies.upper_cp1251 and zbc_allies.upper_cp1251(s) or string.upper(s)
+end
+
 local function tr(id, def)
 	local s = game and game.translate_string and game.translate_string(id)
 	if type(s) ~= "string" or s == "" or s == id then s = def end
-	return zbc_allies and zbc_allies.upper_cp1251 and zbc_allies.upper_cp1251(s) or string.upper(s)
+	return upper(s)
+end
+
+local function current_tier()
+	if zbc_bodycam and zbc_bodycam.active_tier then
+		return tonumber(zbc_bodycam.active_tier())
+	end
+	return nil
+end
+
+local function found_footage_list()
+	if zbc_found_footage and zbc_found_footage.get_records then
+		local r = zbc_found_footage.get_records()
+		if type(r) == "table" then return r end
+	end
+	return {}
+end
+
+-- Formats a single timeline row for display (pure logic, unit-testable)
+function format_event_row(e, is_selected)
+	if type(e) ~= "table" then return "" end
+	local mark = is_selected and "> " or "  "
+	local body
+	if zbc_eventlog and zbc_eventlog.format_entry then
+		body = zbc_eventlog.format_entry(e)
+	else
+		local tag = e.tag or (e.kind and upper(tostring(e.kind):gsub("_", " ")))
+		local txt = tostring(e.text or tag or "")
+		if tag and tag ~= "" and upper(txt) ~= upper(tag) and not upper(txt):find(tag, 1, true) then
+			body = "[" .. tag .. "] " .. txt
+		else
+			body = txt
+		end
+	end
+	return mark .. "REC " .. rec_clock(e.rec or 0) .. "   " .. tostring(e.clock or "00:00") .. "   " .. body
+end
+
+-- Computes the Body 5 Incident Summary / Found Footage header text for the active view (pure logic)
+function active_header_text(mode, hist, tier, ff_rec, ff_idx, ff_count)
+	if mode == "found_footage" and type(ff_rec) == "table" then
+		return string.format("FOUND FOOTAGE [%d/%d]   %s (%s)   %s   LOC: %s   TIME: %s",
+			ff_idx or 1, ff_count or 1,
+			upper(ff_rec.stalker_name or "UNKNOWN"),
+			upper(ff_rec.faction_label or ff_rec.faction or "STALKER"),
+			upper(ff_rec.camera_model or "AXON BODY"),
+			upper(ff_rec.level_name or ff_rec.level or "ZONE"),
+			tostring(ff_rec.timestamp or ""))
+	end
+	if tier and tier >= 5 and zbc_eventlog and zbc_eventlog.build_incident_summary then
+		return zbc_eventlog.build_incident_summary(hist, tier)
+	end
+	return nil
 end
 
 class "ZbcReview" (CUIScriptWnd)
@@ -66,6 +134,15 @@ function ZbcReview:__init() super()
 	self.bg:SetTextureColor(GetARGB(225, 4, 6, 5))
 	self.title = xml:InitStatic("zbc_text", self)
 	place(self.title, 64, 40, 900, 24)
+	self.mode_bar = xml:InitStatic("zbc_text", self)
+	place(self.mode_bar, 64, 68, 900, 20)
+	self.summary_bg = xml:InitStatic("zbc_fill", self)
+	place(self.summary_bg, 64, 94, 896, 36)
+	self.summary_bg:SetTextureColor(GetARGB(180, 14, 28, 34))
+	self.summary_bg:Show(false)
+	self.summary = xml:InitStatic("zbc_text", self)
+	place(self.summary, 76, 102, 872, 22)
+	self.summary:Show(false)
 	self.hint = xml:InitStatic("zbc_text", self)
 	place(self.hint, 64, 712, 900, 20)
 	self.bar = xml:InitStatic("zbc_fill", self)
@@ -81,6 +158,8 @@ function ZbcReview:__init() super()
 		place(r, 96, 150 + (i - 1) * 34, 860, 24)
 		self.rows[i] = r
 	end
+	self.mode = "live"
+	self.ff_idx = 1
 	self.sel = nil
 	self:Refresh()
 end
@@ -89,26 +168,89 @@ function ZbcReview:__finalize()
 	if Unregister_UI then Unregister_UI("ZbcReview") end
 end
 
-function ZbcReview:Refresh()
+function ZbcReview:_active_events()
+	local ff_list = found_footage_list()
+	if self.mode == "found_footage" then
+		if #ff_list == 0 then
+			self.mode = "live"
+		else
+			self.ff_idx = min(max(self.ff_idx or 1, 1), #ff_list)
+			local rec = ff_list[self.ff_idx]
+			local evs = (rec and rec.events) or {}
+			local last_rec = (#evs > 0 and tonumber(evs[#evs].rec)) or 0
+			return evs, last_rec, ff_list, rec
+		end
+	end
 	local hist = zbc_eventlog and zbc_eventlog.history or {}
+	local now_rec = zbc_bodycam and zbc_bodycam.rec_seconds and zbc_bodycam.rec_seconds() or 0
+	return hist, now_rec, ff_list, nil
+end
+
+function ZbcReview:Refresh()
+	local hist, now_rec, ff_list, ff_rec = self:_active_events()
 	local count = #hist
 	if not self.sel or self.sel > count then self.sel = count end
-	local now_rec = zbc_bodycam and zbc_bodycam.rec_seconds and zbc_bodycam.rec_seconds() or 0
-	self.title:TextControl():SetText(tr("st_zbc_review_title", "Footage review") .. "   REC " .. rec_clock(now_rec))
-	self.hint:TextControl():SetText(tr("st_zbc_review_hint", "Left / right: scrub   Home / End: first / last   Esc: close"))
+	if count > 0 and self.sel < 1 then self.sel = 1 end
+
+	local tier = current_tier()
+	local title_text = tr("st_zbc_review_title", "Footage review") .. "   REC " .. rec_clock(now_rec)
+	if self.mode == "found_footage" and ff_rec then
+		title_text = tr("st_zbc_review_ff_title", "Found footage") .. "   " .. upper(ff_rec.camera_model or "AXON BODY")
+	elseif tier == 5 then
+		title_text = title_text .. "   [AXON BODY 5]"
+	end
+	self.title:TextControl():SetText(title_text)
+
+	if #ff_list > 0 then
+		if self.mode == "found_footage" then
+			self.mode_bar:TextControl():SetText(string.format("[MODE: FOUND FOOTAGE %d/%d]   TAB: LIVE FEED   [/]: PREV/NEXT TAPE",
+				self.ff_idx, #ff_list))
+			self.mode_bar:TextControl():SetTextColor(GetARGB(255, 255, 200, 90))
+		else
+			self.mode_bar:TextControl():SetText(string.format("[MODE: LIVE FEED]   TAB: FOUND FOOTAGE (%d RECOVERED)", #ff_list))
+			self.mode_bar:TextControl():SetTextColor(GetARGB(255, 130, 210, 235))
+		end
+		self.mode_bar:Show(true)
+	else
+		self.mode_bar:TextControl():SetText("")
+		self.mode_bar:Show(false)
+	end
+
+	local header = active_header_text(self.mode, hist, tier, ff_rec, self.ff_idx, #ff_list)
+	if header and header ~= "" then
+		self.summary:TextControl():SetText(header)
+		if self.mode == "found_footage" then
+			self.summary_bg:SetTextureColor(GetARGB(190, 34, 24, 10))
+			self.summary:TextControl():SetTextColor(GetARGB(255, 255, 215, 120))
+		else
+			self.summary_bg:SetTextureColor(GetARGB(190, 12, 30, 38))
+			self.summary:TextControl():SetTextColor(GetARGB(255, 145, 235, 255))
+		end
+		self.summary_bg:Show(true)
+		self.summary:Show(true)
+	else
+		self.summary_bg:Show(false)
+		self.summary:Show(false)
+	end
+
+	local hint_text = tr("st_zbc_review_hint", "Left / right: scrub   Home / End: first / last   Esc: close")
+	if #ff_list > 0 then
+		hint_text = hint_text .. "   Tab: switch feed   [ / ]: cycle tapes"
+	end
+	self.hint:TextControl():SetText(hint_text)
 	self.hint:TextControl():SetTextColor(GetARGB(255, 150, 150, 150))
 
 	-- timeline: the recording from the first event to now
 	local x0, x1, y = 96, 928, 560
 	place(self.bar, x0, y, x1 - x0, 4)
 	self.bar:SetTextureColor(GetARGB(255, 90, 90, 90))
-	local t0 = count > 0 and hist[1].rec or now_rec
+	local t0 = count > 0 and (hist[1].rec or 0) or now_rec
 	local t1 = max(now_rec, t0 + 1)
 	for i = 1, #self.ticks do
 		local tk, e = self.ticks[i], hist[i]
 		if e then
 			local c = KIND_COLORS[e.kind] or DEFAULT_COLOR
-			place(tk, timeline_x(e.rec, t0, t1, x0, x1) - 1.5, y - 10, 3, 24)
+			place(tk, timeline_x(e.rec or 0, t0, t1, x0, x1) - 1.5, y - 10, 3, 24)
 			tk:SetTextureColor(GetARGB(255, c[1], c[2], c[3]))
 			tk:Show(true)
 		else
@@ -116,7 +258,7 @@ function ZbcReview:Refresh()
 		end
 	end
 	if count > 0 then
-		place(self.cursor, timeline_x(hist[self.sel].rec, t0, t1, x0, x1) - 3, y - 18, 6, 40)
+		place(self.cursor, timeline_x(hist[self.sel].rec or 0, t0, t1, x0, x1) - 3, y - 18, 6, 40)
 		self.cursor:SetTextureColor(GetARGB(255, 255, 255, 255))
 		self.cursor:Show(true)
 	else
@@ -134,8 +276,7 @@ function ZbcReview:Refresh()
 			tc:SetTextColor(GetARGB(255, 160, 160, 160))
 		elseif e then
 			local c = KIND_COLORS[e.kind] or DEFAULT_COLOR
-			local mark = (k == self.sel) and "> " or "  "
-			tc:SetText(mark .. "REC " .. rec_clock(e.rec) .. "   " .. e.clock .. "   " .. e.text)
+			tc:SetText(format_event_row(e, k == self.sel))
 			local a = (k == self.sel) and 255 or 170
 			tc:SetTextColor(GetARGB(a, c[1], c[2], c[3]))
 		else
@@ -149,23 +290,37 @@ local CLOSE_DEBOUNCE_MS = 150
 function ZbcReview:OnKeyboard(dik, action)
 	CUIScriptWnd.OnKeyboard(self, dik, action)
 	if action ~= ui_events.WINDOW_KEY_PRESSED then return true end
-	local count = zbc_eventlog and #zbc_eventlog.history or 0
+	local evs, _, ff_list = self:_active_events()
+	local count = #evs
 	local K = DIK_keys
 	local now = time_global and time_global() or 0
 	local rk = zbc_bodycam and zbc_bodycam.review_key_now and tonumber(zbc_bodycam.review_key_now())
-	if dik == K.DIK_ESCAPE then
+	if K.DIK_ESCAPE and dik == K.DIK_ESCAPE then
 		close()
 		return true
 	elseif rk and dik == rk then
 		if now - (self.opened_at or 0) >= CLOSE_DEBOUNCE_MS then close() end
 		return true
-	elseif dik == K.DIK_LEFT or dik == K.DIK_A or dik == K.DIK_UP or dik == K.DIK_W then
+	elseif ((K.DIK_TAB and dik == K.DIK_TAB) or (K.DIK_F and dik == K.DIK_F)) and #ff_list > 0 then
+		self.mode = (self.mode == "live") and "found_footage" or "live"
+		self.sel = nil
+	elseif self.mode == "found_footage" and #ff_list > 1 and
+		((K.DIK_LBRACKET and dik == K.DIK_LBRACKET) or (K.DIK_PRIOR and dik == K.DIK_PRIOR) or (K.DIK_Q and dik == K.DIK_Q)) then
+		self.ff_idx = ((self.ff_idx - 2) % #ff_list) + 1
+		self.sel = nil
+	elseif self.mode == "found_footage" and #ff_list > 1 and
+		((K.DIK_RBRACKET and dik == K.DIK_RBRACKET) or (K.DIK_NEXT and dik == K.DIK_NEXT) or (K.DIK_E and dik == K.DIK_E)) then
+		self.ff_idx = (self.ff_idx % #ff_list) + 1
+		self.sel = nil
+	elseif (K.DIK_LEFT and dik == K.DIK_LEFT) or (K.DIK_A and dik == K.DIK_A)
+		or (K.DIK_UP and dik == K.DIK_UP) or (K.DIK_W and dik == K.DIK_W) then
 		self.sel = max((self.sel or 1) - 1, 1)
-	elseif dik == K.DIK_RIGHT or dik == K.DIK_D or dik == K.DIK_DOWN or dik == K.DIK_S then
+	elseif (K.DIK_RIGHT and dik == K.DIK_RIGHT) or (K.DIK_D and dik == K.DIK_D)
+		or (K.DIK_DOWN and dik == K.DIK_DOWN) or (K.DIK_S and dik == K.DIK_S) then
 		self.sel = min((self.sel or count) + 1, count)
-	elseif dik == K.DIK_HOME then
+	elseif K.DIK_HOME and dik == K.DIK_HOME then
 		self.sel = 1
-	elseif dik == K.DIK_END then
+	elseif K.DIK_END and dik == K.DIK_END then
 		self.sel = count
 	else
 		return true

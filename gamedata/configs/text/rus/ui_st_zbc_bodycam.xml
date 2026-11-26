@@ -504,4 +504,145 @@
   <string id="st_zbc_review_empty">
     <text>Событий пока нет</text>
   </string>
+  <string id="st_zbc_ev_signal">
+    <text>Сигнал Axon</text>
+  </string>
+  <string id="st_zbc_ev_audio_mute">
+    <text>Звук выкл.</text>
+  </string>
+  <string id="st_zbc_ev_audio_unmute">
+    <text>Звук вкл.</text>
+  </string>
+  <string id="st_zbc_ev_found_footage">
+    <text>Найденная запись</text>
+  </string>
+  <string id="st_zbc_review_ff_title">
+    <text>Найденная запись</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_optics_blowout">
+    <text>Засвет от вспышки выстрела</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_optics_blowout_desc">
+    <text>Пересвет автоэкспозиции и ореол оптики при выстрелах и ярких вспышках; сильнее в темноте и быстрее восстанавливается на новых камерах.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_optics_blowout_strength">
+    <text>Сила засвета</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_optics_blowout_strength_desc">
+    <text>Интенсивность вспышки экспозиции и ореола объектива.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_optics_chroma">
+    <text>Цветовой шум теней</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_optics_chroma_desc">
+    <text>Фиолетово-зелёная цветная рябь матрицы в тёмных тенях (когда ИК выключен), сильнее на старых камерах.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_optics_chroma_strength">
+    <text>Сила цветового шума</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_optics_chroma_strength_desc">
+    <text>Уровень цветного шума матрицы в тёмных участках кадра.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_optics_condensation">
+    <text>Запотевание объектива</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_optics_condensation_desc">
+    <text>Конденсат по краям объектива под дождём, при входе с дождя в тёплое помещение и при беге. Протирается клавишей протирки маски (T).</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_optics_condensation_strength">
+    <text>Сила запотевания</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_optics_condensation_strength_desc">
+    <text>Максимальная плотность конденсата по краям линзы.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_optics_crack">
+    <text>Трещина на линзе</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_optics_crack_desc">
+    <text>Тяжёлые удары могут оставить тонкую трещину в нижнем левом углу объектива (сапфировая линза Body 5 имеет 80% защиты). Исчезает при замене батареи или камеры.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_audio_beeps">
+    <text>Звуковые сигналы Axon</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_audio_beeps_desc">
+    <text>Фирменные двойные сигналы Axon при запуске/остановке записи, срабатывании Signal, метке EVENT и переключении звука.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_audio_volume">
+    <text>Громкость сигналов</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_audio_volume_desc">
+    <text>Громкость всех звуковых сигналов камеры и перегрузки нагрудного микрофона.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_audio_interval_beep">
+    <text>Напоминание каждые 2 минуты</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_audio_interval_beep_desc">
+    <text>Периодический звуковой сигнал каждые две минуты во время активной записи.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_audio_low_batt">
+    <text>Сигналы низкого заряда</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_audio_low_batt_desc">
+    <text>Предупреждающие сигналы при снижении заряда до 10% и 5%.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_audio_mic_clip">
+    <text>Клиппинг микрофона при выстреле</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_audio_mic_clip_desc">
+    <text>Короткий щелчок лимитера нагрудного микрофона при стрельбе; жёстче на старых камерах и чище на новых.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_standby_mode">
+    <text>Режим ожидания BUFFER</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_standby_mode_desc">
+    <text>Вкл.: камера находится в режиме буферизации (BUF, на 75% меньше расход батареи) и переходит в REC по сигналу Axon или вручную. Выкл.: запись идёт постоянно.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_axon_signal">
+    <text>Автозапуск Axon Signal</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_axon_signal_desc">
+    <text>Body 2+ автоматически переключается из BUF в REC при доставании оружия, стрельбе, попадании, переключении фонаря или боевом спринте.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_signal_hold_sec">
+    <text>Удержание записи Signal (сек)</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_signal_hold_sec_desc">
+    <text>Время в реальных секундах, в течение которого запись продолжается после сигнала перед возвратом в BUF.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_standby_key">
+    <text>Клавиша режима BUF / REC</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_standby_key_desc">
+    <text>Вручную переключает режим ожидания BUF и непрерывную запись REC при включённом режиме ожидания.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_mute_key">
+    <text>Клавиша отключения звука</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_mute_key_desc">
+    <text>Отключает или включает звук камеры (MUTE), подавляя сигналы и записывая событие в журнал.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_found_footage">
+    <text>Найденные записи</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_found_footage_desc">
+    <text>Погибшие сталкеры могут оставлять восстановленные записи с нательных камер (и разряженные камеры), доступные в просмотре записей (Tab).</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_found_footage_chance_high">
+    <text>Шанс находки (элитные группировки)</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_found_footage_chance_high_desc">
+    <text>Вероятность находки у наёмников, военных, Монолита, учёных и ИИГ.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_found_footage_chance_low">
+    <text>Шанс находки (одиночки / бандиты)</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_found_footage_chance_low_desc">
+    <text>Вероятность находки у одиночек, бандитов и прочих группировок.</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_found_footage_spawn_item">
+    <text>Спавнить разряженную камеру</text>
+  </string>
+  <string id="ui_mcm_zone_bodycam_found_footage_spawn_item_desc">
+    <text>При установленном компоненте предмета камеры на теле сталкера появляется соответствующая разряженная камера Axon Body.</text>
+  </string>
 </string_table>

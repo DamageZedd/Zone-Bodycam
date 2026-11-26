@@ -1,0 +1,441 @@
+--[[
+	Zone Bodycam - Optical & Sensor Realism (Feature 3)
+
+	Drives the single Shader Bus float4 lane "zbc_optics" (bound to HLSL uniform float4 bus_zbc_optics):
+	  x: exposure_blowout  (0..1)  muzzle-flash / bright-light CMOS auto-exposure blowout & dome halation
+	  y: lowlight_chroma   (0..1)  non-IR purple/green shadow chroma speckle, scaled by camera tier (1..5)
+	  z: condensation      (0..1)  soft edge lens misting from rain, cold-to-warm indoor entry, or sprinting
+	  w: lens_crack        (0..1)  non-intrusive hairline corner crack from heavy hits (Body 5 sapphire 80% resist)
+
+	Public API (wired in Phase 2 by zbc_bodycam / zbc_fx / zbc_item):
+	  on_gunshot(darkness, tier, cfg)
+	  on_bright_flash(intensity, darkness, tier, cfg)
+	  on_heavy_hit(power, tier, cfg [, rng])
+	  on_lens_wipe([instant])
+	  on_repair()
+	  update(dt, darkness, rain_factor, is_indoors, is_sprinting, tier, cfg) -> x, y, z, w
+	  save_state(m_data)
+	  load_state(m_data)
+	  reset() / zero() / get_state() / get_crack() / set_crack(v) / tier_profile(tier)
+]]
+
+local exp   = math.exp
+local abs   = math.abs
+local floor = math.floor
+local min   = math.min
+local max   = math.max
+
+---------------------------------------------------------------------------------------------------
+-- Constants, defaults & camera-tier optical profiles
+---------------------------------------------------------------------------------------------------
+
+BUS_OWNER = "zone_bodycam_v1"
+BUS_LANE  = "zbc_optics"
+
+REFERENCE_TIER = 4
+HIT_POWER_MIN  = 0.25   -- heavy-hit threshold before lens glass can crack
+
+-- Recommended MCM keys & defaults (Phase 2 integrator exposes these in zbc_bodycam / zbc_bodycam_mcm)
+DEFAULTS = {
+	optics_blowout               = true,
+	optics_blowout_strength      = 0.85,
+	optics_chroma                = true,
+	optics_chroma_strength       = 0.80,
+	optics_condensation          = true,
+	optics_condensation_strength = 0.85,
+	optics_crack                 = true,
+}
+
+-- Per-generation optical & sensor characteristics (Body 1 .. Body 5; nil defaults to Body 4 reference).
+--   blowout_recovery: seconds to ~95% recovery (exp(-3)) after a muzzle flash (Body 1 ~0.65s, Body 4 ~0.35s, Body 5 ~0.25s)
+--   blowout_mult:     peak auto-exposure blowout sensitivity
+--   chroma_scale:     non-IR low-light purple/green shadow chroma noise multiplier
+--   crack_resist:     fractional crack-chance reduction (Body 5 sapphire lens = 0.80 = 80% resistance)
+--   fog_rate_mult:    condensation buildup rate multiplier (newer coatings resist fogging better)
+TIER_PROFILES = {
+	[1] = { blowout_recovery = 0.65, blowout_mult = 1.20, chroma_scale = 1.00, crack_resist = 0.00, fog_rate_mult = 1.15 },
+	[2] = { blowout_recovery = 0.55, blowout_mult = 1.10, chroma_scale = 0.85, crack_resist = 0.05, fog_rate_mult = 1.08 },
+	[3] = { blowout_recovery = 0.45, blowout_mult = 1.00, chroma_scale = 0.60, crack_resist = 0.15, fog_rate_mult = 1.00 },
+	[4] = { blowout_recovery = 0.35, blowout_mult = 0.90, chroma_scale = 0.38, crack_resist = 0.30, fog_rate_mult = 0.90 },
+	[5] = { blowout_recovery = 0.25, blowout_mult = 0.78, chroma_scale = 0.18, crack_resist = 0.80, fog_rate_mult = 0.75 },
+}
+
+-- Condensation & wipe tuning
+local FOG_RAIN_RATE        = 0.032   -- per second in full outdoor rain
+local FOG_SPRINT_RATE      = 0.028   -- per second while sprinting (body heat / breath)
+local FOG_SPRINT_RAIN_ADD  = 0.012   -- extra sprint condensation while raining
+local FOG_THERMAL_DURATION = 5.0     -- seconds of thermal-shock fogging after entering indoors from cold/outdoors
+local FOG_THERMAL_BASE     = 0.085   -- per second base cold-to-warm surge
+local FOG_THERMAL_RAIN_ADD = 0.065   -- extra surge when stepping indoors out of rain
+local FOG_DECAY_INDOORS    = 0.022   -- natural evaporation indoors once acclimatized
+local FOG_DECAY_OUTDOORS   = 0.014   -- natural evaporation outdoors in dry air
+local WIPE_DURATION        = 0.45    -- rapid wipe clear window (matches hand wipe animation)
+local WIPE_GRACE           = 1.20    -- brief post-wipe grace window before fresh mist starts re-forming
+local WIPE_CLEAR_RATE      = 3.50    -- per second clear rate (clears 1.0 -> 0 in ~0.29s)
+
+-- Shader Bus change threshold (matches zbc_bodycam.script caching discipline)
+local SEND_EPS             = 0.0005
+
+---------------------------------------------------------------------------------------------------
+-- Helpers
+---------------------------------------------------------------------------------------------------
+
+local function clamp(v, lo, hi)
+	if v ~= v then return lo end
+	if v < lo then return lo end
+	if v > hi then return hi end
+	return v
+end
+
+local function clamp01(v)
+	return clamp(tonumber(v) or 0, 0, 1)
+end
+
+local function finite(v)
+	return type(v) == "number" and v == v and v > -1e9 and v < 1e9
+end
+
+local function smoothstep(edge0, edge1, x)
+	local t = clamp01((x - edge0) / (edge1 - edge0))
+	return t * t * (3 - 2 * t)
+end
+
+local function cfg_bool(cfg, key)
+	if type(cfg) == "table" and cfg[key] ~= nil then
+		return cfg[key] and true or false
+	end
+	return DEFAULTS[key] and true or false
+end
+
+local function cfg_num(cfg, key)
+	if type(cfg) == "table" and cfg[key] ~= nil then
+		local n = tonumber(cfg[key])
+		if n and n == n then return n end
+	end
+	return DEFAULTS[key]
+end
+
+local function master_enabled(cfg)
+	if type(cfg) ~= "table" then return true end
+	if cfg.enabled == false or cfg.lens_enabled == false then return false end
+	return true
+end
+
+function tier_profile(tier)
+	local t = tonumber(tier)
+	if t and t == t then
+		t = floor(t + 0.5)
+		if TIER_PROFILES[t] then return TIER_PROFILES[t] end
+	end
+	return TIER_PROFILES[REFERENCE_TIER]
+end
+
+---------------------------------------------------------------------------------------------------
+-- Shader Bus transport (lazy registration + change-threshold caching)
+---------------------------------------------------------------------------------------------------
+
+local bus_token = nil     -- nil: untried, false: unavailable, userdata/handle: registered token
+local sent_cache = nil    -- { x, y, z, w }
+
+local function bus_ready()
+	if bus_token == nil then
+		if shader_bus and shader_bus.try_register and shader_bus.set then
+			local tok = shader_bus.try_register(BUS_LANE, BUS_OWNER, "Zone Bodycam optics")
+			bus_token = tok or false
+			sent_cache = nil
+		else
+			bus_token = false
+		end
+	end
+	return bus_token ~= false and bus_token ~= nil
+end
+
+local function changed(a, b)
+	if a == nil then return true end
+	if (a == 0) ~= (b == 0) then return true end
+	return abs(a - b) >= SEND_EPS
+end
+
+local function send_optics(x, y, z, w)
+	if not bus_ready() then return false end
+	if not (finite(x) and finite(y) and finite(z) and finite(w)) then return false end
+	local c = sent_cache
+	if c and not changed(c[1], x) and not changed(c[2], y) and not changed(c[3], z) and not changed(c[4], w) then
+		return false
+	end
+	if not c then
+		sent_cache = { x, y, z, w }
+	else
+		c[1], c[2], c[3], c[4] = x, y, z, w
+	end
+	shader_bus.set(bus_token, x, y, z, w)
+	return true
+end
+
+function clear_send_cache()
+	sent_cache = nil
+end
+
+---------------------------------------------------------------------------------------------------
+-- Internal state
+---------------------------------------------------------------------------------------------------
+
+local blowout           = 0      -- current auto-exposure blowout intensity (0..1)
+local blowout_recovery  = 0.35   -- active recovery window (s)
+local chroma_out        = 0      -- last computed low-light chroma level (0..1)
+local condensation      = 0      -- raw lens condensation accumulation (0..1)
+local crack             = 0      -- persistent hairline corner lens crack severity (0..1)
+local wipe_timer        = 0      -- remaining rapid wipe-clear time (s)
+local wipe_grace        = 0      -- remaining post-wipe anti-fog grace time (s)
+local thermal_timer     = 0      -- remaining cold-to-warm indoor fogging surge (s)
+local thermal_rate      = 0      -- condensation/s during active thermal surge
+local was_indoors       = nil    -- previous indoor flag to detect outdoor -> indoor transition
+local last_outdoor_rain = 0      -- remembered rain level while outdoors for thermal-shock scaling
+
+---------------------------------------------------------------------------------------------------
+-- Public API
+---------------------------------------------------------------------------------------------------
+
+function reset()
+	blowout           = 0
+	blowout_recovery  = TIER_PROFILES[REFERENCE_TIER].blowout_recovery
+	chroma_out        = 0
+	condensation      = 0
+	crack             = 0
+	wipe_timer        = 0
+	wipe_grace        = 0
+	thermal_timer     = 0
+	thermal_rate      = 0
+	was_indoors       = nil
+	last_outdoor_rain = 0
+	sent_cache        = nil
+end
+
+function zero()
+	send_optics(0, 0, 0, 0)
+	return 0, 0, 0, 0
+end
+
+function get_crack()
+	return crack
+end
+
+function set_crack(v)
+	crack = clamp01(v)
+	return crack
+end
+
+function get_state()
+	return {
+		blowout          = blowout,
+		blowout_recovery = blowout_recovery,
+		chroma           = chroma_out,
+		condensation     = condensation,
+		crack            = crack,
+		wipe_timer       = wipe_timer,
+		thermal_timer    = thermal_timer,
+	}
+end
+
+-- Trigger a bright-light / flashlight / flashbang exposure blowout.
+function on_bright_flash(intensity, darkness, tier, cfg)
+	if not master_enabled(cfg) or not cfg_bool(cfg, "optics_blowout") then
+		return blowout
+	end
+	local prof = tier_profile(tier)
+	local dark = clamp01(darkness)
+	local str  = clamp01(cfg_num(cfg, "optics_blowout_strength"))
+	local mag  = clamp01(intensity)
+	if str <= 0 or mag <= 0 then return blowout end
+
+	-- Small CMOS sensors blow out far harder when auto-exposure is pegged for darkness
+	local dark_boost = 0.12 + 0.88 * dark
+	local peak = clamp01(mag * dark_boost * prof.blowout_mult * str)
+	-- Rapid flashes stack cleanly with diminishing headroom
+	blowout = clamp01(max(blowout, peak) + min(blowout, peak) * 0.25)
+	blowout_recovery = prof.blowout_recovery
+	return blowout
+end
+
+-- Trigger muzzle-flash auto-exposure blowout & dome halation.
+-- Stronger in the dark; recovery speed scales by tier (Body 1 ~0.65s, Body 4 ~0.35s, Body 5 ~0.25s).
+function on_gunshot(darkness, tier, cfg)
+	if not master_enabled(cfg) or not cfg_bool(cfg, "optics_blowout") then
+		return blowout
+	end
+	local prof = tier_profile(tier)
+	local dark = clamp01(darkness)
+	local str  = clamp01(cfg_num(cfg, "optics_blowout_strength"))
+	if str <= 0 then return blowout end
+
+	-- Subtle brief flash in daylight (~0.08), intense white-hot blowout in pitch dark (~0.80)
+	local base = 0.08 + 0.72 * dark
+	local peak = clamp01(base * prof.blowout_mult * str)
+	blowout = clamp01(max(blowout, peak) + min(blowout, peak) * 0.25)
+	blowout_recovery = prof.blowout_recovery
+	return blowout
+end
+
+-- Chance to add a hairline corner lens crack/scratch on heavy hits / blasts.
+-- Body 5 sapphire lens has 80% crack resistance (crack_resist = 0.80).
+-- Optional 4th arg `rng` (0..1 function) allows deterministic unit testing.
+function on_heavy_hit(power, tier, cfg, rng)
+	if not master_enabled(cfg) or not cfg_bool(cfg, "optics_crack") then
+		return false, crack
+	end
+	local p = tonumber(power) or 0
+	if p ~= p or p < HIT_POWER_MIN then
+		return false, crack
+	end
+
+	local prof = tier_profile(tier)
+	local severity = clamp01((p - HIT_POWER_MIN) / (1.0 - HIT_POWER_MIN))
+	local base_chance = clamp01(0.12 + 0.60 * severity)
+	local chance = base_chance * (1.0 - prof.crack_resist)
+	local roll = (type(rng) == "function" and rng or math.random)()
+
+	if roll < chance then
+		local delta = clamp01(0.28 + 0.45 * severity) * (1.0 - prof.crack_resist * 0.35)
+		crack = clamp01(crack + delta)
+		return true, crack
+	end
+	return false, crack
+end
+
+-- Rapidly clears lens condensation (hooked to the T lens wipe action).
+function on_lens_wipe(instant)
+	thermal_timer = 0
+	thermal_rate  = 0
+	wipe_grace    = WIPE_GRACE
+	if instant then
+		condensation = 0
+		wipe_timer   = 0
+	else
+		wipe_timer = WIPE_DURATION
+	end
+	return condensation
+end
+
+-- Clears persistent lens crack when the bodycam is repaired.
+function on_repair()
+	crack = 0
+	if bus_token and bus_token ~= false and sent_cache then
+		send_optics(sent_cache[1], sent_cache[2], sent_cache[3], 0)
+	end
+	return 0
+end
+
+-- Main per-frame update: advances blowout recovery, computes low-light chroma intensity,
+-- updates condensation buildup/decay/wipe, pushes zbc_optics to Shader Bus, and returns (x, y, z, w).
+function update(dt, darkness, rain_factor, is_indoors, is_sprinting, tier, cfg)
+	dt = tonumber(dt) or 0
+	if dt ~= dt or dt < 0 then dt = 0 end
+	if dt > 0.5 then dt = 0.5 end
+
+	local prof = tier_profile(tier)
+	local dark = clamp01(darkness)
+	local rain = clamp01(rain_factor)
+	local indoors = is_indoors and true or false
+	local sprinting = is_sprinting and true or false
+
+	-- 1. Blowout exponential recovery: reaches ~5% (exp(-3)) at prof.blowout_recovery seconds
+	blowout_recovery = prof.blowout_recovery
+	if blowout > 0 and dt > 0 then
+		local tau = max(blowout_recovery / 3.0, 0.02)
+		blowout = blowout * exp(-dt / tau)
+		if blowout < 0.002 then blowout = 0 end
+	end
+
+	-- 2. Non-IR low-light chroma speckle intensity (scaled by camera tier & darkness)
+	local chroma_enabled = cfg_bool(cfg, "optics_chroma")
+	local chroma_str = clamp01(cfg_num(cfg, "optics_chroma_strength"))
+	if chroma_enabled and chroma_str > 0 then
+		local dark_factor = smoothstep(0.15, 0.95, dark)
+		chroma_out = clamp01(dark_factor * prof.chroma_scale * chroma_str)
+	else
+		chroma_out = 0
+	end
+
+	-- 3. Condensation buildup (rain outdoors, cold-to-warm indoor entry, heavy sprinting) & wipe/evaporation
+	if was_indoors == false and indoors then
+		-- Cold-to-warm transition: lens fogs briefly when stepping inside from outside air
+		thermal_timer = FOG_THERMAL_DURATION
+		thermal_rate  = FOG_THERMAL_BASE + FOG_THERMAL_RAIN_ADD * last_outdoor_rain
+	elseif not indoors then
+		last_outdoor_rain = rain
+		thermal_timer = 0
+		thermal_rate  = 0
+	end
+	was_indoors = indoors
+
+	local fog_enabled = cfg_bool(cfg, "optics_condensation")
+	local fog_str = clamp01(cfg_num(cfg, "optics_condensation_strength"))
+
+	if not fog_enabled or fog_str <= 0 then
+		condensation  = 0
+		wipe_timer    = 0
+		wipe_grace    = 0
+		thermal_timer = 0
+	elseif wipe_timer > 0 then
+		-- Active lens wipe sweeps fog away rapidly and suppresses buildup during the wipe
+		condensation = max(0, condensation - WIPE_CLEAR_RATE * dt)
+		wipe_timer   = max(0, wipe_timer - dt)
+		wipe_grace   = max(0, wipe_grace - dt)
+		if condensation < 0.002 then condensation = 0 end
+	elseif wipe_grace > 0 then
+		wipe_grace = max(0, wipe_grace - dt)
+	else
+		local build = 0
+		if not indoors and rain > 0.05 then
+			build = build + rain * FOG_RAIN_RATE
+		end
+		if indoors and thermal_timer > 0 then
+			build = build + thermal_rate
+			thermal_timer = max(0, thermal_timer - dt)
+		end
+		if sprinting then
+			build = build + FOG_SPRINT_RATE + (not indoors and (rain * FOG_SPRINT_RAIN_ADD) or 0)
+		end
+
+		if build > 0 then
+			condensation = clamp01(condensation + build * prof.fog_rate_mult * dt)
+		else
+			local decay = indoors and FOG_DECAY_INDOORS or FOG_DECAY_OUTDOORS
+			condensation = max(0, condensation - decay * dt)
+			if condensation < 0.002 then condensation = 0 end
+		end
+	end
+
+	-- Assemble final Shader Bus float4
+	local x, y, z, w
+	if not master_enabled(cfg) then
+		x, y, z, w = 0, 0, 0, 0
+	else
+		x = cfg_bool(cfg, "optics_blowout") and clamp01(blowout) or 0
+		y = chroma_out
+		z = (fog_enabled and fog_str > 0) and clamp01(condensation * fog_str) or 0
+		w = cfg_bool(cfg, "optics_crack") and clamp01(crack) or 0
+	end
+
+	send_optics(x, y, z, w)
+	return x, y, z, w
+end
+
+---------------------------------------------------------------------------------------------------
+-- Persistence (m_data)
+---------------------------------------------------------------------------------------------------
+
+function save_state(m_data)
+	if type(m_data) ~= "table" then return end
+	m_data.zbc_optics = {
+		crack = crack,
+	}
+end
+
+function load_state(m_data)
+	reset()
+	local d = type(m_data) == "table" and m_data.zbc_optics
+	if type(d) == "table" and type(d.crack) == "number" and d.crack == d.crack then
+		crack = clamp01(d.crack)
+	end
+end

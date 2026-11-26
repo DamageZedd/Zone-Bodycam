@@ -1,0 +1,315 @@
+--[[
+	Zone Bodycam - Axon Signal, Standby BUFFER vs REC, and Audio Mute (zbc_signal.script)
+
+	Pure state machine modeling real Axon Body camera workflow mechanics (no engine calls):
+	- Modes:
+	  * "rec"    (active recording, 1.0x battery drain)
+	  * "buffer" (Pre-Event Buffering standby, 0.25x battery drain)
+	  When MCM standby_mode is OFF (default false for backwards compatibility), the camera stays
+	  in "rec" continuously. When standby_mode is ON, the camera starts in "buffer" and switches
+	  to "rec" on an Axon Signal trigger or manual standby toggle.
+	- Axon Signal auto-trigger (Body 2+ when tiers are active; nil tier = Body 4 equivalent):
+	  Weapon draw, gunshot, hit taken, headlamp/NVG toggle, or combat sprint switches "buffer" ->
+	  "rec", sets a short signal_flash timer (default 3.0s for the OSD "SIGNAL" tag), and resets
+	  a post-event recording hold timer (signal_hold_sec, default 60s real time) before returning
+	  to "buffer".
+	- Manual controls:
+	  * toggle_standby(cfg): manually toggles "rec" <-> "buffer"; manual "rec" stays recording
+	    until manually toggled back to "buffer".
+	  * toggle_mute(cfg): toggles audio mute (OSD "MUTE") and fires on_mute.
+
+	Tested standalone in Lua 5.1 by tools\tests\zbc_signal_test.lua.
+]]
+
+local floor, max = math.floor, math.max
+
+MODE_REC    = "rec"
+MODE_BUFFER = "buffer"
+
+DRAIN_REC    = 1.0
+DRAIN_BUFFER = 0.25
+
+DEFAULT_SIGNAL_FLASH_SEC = 3.0
+DEFAULT_SIGNAL_HOLD_SEC  = 60.0
+SIGNAL_MIN_TIER          = 2
+
+local mode         = MODE_REC
+local muted        = false
+local manual_rec   = false
+local hold_timer   = 0
+local signal_flash = 0
+local last_standby = nil
+local hold_sec     = DEFAULT_SIGNAL_HOLD_SEC
+local flash_sec    = DEFAULT_SIGNAL_FLASH_SEC
+local signal_opt   = true
+local callbacks    = {}
+local pending_reset = true
+
+local function fire(name, ...)
+	local fn = callbacks[name]
+	if type(fn) == "function" then
+		pcall(fn, ...)
+	end
+end
+
+local function normalize_tier(tier)
+	local m = zbc_tiers
+	if type(m) == "table" and type(rawget(m, "valid_tier")) == "function" then
+		return m.valid_tier(tier)
+	end
+	local t = tonumber(tier)
+	if not t or t ~= t then return nil end
+	t = floor(t + 0.5)
+	if t < 1 or t > 5 then return nil end
+	return t
+end
+
+local function parse_nonneg(v, def)
+	local n = tonumber(v)
+	if not n or n ~= n then return def end
+	return max(0, n)
+end
+
+-- Syncs MCM config values (standby_mode, signal_hold_sec, signal_flash_sec, axon_signal).
+-- Transitions cleanly when standby_mode is initialized or toggled at runtime.
+local function sync_cfg(cfg)
+	if type(cfg) ~= "table" then return end
+
+	hold_sec   = parse_nonneg(cfg.signal_hold_sec, DEFAULT_SIGNAL_HOLD_SEC)
+	flash_sec  = parse_nonneg(cfg.signal_flash_sec ~= nil and cfg.signal_flash_sec or cfg.signal_flash, DEFAULT_SIGNAL_FLASH_SEC)
+	signal_opt = (cfg.axon_signal ~= false) and (cfg.signal_enabled ~= false)
+
+	local standby = (cfg.standby_mode == true)
+	if last_standby == nil then
+		last_standby = standby
+		if standby then
+			mode = MODE_BUFFER
+			manual_rec = false
+			hold_timer = 0
+			signal_flash = 0
+		else
+			mode = MODE_REC
+			manual_rec = false
+			hold_timer = 0
+			signal_flash = 0
+		end
+	elseif standby ~= last_standby then
+		last_standby = standby
+		if standby then
+			if mode ~= MODE_BUFFER then
+				mode = MODE_BUFFER
+				manual_rec = false
+				hold_timer = 0
+				signal_flash = 0
+				fire("on_rec_stop", "standby_enabled")
+			end
+		else
+			local was_buf = (mode == MODE_BUFFER)
+			mode = MODE_REC
+			manual_rec = false
+			hold_timer = 0
+			if was_buf then
+				fire("on_rec_start", "standby_disabled")
+			end
+		end
+	end
+end
+
+function reset(cfg)
+	mode         = MODE_REC
+	muted        = false
+	manual_rec   = false
+	hold_timer   = 0
+	signal_flash = 0
+	last_standby = nil
+	hold_sec     = DEFAULT_SIGNAL_HOLD_SEC
+	flash_sec    = DEFAULT_SIGNAL_FLASH_SEC
+	signal_opt   = true
+	if type(cfg) == "table" then
+		sync_cfg(cfg)
+	end
+end
+
+function set_callbacks(cbs)
+	callbacks = {}
+	if type(cbs) ~= "table" then return end
+	for _, k in ipairs({ "on_rec_start", "on_rec_stop", "on_signal", "on_mute" }) do
+		if type(cbs[k]) == "function" then
+			callbacks[k] = cbs[k]
+		end
+	end
+end
+
+-- Body 2+ supports Axon Signal; Body 1 is pre-Signal 2013 hardware.
+-- nil tier (core mod alone or tier limits off) behaves like Body 4.
+function supports_signal(tier)
+	local t = normalize_tier(tier)
+	if t and t < SIGNAL_MIN_TIER then return false end
+	return true
+end
+
+function trigger_signal(reason, tier, cfg)
+	sync_cfg(cfg)
+	if not last_standby then return false end
+	if not signal_opt then return false end
+	if not supports_signal(tier) then return false end
+
+	local tag = (type(reason) == "string" and reason ~= "") and reason or "signal"
+
+	if mode == MODE_BUFFER then
+		mode = MODE_REC
+		manual_rec = false
+		signal_flash = flash_sec
+		hold_timer = hold_sec
+		fire("on_rec_start", "signal", tag)
+		fire("on_signal", tag)
+		return true
+	end
+
+	-- Already in Signal-triggered recording: extend the post-event hold window.
+	-- Manual recording stays under manual control until toggled back.
+	if mode == MODE_REC and not manual_rec then
+		hold_timer = hold_sec
+		return true
+	end
+
+	return false
+end
+
+function on_weapon_draw(tier, cfg)
+	return trigger_signal("weapon_draw", tier, cfg)
+end
+
+function on_gunshot(tier, cfg)
+	return trigger_signal("gunshot", tier, cfg)
+end
+
+function on_hit(tier, cfg)
+	return trigger_signal("hit", tier, cfg)
+end
+
+function on_light_toggle(tier, cfg)
+	return trigger_signal("light_toggle", tier, cfg)
+end
+
+function on_combat_sprint(tier, cfg)
+	return trigger_signal("combat_sprint", tier, cfg)
+end
+
+function toggle_standby(cfg)
+	sync_cfg(cfg)
+	if not last_standby then
+		return mode, false
+	end
+
+	if mode == MODE_BUFFER then
+		mode = MODE_REC
+		manual_rec = true
+		hold_timer = 0
+		signal_flash = 0
+		fire("on_rec_start", "manual")
+	else
+		mode = MODE_BUFFER
+		manual_rec = false
+		hold_timer = 0
+		signal_flash = 0
+		fire("on_rec_stop", "manual")
+	end
+	return mode, true
+end
+
+function toggle_mute(cfg)
+	sync_cfg(cfg)
+	muted = not muted
+	fire("on_mute", muted)
+	return muted
+end
+
+function update(dt, tier, cfg)
+	sync_cfg(cfg)
+	local step = parse_nonneg(dt, 0)
+
+	if signal_flash > 0 then
+		signal_flash = max(0, signal_flash - step)
+	end
+
+	if last_standby and mode == MODE_REC and not manual_rec then
+		if hold_timer > 0 then
+			hold_timer = hold_timer - step
+		end
+		if hold_timer <= 0 then
+			hold_timer = 0
+			mode = MODE_BUFFER
+			fire("on_rec_stop", "hold_expired")
+		end
+	end
+end
+
+function get_mode()         return mode end
+function is_recording()     return mode == MODE_REC end
+function is_buffering()     return mode == MODE_BUFFER end
+function is_muted()         return muted end
+function is_signal_active() return signal_flash > 0 end
+function is_manual_rec()    return manual_rec end
+function get_hold_remaining()         return hold_timer end
+function get_signal_flash_remaining() return signal_flash end
+
+function get_osd_tag()
+	if signal_flash > 0 then return "SIGNAL" end
+	if muted then return "MUTE" end
+	if mode == MODE_BUFFER then return "BUF" end
+	return nil
+end
+
+function drain_multiplier()
+	return (mode == MODE_BUFFER) and DRAIN_BUFFER or DRAIN_REC
+end
+
+function save_state(m_data)
+	if type(m_data) ~= "table" then return end
+	m_data.zbc_signal = {
+		mode         = mode,
+		muted        = muted,
+		manual_rec   = manual_rec,
+		hold_timer   = hold_timer,
+		signal_flash = signal_flash,
+		last_standby = last_standby,
+	}
+end
+
+function load_state(m_data)
+	pending_reset = false
+	local d = type(m_data) == "table" and m_data.zbc_signal
+	if type(d) ~= "table" then
+		reset()
+		return
+	end
+	mode         = (d.mode == MODE_BUFFER) and MODE_BUFFER or MODE_REC
+	muted        = (d.muted == true)
+	manual_rec   = (mode == MODE_REC) and (d.manual_rec == true) or false
+	hold_timer   = (mode == MODE_REC and not manual_rec) and parse_nonneg(d.hold_timer, 0) or 0
+	signal_flash = parse_nonneg(d.signal_flash, 0)
+	if d.last_standby ~= nil then
+		last_standby = (d.last_standby == true)
+	else
+		last_standby = nil
+	end
+end
+
+local function on_first_update()
+	if pending_reset then
+		reset()
+		if type(zbc_audio) == "table" and type(rawget(zbc_audio, "set_muted")) == "function" then
+			zbc_audio.set_muted(false)
+		end
+	end
+	pending_reset = true
+end
+
+function on_game_start()
+	if RegisterScriptCallback then
+		RegisterScriptCallback("save_state", save_state)
+		RegisterScriptCallback("load_state", load_state)
+		RegisterScriptCallback("actor_on_first_update", on_first_update)
+	end
+end

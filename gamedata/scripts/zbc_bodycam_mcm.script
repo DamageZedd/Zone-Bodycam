@@ -97,6 +97,35 @@ function on_mcm_load()
 			{ id = "allies_dot_ratio", type = "track", val = 2, min = 0,    max = 1,    step = 0.05,  def = d("allies_dot_ratio") },
 			{ id = "allies_size",      type = "track", val = 2, min = 0.5,  max = 2,    step = 0.05,  def = d("allies_size") },
 			{ id = "allies_opacity",   type = "track", val = 2, min = 0.2,  max = 1,    step = 0.05,  def = d("allies_opacity") },
+
+			{ id = "hdr_optics",                   type = "line" },
+			{ id = "optics_blowout",               type = "check", val = 1, def = d("optics_blowout") },
+			{ id = "optics_blowout_strength",      type = "track", val = 2, min = 0, max = 1, step = 0.05, def = d("optics_blowout_strength") },
+			{ id = "optics_chroma",                type = "check", val = 1, def = d("optics_chroma") },
+			{ id = "optics_chroma_strength",       type = "track", val = 2, min = 0, max = 1, step = 0.05, def = d("optics_chroma_strength") },
+			{ id = "optics_condensation",          type = "check", val = 1, def = d("optics_condensation") },
+			{ id = "optics_condensation_strength", type = "track", val = 2, min = 0, max = 1, step = 0.05, def = d("optics_condensation_strength") },
+			{ id = "optics_crack",                 type = "check", val = 1, def = d("optics_crack") },
+
+			{ id = "hdr_audio",           type = "line" },
+			{ id = "audio_beeps",         type = "check", val = 1, def = d("audio_beeps") },
+			{ id = "audio_volume",        type = "track", val = 2, min = 0, max = 1, step = 0.05, def = d("audio_volume") },
+			{ id = "audio_interval_beep", type = "check", val = 1, def = d("audio_interval_beep") },
+			{ id = "audio_low_batt",      type = "check", val = 1, def = d("audio_low_batt") },
+			{ id = "audio_mic_clip",      type = "check", val = 1, def = d("audio_mic_clip") },
+
+			{ id = "hdr_signal",      type = "line" },
+			{ id = "standby_mode",    type = "check",    val = 1, def = d("standby_mode") },
+			{ id = "axon_signal",     type = "check",    val = 1, def = d("axon_signal") },
+			{ id = "signal_hold_sec", type = "track",    val = 2, min = 10, max = 300, step = 5, def = d("signal_hold_sec") },
+			{ id = "standby_key",     type = "key_bind", val = 2, def = d("standby_key") },
+			{ id = "mute_key",        type = "key_bind", val = 2, def = d("mute_key") },
+
+			{ id = "hdr_found_footage",         type = "line" },
+			{ id = "found_footage",             type = "check", val = 1, def = d("found_footage") },
+			{ id = "found_footage_chance_high", type = "track", val = 2, min = 0, max = 0.5, step = 0.01, def = d("found_footage_chance_high") },
+			{ id = "found_footage_chance_low",  type = "track", val = 2, min = 0, max = 0.5, step = 0.01, def = d("found_footage_chance_low") },
+			{ id = "found_footage_spawn_item",  type = "check", val = 1, def = d("found_footage_spawn_item") },
 		},
 	}
 end

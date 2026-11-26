@@ -1,22 +1,40 @@
 --[[
 	Zone Bodycam - event log (zbc_eventlog.script)
 
-	Turns game events into short evidence tags like a real bodycam's: SHOTS FIRED, CONTACT 2,
-	OFFICER HIT, OFFICER DOWN (a companion killed), SUBJECT DOWN (someone you killed), EMISSION.
+	Turns game events into short evidence tags like a real bodycam's: SHOT FIRED, CONTACT 2,
+	HIT TAKEN, OFFICER DOWN (a companion killed), KILL / SUBJECT DOWN, EMISSION, SIGNAL TRIGGER,
+	AUDIO MUTE, FOUND FOOTAGE.
 	The newest few show for a few seconds in the overlay under the recording timer (zbc_bodycam.script
 	draws them); every event, identifications included, is kept in history for the footage review
-	screen (zbc_review.script).
+	screen (zbc_review.script), including Axon Body 5 incident summaries.
 ]]
 
 local floor, min, max = math.floor, math.min, math.max
 
-SHOW_SECONDS = 8             -- how long a line stays in the overlay
-LINES        = 3             -- lines shown at once
-HISTORY_MAX  = 300           -- events kept for the review screen
-SHOTS_GAP    = 4             -- seconds between two SHOTS FIRED tags (a burst is one event)
-HIT_GAP      = 5             -- seconds between two OFFICER HIT tags
+SHOW_SECONDS   = 8           -- how long a line stays in the overlay
+LINES          = 3           -- lines shown at once
+HISTORY_MAX    = 300         -- events kept for the review screen
+SHOTS_GAP      = 4           -- seconds between two SHOT FIRED tags (a burst is one event)
+HIT_GAP        = 5           -- seconds between two HIT TAKEN tags
+ENGAGEMENT_GAP = 600         -- seconds of quiet separating distinct engagements for Body 5 summary
 
-history = {}                 -- { real = s, clock = "HH:MM", rec = recorded s, kind = id, text = "...", show = bool }
+TAG_BY_KIND = {
+	shots          = "SHOT FIRED",
+	hit            = "HIT TAKEN",
+	kill           = "KILL",
+	down           = "OFFICER DOWN",
+	contact        = "CONTACT",
+	ident          = "IDENTIFIED",
+	storm          = "EMISSION",
+	signal         = "SIGNAL TRIGGER",
+	signal_trigger = "SIGNAL TRIGGER",
+	mute           = "AUDIO MUTE",
+	audio_mute     = "AUDIO MUTE",
+	found_footage  = "FOUND FOOTAGE",
+	signal_lost    = "SIGNAL LOST",
+}
+
+history = {}                 -- { real, clock, rec, kind, tag, text, show, weapon, target, location, is_mutant, meta }
 local last = {}              -- kind -> real time of the last entry
 local contact = 0            -- hostiles marked the last time we looked
 local storm = false
@@ -24,10 +42,15 @@ local next_poll = 0
 
 local function now_s() return time_global() / 1000 end
 
+local function upper(s)
+	s = tostring(s or "")
+	return zbc_allies and zbc_allies.upper_cp1251 and zbc_allies.upper_cp1251(s) or string.upper(s)
+end
+
 local function tr(id, def)
 	local s = game and game.translate_string and game.translate_string(id)
 	if type(s) ~= "string" or s == "" or s == id then s = def end
-	return zbc_allies and zbc_allies.upper_cp1251 and zbc_allies.upper_cp1251(s) or string.upper(s)
+	return upper(s)
 end
 
 local function game_clock()
@@ -41,11 +64,77 @@ local function enabled()
 		and zbc_bodycam.fx_option and zbc_bodycam.fx_option("event_log")
 end
 
+local function current_location()
+	local raw = level and level.name and level.name()
+	if type(raw) ~= "string" or raw == "" then return nil end
+	if zbc_found_footage and zbc_found_footage.level_display_name then
+		return zbc_found_footage.level_display_name(raw)
+	end
+	local s = game and game.translate_string and game.translate_string(raw)
+	if type(s) == "string" and s ~= "" and s ~= raw then return s end
+	return raw
+end
+
+local function active_weapon_name()
+	if not (db and db.actor and db.actor.active_item) then return nil end
+	local ok, item = pcall(function() return db.actor:active_item() end)
+	if not (ok and item and item.section) then return nil end
+	local sec = item:section()
+	if type(sec) ~= "string" or sec == "" then return nil end
+	if ini_sys and ini_sys.r_string_ex then
+		local inv = ini_sys:r_string_ex(sec, "inv_name")
+		if type(inv) == "string" and inv ~= "" and game and game.translate_string then
+			local translated = game.translate_string(inv)
+			if type(translated) == "string" and translated ~= "" and translated ~= inv then
+				return translated
+			end
+		end
+	end
+	return sec
+end
+
+local function safe_target_name(victim)
+	if not victim then return nil end
+	local ok, name = pcall(function() return victim.character_name and victim:character_name() end)
+	if ok and type(name) == "string" and name ~= "" then return name end
+	local ok2, sec = pcall(function() return victim.section and victim:section() end)
+	if ok2 and type(sec) == "string" and sec ~= "" then return sec end
+	return nil
+end
+
+function tag_for(kind)
+	if type(kind) ~= "string" or kind == "" then return "EVENT" end
+	return TAG_BY_KIND[kind] or upper(kind:gsub("_", " "))
+end
+
+local function copy_meta(meta)
+	if type(meta) ~= "table" then return nil end
+	local out = {}
+	for k, v in pairs(meta) do out[k] = v end
+	return out
+end
+
 -- adds an event; show = false keeps it out of the overlay (review screen only)
-function add(kind, text, show, real, clock, rec)
+-- optional meta: { weapon = ..., target = ..., location = ..., is_mutant = ..., tag = ... }
+function add(kind, text, show, real, clock, rec, meta)
 	real = real or now_s()
-	local e = { real = real, clock = clock or game_clock(), kind = kind, text = text, show = show ~= false,
-		rec = rec or (zbc_bodycam and zbc_bodycam.rec_seconds and zbc_bodycam.rec_seconds()) or 0 }
+	local m = copy_meta(meta)
+	local tag = (m and m.tag and upper(m.tag)) or tag_for(kind)
+	if text == nil or text == "" then text = tag end
+	local e = {
+		real      = real,
+		clock     = clock or game_clock(),
+		kind      = kind,
+		tag       = tag,
+		text      = text,
+		show      = show ~= false,
+		rec       = rec or (zbc_bodycam and zbc_bodycam.rec_seconds and zbc_bodycam.rec_seconds()) or 0,
+		weapon    = m and m.weapon and tostring(m.weapon) or nil,
+		target    = m and m.target and tostring(m.target) or nil,
+		location  = m and m.location and tostring(m.location) or nil,
+		is_mutant = m and m.is_mutant and true or nil,
+		meta      = m,
+	}
 	history[#history + 1] = e
 	while #history > HISTORY_MAX do table.remove(history, 1) end
 	last[kind] = real
@@ -71,6 +160,165 @@ function recent(now, n)
 	return out
 end
 
+-- Formats a single event entry cleanly with its typed tag and optional metadata for the review UI.
+function format_entry(e)
+	if type(e) ~= "table" then return "" end
+	local tag = e.tag or tag_for(e.kind)
+	local text = tostring(e.text or tag)
+	local parts = {}
+	if upper(text) ~= upper(tag) and not upper(text):find(tag, 1, true) then
+		parts[#parts + 1] = "[" .. tag .. "] " .. text
+	else
+		parts[#parts + 1] = text
+	end
+	local details = {}
+	local w = e.weapon or (e.meta and e.meta.weapon)
+	local t = e.target or (e.meta and e.meta.target)
+	local l = e.location or (e.meta and e.meta.location)
+	if w and w ~= "" then details[#details + 1] = "WPN:" .. upper(w) end
+	if t and t ~= "" then details[#details + 1] = "TGT:" .. upper(t) end
+	if l and l ~= "" then details[#details + 1] = "LOC:" .. upper(l) end
+	if #details > 0 then
+		parts[#parts + 1] = "(" .. table.concat(details, " | ") .. ")"
+	end
+	return table.concat(parts, " ")
+end
+
+local function event_time(e)
+	if type(e) ~= "table" then return nil end
+	local r = tonumber(e.rec)
+	if r and r >= 0 then return r end
+	local rl = tonumber(e.real)
+	if rl and rl >= 0 then return rl end
+	return nil
+end
+
+local function is_mutant_event(e)
+	if e.is_mutant or (e.meta and e.meta.is_mutant) then return true end
+	local tk = e.target_kind or (e.meta and e.meta.target_kind)
+	if tk == "mutant" then return true end
+	local tgt = upper(e.target or (e.meta and e.meta.target) or "")
+	if tgt:find("MUTANT", 1, true) or tgt:find("BLOODSUCKER", 1, true) or tgt:find("SNORK", 1, true)
+		or tgt:find("PSEUDODOG", 1, true) or tgt:find("BOAR", 1, true) or tgt:find("FLESH", 1, true)
+		or tgt:find("CHIMERA", 1, true) or tgt:find("CONTROLLER", 1, true) or tgt:find("BURER", 1, true)
+		or tgt:find("POLTERGEIST", 1, true) or tgt:find("PSEUDOGIANT", 1, true) or tgt:find("DOG", 1, true)
+		or tgt:find("TUSHKANO", 1, true) or tgt:find("CAT", 1, true) or tgt:find("ZOMBIE", 1, true) then
+		return true
+	end
+	return false
+end
+
+local function fmt_duration(secs)
+	secs = max(floor(tonumber(secs) or 0), 0)
+	local h = floor(secs / 3600)
+	local m = floor(secs / 60) % 60
+	local s = secs % 60
+	if h > 0 then return string.format("%02d:%02d:%02d", h, m, s) end
+	return string.format("%02d:%02d", m, s)
+end
+
+-- Axon Body 5 (Axon Draft One style) incident summary of the latest engagement.
+-- Returns nil when tier < 5; otherwise returns (summary_text, stats_table).
+function build_incident_summary(events, tier)
+	tier = tonumber(tier)
+	if not tier or tier < 5 then return nil end
+	events = events or history
+	if type(events) ~= "table" or #events == 0 then
+		local empty_stats = {
+			location = "UNKNOWN SECTOR", duration_s = 0, shots = 0, hits = 0,
+			kills = 0, mutants = 0, officer_down = 0, signal_triggers = 0,
+			emissions = 0, audio_mutes = 0, found_footage = 0, event_count = 0,
+		}
+		return "DRAFT ONE BRIEF | NO INCIDENT EVENTS RECORDED", empty_stats
+	end
+
+	-- Slice to the latest engagement (split on ENGAGEMENT_GAP seconds of quiet)
+	local start_idx = 1
+	local prev_t = event_time(events[#events])
+	for i = #events - 1, 1, -1 do
+		local t = event_time(events[i])
+		if t and prev_t and (prev_t - t) > ENGAGEMENT_GAP then
+			start_idx = i + 1
+			break
+		end
+		if t then prev_t = t end
+	end
+
+	local stats = {
+		location        = nil,
+		duration_s      = 0,
+		shots           = 0,
+		hits            = 0,
+		kills           = 0,
+		mutants         = 0,
+		officer_down    = 0,
+		signal_triggers = 0,
+		emissions       = 0,
+		audio_mutes     = 0,
+		found_footage   = 0,
+		event_count     = 0,
+	}
+
+	local first_t, last_t = nil, nil
+	for i = start_idx, #events do
+		local e = events[i]
+		if type(e) == "table" then
+			stats.event_count = stats.event_count + 1
+			local t = event_time(e)
+			if t then
+				if not first_t or t < first_t then first_t = t end
+				if not last_t or t > last_t then last_t = t end
+			end
+			local loc = e.location or (e.meta and e.meta.location)
+			if type(loc) == "string" and loc ~= "" then stats.location = loc end
+
+			local k = e.kind
+			local tg = e.tag or tag_for(k)
+			if k == "shots" or tg == "SHOT FIRED" then
+				stats.shots = stats.shots + 1
+			elseif k == "hit" or tg == "HIT TAKEN" then
+				stats.hits = stats.hits + 1
+			elseif k == "kill" or tg == "KILL" then
+				stats.kills = stats.kills + 1
+				if is_mutant_event(e) then stats.mutants = stats.mutants + 1 end
+			elseif k == "down" or tg == "OFFICER DOWN" then
+				stats.officer_down = stats.officer_down + 1
+			elseif k == "signal" or k == "signal_trigger" or tg == "SIGNAL TRIGGER" then
+				stats.signal_triggers = stats.signal_triggers + 1
+			elseif k == "storm" or tg == "EMISSION" then
+				stats.emissions = stats.emissions + 1
+			elseif k == "mute" or k == "audio_mute" or tg == "AUDIO MUTE" then
+				stats.audio_mutes = stats.audio_mutes + 1
+			elseif k == "found_footage" or tg == "FOUND FOOTAGE" then
+				stats.found_footage = stats.found_footage + 1
+			end
+		end
+	end
+
+	stats.duration_s = (first_t and last_t and last_t >= first_t) and (last_t - first_t) or 0
+	stats.location = upper(stats.location or current_location() or "UNKNOWN SECTOR")
+
+	local kill_part = string.format("KILLS: %d", stats.kills)
+	if stats.mutants > 0 then
+		kill_part = kill_part .. string.format(" (%d MUTANT)", stats.mutants)
+	end
+
+	local segments = {
+		"DRAFT ONE BRIEF",
+		"LOC: " .. stats.location,
+		"DUR: " .. fmt_duration(stats.duration_s),
+		"SHOTS: " .. stats.shots,
+		"HITS: " .. stats.hits,
+		kill_part,
+		"SIGNAL TRIGGERS: " .. stats.signal_triggers,
+	}
+	if stats.officer_down > 0 then segments[#segments + 1] = "ALLY DOWN: " .. stats.officer_down end
+	if stats.emissions > 0 then segments[#segments + 1] = "EMISSION" end
+	if stats.audio_mutes > 0 then segments[#segments + 1] = "MUTE: " .. stats.audio_mutes end
+
+	return table.concat(segments, " | "), stats
+end
+
 function clear()
 	history, last, contact, storm = {}, {}, 0, false
 end
@@ -82,7 +330,12 @@ end
 local function actor_on_weapon_fired(obj)
 	if not enabled() then return end
 	if obj and db.actor and obj:id() ~= db.actor:id() then return end
-	if due("shots", SHOTS_GAP) then add("shots", tr("st_zbc_ev_shots", "Shots fired")) end
+	if due("shots", SHOTS_GAP) then
+		add("shots", tr("st_zbc_ev_shots", "Shots fired"), true, nil, nil, nil, {
+			weapon   = active_weapon_name(),
+			location = current_location(),
+		})
+	end
 end
 
 local function read_power(shit) return shit.power end
@@ -90,16 +343,29 @@ local function actor_on_before_hit(shit)
 	if not enabled() then return end
 	local ok, p = pcall(read_power, shit)
 	if (ok and tonumber(p) or 0) >= 0.2 and due("hit", HIT_GAP) then
-		add("hit", tr("st_zbc_ev_hit", "Officer hit"))
+		add("hit", tr("st_zbc_ev_hit", "Officer hit"), true, nil, nil, nil, {
+			location = current_location(),
+		})
 	end
 end
 
 local function on_death(victim, who)
 	if not (enabled() and victim and db.actor) then return end
-	if IsStalker(victim) and victim:has_info("npcx_is_companion") then
-		add("down", tr("st_zbc_ev_officer_down", "Officer down"))
-	elseif who and who:id() == db.actor:id() then
-		add("kill", tr("st_zbc_ev_subject_down", "Subject down"))
+	local v_name = safe_target_name(victim)
+	local loc = current_location()
+	if IsStalker and IsStalker(victim) and victim.has_info and victim:has_info("npcx_is_companion") then
+		add("down", tr("st_zbc_ev_officer_down", "Officer down"), true, nil, nil, nil, {
+			target   = v_name,
+			location = loc,
+		})
+	elseif who and who.id and who:id() == db.actor:id() then
+		local is_mut = (IsMonster and IsMonster(victim)) and true or false
+		add("kill", tr("st_zbc_ev_subject_down", "Subject down"), true, nil, nil, nil, {
+			target    = v_name,
+			weapon    = active_weapon_name(),
+			location  = loc,
+			is_mutant = is_mut,
+		})
 	end
 end
 
@@ -116,18 +382,59 @@ local function actor_on_update()
 	next_poll = now + 1
 	if not enabled() then return end
 	local n = zbc_allies and zbc_allies.hostile_count and zbc_allies.hostile_count() or 0
-	if n > contact then add("contact", tr("st_zbc_ev_contact", "Contact") .. " " .. n) end
+	if n > contact then
+		add("contact", tr("st_zbc_ev_contact", "Contact") .. " " .. n, true, nil, nil, nil, {
+			location = current_location(),
+		})
+	end
 	contact = n
 	local ok, s = pcall(read_storm)
 	s = ok and s and true or false
-	if s and not storm then add("storm", tr("st_zbc_ev_emission", "Emission")) end
+	if s and not storm then
+		add("storm", tr("st_zbc_ev_emission", "Emission"), true, nil, nil, nil, {
+			location = current_location(),
+		})
+	end
 	storm = s
 end
 
 -- called by zbc_allies when someone is identified (review screen only)
 function identified(name)
 	if not enabled() then return end
-	add("ident", tr("st_zbc_ev_ident", "Identified") .. " " .. tostring(name or ""), false)
+	add("ident", tr("st_zbc_ev_ident", "Identified") .. " " .. tostring(name or ""), false, nil, nil, nil, {
+		target   = name,
+		location = current_location(),
+	})
+end
+
+-- Signal trigger event (Axon Signal weapon/holster/sidearm/panic alert)
+function signal_trigger(reason, location, meta)
+	if not enabled() then return end
+	local m = copy_meta(meta) or {}
+	m.location = m.location or location or current_location()
+	local label = tr("st_zbc_ev_signal", "Signal trigger")
+	if type(reason) == "string" and reason ~= "" then label = label .. ": " .. upper(reason) end
+	return add("signal_trigger", label, true, nil, nil, nil, m)
+end
+
+-- Audio mute / unmute toggle event
+function audio_mute(muted, location, meta)
+	if not enabled() then return end
+	local m = copy_meta(meta) or {}
+	m.location = m.location or location or current_location()
+	local label = muted and tr("st_zbc_ev_audio_mute", "Audio mute on") or tr("st_zbc_ev_audio_unmute", "Audio mute off")
+	return add("audio_mute", label, true, nil, nil, nil, m)
+end
+
+-- Found footage recovery event (from zbc_found_footage.script)
+function found_footage(rec, location, meta)
+	if not enabled() then return end
+	local m = copy_meta(meta) or {}
+	m.location = m.location or (type(rec) == "table" and rec.level_name) or location or current_location()
+	m.target = m.target or (type(rec) == "table" and rec.stalker_name)
+	local label = tr("st_zbc_ev_found_footage", "Found footage")
+	if m.target and m.target ~= "" then label = label .. ": " .. upper(m.target) end
+	return add("found_footage", label, true, nil, nil, nil, m)
 end
 
 function on_game_start()

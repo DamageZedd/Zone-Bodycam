@@ -290,6 +290,11 @@ local function refresh(now, silent)
 		inserted = cam_def and cam_def.hud
 	end
 	if cam_id and charge then seen_charge[cam_id] = charge end
+	if not silent and (inserted or (cam_id and last_charge_id and cam_id ~= last_charge_id)) then
+		if zbc_optics and type(rawget(zbc_optics, "on_repair")) == "function" then
+			zbc_optics.on_repair()
+		end
+	end
 	if anim and inserted and not silent then anim.request("insert", now, inserted) end
 	last_charge_id = cam_id
 	return obj
@@ -336,7 +341,9 @@ local function actor_on_update()
 	local obj = refresh(now)
 	if obj and has_power() and last then
 		local def = CAMERAS[obj:section()]
-		local mult = def and def.drain_mult or 1
+		local sig_mult = (zbc_signal and type(rawget(zbc_signal, "drain_multiplier")) == "function")
+			and zbc_signal.drain_multiplier() or 1
+		local mult = (def and def.drain_mult or 1) * sig_mult
 		local id = obj:id()
 		local base = obj:condition()
 		if exact_id == id then base = base_charge(exact_charge, exact_written, base) end

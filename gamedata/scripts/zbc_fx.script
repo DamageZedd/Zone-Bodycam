@@ -601,6 +601,9 @@ end
 
 function wipe_drops()
 	if not want_drops() then return false end
+	if zbc_optics and type(rawget(zbc_optics, "on_lens_wipe")) == "function" then
+		zbc_optics.on_lens_wipe()
+	end
 	local ok, mask = pcall(read_mask_on)
 	if ok and mask then return false end
 	if play_wipe_anim() then return true end
@@ -611,7 +614,14 @@ function wipe_drops()
 end
 
 local function on_key_release(key)
-	if key_bindings and dik_to_bind and dik_to_bind(key) == key_bindings.kCAM_ZOOM_IN then wipe_drops() end
+	if key_bindings and dik_to_bind and dik_to_bind(key) == key_bindings.kCAM_ZOOM_IN then
+		if enabled() and zbc_bodycam and zbc_bodycam.fx_option and zbc_bodycam.fx_option("lens_enabled") then
+			if zbc_optics and type(rawget(zbc_optics, "on_lens_wipe")) == "function" then
+				zbc_optics.on_lens_wipe()
+			end
+		end
+		wipe_drops()
+	end
 end
 
 -- The mask glass pass for the drops: on while drops are wanted and no mask is on screen, sent again
