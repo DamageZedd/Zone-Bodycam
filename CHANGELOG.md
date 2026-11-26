@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.5.0 - 2026-11-26
 
 ### Changed
 - **Camera generations follow the real Axon Body specs one to one** (`zbc_tiers.script`, `zbc_item.script`; sources in `docs/real_specs.md`): sharpness from the real resolution (480p / 1080p / 1080p / 1440p / 4K), lens zoom from the real field of view (130 / 143 / 143 / 160 / 160 deg), compression from the real bitrates (Body 1 at about half Body 2's bits per pixel), night noise (Body 1 and 2 the same), less motion blur from Body 3, battery life 12 / 12 / 12 / 14 h and +20% for Body 5. Live-map markers, off-screen companion dots and the alerts log need LTE (Body 3 on), with no range cap; scope tags need Watch Me (Body 4 on). Auto-exposure, footage review and face blur are on every camera. Walking shake and interference no longer differ by camera (no generation publishes a difference). The name line stays from Body 2 and the GPS line from Body 3 (onboard GPS). Test: `tools/tests/zbc_tiers_test.lua`.

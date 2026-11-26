@@ -6,7 +6,7 @@
 
 *See the Zone through a chest-mounted police bodycam.*
 
-![Version](https://img.shields.io/badge/version-v1.4.0-e0a43c?style=for-the-badge) ![Author](https://img.shields.io/badge/by-Damage__Zedd-8fae5a?style=for-the-badge) ![Game](https://img.shields.io/badge/S.T.A.L.K.E.R.-Anomaly%201.5.3%20%2F%20GAMMA-555555?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-v1.5.0-e0a43c?style=for-the-badge) ![Author](https://img.shields.io/badge/by-Damage__Zedd-8fae5a?style=for-the-badge) ![Game](https://img.shields.io/badge/S.T.A.L.K.E.R.-Anomaly%201.5.3%20%2F%20GAMMA-555555?style=for-the-badge)
 
 [![Zone Bodycam gameplay](docs/images/gameplay.webp)](docs/images/gameplay.mp4)
 
@@ -14,16 +14,14 @@
 
 </div>
 
-## What's new in v1.4.0
+## What's new in v1.5.0
 
-- **Five camera generations, Axon Body 1 to 5** (optional item). Each camera matches the real Axon Body's published specs: Body 1 records 480p through a 130° lens, Body 2 1080p at 143°, Body 3 1080p (about 143°, estimated), Body 4 1440p at 160°, Body 5 up to 4K; markers and the alerts log need LTE, from Body 3. Body 4's picture looks exactly like your MCM settings. Each camera has its own 3D model, icon and battery life.
-- **Body 1 is the starter camera**: 5,000 RU at every trader, and every new game starts with one. **Body 2 to 5 are craft only**, each from the one before, behind the same recipe books as GAMMA's night vision. On an existing save, the camera you already carry becomes Body 4.
-- **Battery animations fitted to every camera**: own grips and battery seat on each Axon Body.
-- **Every effect moves.** Interference swells, spikes and tears like a failing digital feed, storms build up, hits jolt the picture, blood splatters stack and drip, and compression blocks up while you turn. No more effects freezing after long play.
-- **T plays the visor-wipe animation** when you wipe the lens, mask or not.
-- **Signal lost always plays on death**, also with death screen mods that stop time (Death Like Romeo), and replaces their screen while it is on. Without the Shader Bus their screen plays instead.
-- **Markers through scopes** are placed right at every zoom step, including the top of 3-24x scopes.
-- **Fixes:** identified people are remembered across loads and level changes again; no more "cannot access class member Alive!" log spam from the markers; no overlay error while a level loads.
+- **1:1 real Axon Body 1–5 specs** ([docs/real_specs.md](docs/real_specs.md)): sharpness mapped to real resolution (`480p / 1080p / 1080p / 1440p / 4K`), lens zoom to real FOV (`130° / 143° / 143° / 160° / 160°`), compression to real bitrates, night noise, and reduced motion blur from Body 3+. Live-map markers, companion dots, and the alerts log require LTE (Body 3+); scope tags require Watch Me (Body 4+); overlay name starts at Body 2+ and GPS at Body 3+.
+- **Game-time battery life matching the real cameras**: Body 4 lasts **14 in-game hours** (new MCM option `"Battery life (game hours)"`), Body 1–3 last **12 hours**, and Body 5 lasts **~16.8 hours** (+20%), scaling with `time_factor`.
+- **1×1 inventory icons, optional HD icons & blue charge bar**: Bodycam items now take a single 1×1 inventory cell by default (with an optional **HD icons** FOMOD step for HD Inventory Icons Framework), show the vanilla blue battery bar on their icon, and the Bodycam item component is now **on by default** in the installer.
+- **Automatic overlay device name**: Always shows the carried camera's real model (`AXON BODY` through `AXON BODY 5`) unless the new off-by-default `"Custom device name"` MCM toggle is enabled.
+- **IR night look is now off by default** and available as an MCM option on every camera (no real Axon Body has infrared).
+- **Fixes:** smooth turn-based compression without the 1.6 s keyframe snap; battery-insert animation now plays for all 5 cameras when carrying multiple cameras; fixed float32 battery drain stalling near full charge.
 
 Full history in [CHANGELOG.md](CHANGELOG.md).
 
