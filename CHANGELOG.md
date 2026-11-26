@@ -7,6 +7,8 @@
 - **Battery life runs on game time and matches the real cameras** (`zbc_item.script`, `zbc_item_mcm.script`): Body 4 lasts 14 in-game hours like the real camera, Body 1-3 12 hours and Body 5 about 16.8 hours; the drain follows the game's time factor. New MCM option "Battery life (game hours)" (default 14) replaces the old real-hours one, so old saved values are not reused. Sleeping and loading still do not drain. Test: `tools/tests/zbc_item_test.lua`.
 - **The overlay's device name follows the camera you carry** (`zbc_bodycam.script`, `zbc_bodycam_mcm.script`): AXON BODY, AXON BODY 2 ... AXON BODY 5, switching with the camera. The MCM device name now needs the new "Custom device name" toggle (off by default) to replace it, so a custom text left over in an old save no longer hides the real name. Test: `tools/tests/zbc_device_label_test.lua`.
 - **IR night look is an MCM option on every camera, off by default** (no Axon Body has infrared; was auto, and missing on Body 1 and 2).
+- **The bodycam items take one inventory cell** instead of 2x2, with 50x50 icons cut from the same art (`items_zbc_bodycam.ltx`, `make_item_textures.py --atlas-1x1`).
+- **The bodycam item component is on by default** in the FOMOD installer (untick it to keep the bodycam always on).
 
 ### Added
 - **HD inventory icons** (FOMOD step "Bodycam item icons", option "HD icons"): for HD Inventory Icons Framework (GAMMA), 100x100 icons of the five Axon Body cameras from their original 800 px renders, drawn in a single 1x1 slot (`inv_grid_scale = 2`, DLTX patch in `optional/bodycam_item_hd_icons`). Without the framework the cameras take 2x2 cells. Test: `tools/tests/zbc_item_icons_test.lua`.
@@ -16,10 +18,6 @@
 - **Compression built up and then vanished in a snap, most visibly while turning** (`zbc_lens.h`, `zbc_fx.script`, `zbc_bodycam.script`): the shadow blocking restarted on every keyframe (every 1.6 s) and the turning boost dropped off in a third of a second. Compression now holds a steady amount set by the camera (Body 1 the most, Body 5 the least; without the item, the MCM value), builds up over about a quarter second while the camera turns, and eases back to that amount over about a second.
 - **The battery-insert animation only played on Axon Body 5** (`zbc_item.script`, bodycam item component): a new battery was spotted only as a charge jump on the active camera. With several dead cameras carried the active one is the highest generation, so a battery put into any other camera made that camera the active one and the jump was never seen. Every carried camera's charge is now remembered, so a battery in any of them plays the insert with that camera's own animation. Test: `tools/tests/zbc_item_test.lua` (each camera alone, and all five carried with a battery into each in turn).
 - **The bodycam items could stop draining** (`zbc_item.script`): the engine stores the charge as a float32, and with a long battery life, an easy difficulty and a high frame rate one frame of drain was smaller than half a float step near full charge, so it rounded back and the camera never used its battery. The exact charge is now kept in the script and only rounded when written; a battery put in is still picked up. Test: `tools/tests/zbc_item_battery_bar_test.lua`.
-
-### Changed
-- **The bodycam items take one inventory cell** instead of 2x2, with 50x50 icons cut from the same art (`items_zbc_bodycam.ltx`, `make_item_textures.py --atlas-1x1`).
-- **The bodycam item component is on by default** in the FOMOD installer (untick it to keep the bodycam always on).
 
 ## v1.4.0 - 2026-11-25
 

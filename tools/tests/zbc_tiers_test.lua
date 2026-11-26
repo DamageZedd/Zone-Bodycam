@@ -219,7 +219,11 @@ do
 	check(b1 and b1:match("cost%s*=%s*(%d+)") == "5000", "Body 1 costs 5,000")
 end
 do
-	local p = io.popen('ls "' .. CFG .. 'trade"')
+	local trade_dir = CFG .. "trade"
+	local cmd = package.config:sub(1, 1) == "\\"
+		and ('dir /b "' .. trade_dir:gsub("/", "\\") .. '"')
+		or ('ls "' .. trade_dir .. '"')
+	local p = io.popen(cmd)
 	local n = 0
 	for name in p:lines() do
 		if name:match("%.ltx$") then

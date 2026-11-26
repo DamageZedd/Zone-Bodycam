@@ -51,7 +51,7 @@ Everything can be tuned or turned off in MCM.
 | Night mode (IR, optional) and compression |
 |:---:|
 | [![IR night mode and compression keyframes](docs/images/fx_ir_compression.webp)](docs/images/fx_ir_compression.mp4) |
-| IR night mode: the lamp lights the middle, the gain hunts and dark areas boil in blocks. Compression: crisp on each keyframe, then the shadows block up. |
+| IR night mode: the lamp lights the middle, the gain hunts and dark areas boil in blocks. Compression: steady baseline set by the camera, building up while you turn and easing back. |
 
 <sub>Shader previews rendered over game screenshots, not game recordings. Click a clip for the full-quality video.</sub>
 
@@ -69,10 +69,10 @@ Everything can be tuned or turned off in MCM.
 
 ## Optional: Body Camera item
 
-Tick **Bodycam item (battery powered)** in the installer to make the bodycam a real piece of gear instead of always on.
+**Bodycam item (battery powered)** is on by default in the installer to make the bodycam a real piece of gear (untick it to keep the bodycam always on). Standard 1×1 icons are included, with an optional **HD icons** step for HD Inventory Icons Framework.
 
 - **Five generations, Axon Body 1 to 5** (see below). The effect only runs while you carry a charged camera anywhere in your inventory. No equipment slot is used.
-- **It runs on batteries.** The battery drains while recording, in game time, as long as the real camera lasts: 12 in-game hours for Body 1-3, 14 for Body 4 and about 16.8 for Body 5 (Body 4's value is set in MCM). A small VHS-style battery gauge sits above the REC dot.
+- **It runs on batteries.** The battery drains while recording, in game time, as long as the real camera lasts: 12 in-game hours for Body 1-3, 14 for Body 4 and about 16.8 for Body 5 (Body 4's value is set in MCM). Each camera shows a blue charge bar on its inventory icon, and a small VHS-style battery gauge sits above the REC dot.
 - **When it dies,** the lens, overlay and markers switch off. Your character taps the camera, unclips it, checks it and puts it away.
 - **Swap the battery** like any vanilla device: drag a battery onto the camera. Your character slides it in and clips the camera back on your chest.
 - The REC timer keeps counting in the background while the camera is off.
@@ -139,7 +139,7 @@ Overlay: Body 1 shows date and device only, Body 2 adds your name, Body 3 and up
 | **Lens** | Strength, fisheye, zoom, chromatic aberration, sharpening, housing edge on/off, edge size and shape, vignette, grain, colour grade, rolling shutter, blur faces |
 | **Camera effects** | Interference on/off and strength, signal lost on death, low-light IR mode (auto/always/off, off by default), rain on the lens, blood on the lens, EVENT marker, GPS coordinates |
 | **Body motion** | Overall amount, turn lag, walking bob, camera roll, impacts, breathing |
-| **Overlay** | Overlay on/off, recording timer on/off, battery gauge on/off, device name, show your name, logo style, time zone, text size and opacity |
+| **Overlay** | Overlay on/off, recording timer on/off, battery gauge on/off, device name (follows carried camera, or custom toggle), show your name, logo style, time zone, text size and opacity |
 | **Ally markers** | On/off, only NPCs you can see, show names, mark enemies, mark mutants, style, friendly/enemy/companion colours, range, size, opacity |
 | **Item** (optional) | Battery life, hand animations on/off, camera generations on/off |
 
